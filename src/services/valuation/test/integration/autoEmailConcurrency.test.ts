@@ -105,6 +105,33 @@ describe.skipIf(!dbUp)('drip campaign scan claiming', () => {
     expect(scanners.flatMap((s) => s.delivered)).toHaveLength(1);
   });
 
+  /**
+   * R340, methodology M5. Overlapping scans are the ordinary case here — the
+   * interval and the ops button are the same function — and the pass that loses
+   * the lock used to return the four zeros a pass with nothing due returns. So
+   * the sweep's `background_sweep_items_total` showed the shape of a healthy
+   * idle scheduler, and the operator who pressed Run was told "nothing to send"
+   * rather than "your scan did not happen". `declined` is what separates them,
+   * the same field `runJobAlertScan` carries as `skipped`.
+   */
+  it('says a pass declined rather than reporting it as an empty one', async () => {
+    await seedCampaign({ maxSends: 1 });
+    await seedValuation('Declined Inc');
+
+    const results = await Promise.all(Array.from({ length: 4 }, () => runDueAutoEmails({ pool: ctx.pool })));
+
+    const ran = results.filter((r) => !r.declined);
+    const declined = results.filter((r) => r.declined);
+    expect(ran).toHaveLength(1);
+    expect(declined.length).toBe(3);
+    // The pass that ran did the work; the ones that declined are not empty
+    // passes that found nothing, and now say so.
+    expect(ran[0]!.queued).toBe(1);
+    for (const r of declined) {
+      expect(r).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0, declined: true });
+    }
+  });
+
   it('never exceeds max_sends across overlapping scans', async () => {
     await seedCampaign({ maxSends: 2, repeatHours: null });
     const valuation = await seedValuation('Cap Inc');

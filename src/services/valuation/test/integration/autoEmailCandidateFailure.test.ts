@@ -134,7 +134,7 @@ describe.skipIf(!dbUp)('one candidate failing inside the drip scan', () => {
     await seedCampaign();
     const seeded = await seedValuations(2);
     const result = await runDueAutoEmails({ pool: ctx.pool, log: ctx.app.log });
-    expect(result).toEqual({ queued: seeded.length, skipped: 0, suppressed: 0, failed: 0 });
+    expect(result).toEqual({ queued: seeded.length, skipped: 0, suppressed: 0, failed: 0, declined: false });
   });
 
   /**

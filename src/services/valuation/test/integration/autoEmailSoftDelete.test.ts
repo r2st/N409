@@ -119,7 +119,7 @@ describe.skipIf(!dbUp)('drip campaigns skip retired engagements and deactivated 
 
     const result = await runDueAutoEmails({ pool: ctx.pool });
 
-    expect(result).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0 });
+    expect(result).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0, declined: false });
   });
 
   /**

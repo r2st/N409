@@ -532,7 +532,11 @@ if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
       log: app.log,
     });
     if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
-    return r;
+    // `declined` flattened to a number so `sweepTally` can see it — the same
+    // treatment, for the same reason, that the job-alert sweep's `skipped`
+    // gets below: a pass that never ran reports the four zeros a healthy idle
+    // pass reports, and this is the one field that separates them.
+    return { ...r, declined: r.declined ? 1 : 0 };
   });
   autoEmailTimer = setInterval(() => scan.run(), config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
 }

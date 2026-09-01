@@ -48,6 +48,24 @@ export interface SupportEmailSource {
   get(key: 'support_email'): Promise<string>;
 }
 
+/** What one drip pass did, plus whether it happened at all. */
+export interface AutoEmailScanResult {
+  /** Outbox rows written. */
+  queued: number;
+  /** Candidates passed over for want of a recipient detail (an SMS with no phone). */
+  skipped: number;
+  /** Promotional messages withheld for want of marketing consent. */
+  suppressed: number;
+  /** Candidates this pass owed a message and did not send one to. */
+  failed: number;
+  /**
+   * True when another scan held the lock and this one did not run. Every count
+   * above is then zero because nothing was looked at, not because nothing was
+   * due — see `runDueAutoEmails`.
+   */
+  declined: boolean;
+}
+
 /**
  * Drip campaign scan (409.ai §15.6). Called on an interval from the service
  * entrypoint and on demand from POST /admin/auto-emails/run. For every
@@ -80,15 +98,35 @@ export async function runDueAutoEmails(deps: {
    * the paging without seeding hundreds of engagements.
    */
   pageSize?: number;
-}): Promise<{ queued: number; skipped: number; suppressed: number; failed: number }> {
+}): Promise<AutoEmailScanResult> {
   // The whole scan runs on the locked client: the lock is session-scoped, so
   // work moved to another connection would not be covered by it.
   const run = await withSweepLock(deps.pool, SCAN_LOCK_KEY, deps.log, (client) => scan(client, deps));
   if (!run.ran) {
-    deps.log?.info('auto email scan already in progress; skipping this pass');
-    return { queued: 0, skipped: 0, suppressed: 0, failed: 0 };
+    deps.log?.info(
+      { event: 'auto_email_scan_skipped' },
+      'auto email scan already in progress; skipping this pass',
+    );
+    // `declined`, and not four zeros on their own (round 340, methodology M5).
+    // A pass that never ran reported exactly what a pass with nothing due
+    // reports, on both of this function's surfaces: the sweep's tally, where
+    // `background_sweep_items_total` then shows the shape of a healthy idle
+    // scheduler, and `POST /admin/auto-emails/run`, where the operator who
+    // pressed the button is told "nothing to send" rather than "your scan did
+    // not happen". `runJobAlertScan` carries `skipped` for this exact reason
+    // and says so; this is the same field under a name that does not collide
+    // with the `skipped` already in this result, which counts recipients with
+    // no phone on file.
+    //
+    // It matters more here than a collision between two healthy readings would
+    // suggest, because the lock can be held by nobody: `withSweepLock`'s own
+    // note describes a failed unlock returning a live connection to the pool
+    // still holding a session-scoped key, after which every later pass declines
+    // forever and the log line for it is the benign one. That is the drip
+    // campaigns stopping, permanently, with nothing above `info` to say so.
+    return { queued: 0, skipped: 0, suppressed: 0, failed: 0, declined: true };
   }
-  return run.value;
+  return { ...run.value, declined: false };
 }
 
 /**

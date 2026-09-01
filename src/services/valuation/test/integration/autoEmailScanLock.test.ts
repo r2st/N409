@@ -108,7 +108,7 @@ describe.skipIf(!dbUp)('the auto email scan lock', () => {
     // No campaigns are configured, so the scan itself has nothing to do — the
     // pass is here for its lock handling, not its output.
     const result = await runDueAutoEmails({ pool: poolWithFailingUnlock(db.pool), log });
-    expect(result).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0 });
+    expect(result).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0, declined: false });
 
     // The assertion this test exists for, made first: whatever else happened,
     // the lock must not have survived the pass.
@@ -120,10 +120,10 @@ describe.skipIf(!dbUp)('the auto email scan lock', () => {
 
   it('holds no lock after an ordinary pass, and can run again', async () => {
     const first = await runDueAutoEmails({ pool: db.pool });
-    expect(first).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0 });
+    expect(first).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0, declined: false });
     expect(await heldLocks()).toBe(0);
 
     const second = await runDueAutoEmails({ pool: db.pool });
-    expect(second).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0 });
+    expect(second).toEqual({ queued: 0, skipped: 0, suppressed: 0, failed: 0, declined: false });
   });
 });
