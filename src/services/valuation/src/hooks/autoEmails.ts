@@ -80,13 +80,13 @@ export async function runDueAutoEmails(deps: {
    * the paging without seeding hundreds of engagements.
    */
   pageSize?: number;
-}): Promise<{ queued: number; skipped: number; suppressed: number }> {
+}): Promise<{ queued: number; skipped: number; suppressed: number; failed: number }> {
   // The whole scan runs on the locked client: the lock is session-scoped, so
   // work moved to another connection would not be covered by it.
   const run = await withSweepLock(deps.pool, SCAN_LOCK_KEY, deps.log, (client) => scan(client, deps));
   if (!run.ran) {
     deps.log?.info('auto email scan already in progress; skipping this pass');
-    return { queued: 0, skipped: 0, suppressed: 0 };
+    return { queued: 0, skipped: 0, suppressed: 0, failed: 0 };
   }
   return run.value;
 }
@@ -121,7 +121,7 @@ async function scan(
     settings?: SupportEmailSource;
     pageSize?: number;
   },
-): Promise<{ queued: number; skipped: number; suppressed: number }> {
+): Promise<{ queued: number; skipped: number; suppressed: number; failed: number }> {
   // Read once, before the candidate query, so the whole pass judges every
   // campaign against one instant.
   const now = deps.now ?? (await dbNow(db));
@@ -131,6 +131,9 @@ async function scan(
   // separately from `skipped` (no phone on file) because they are not the same
   // event: one is a missing detail to chase, the other is a decision to honour.
   let suppressed = 0;
+  // Candidates this pass was due to message and did not, because something
+  // threw while it was messaging them. See the per-candidate catch below.
+  let failed = 0;
   const settingsUrl = deps.publicBaseUrl ? `${deps.publicBaseUrl.replace(/\/$/, '')}/settings` : null;
   // Once per pass, not once per message: it is a cached read, but the scan
   // renders a whole backlog and the address does not change inside one pass.
@@ -178,106 +181,148 @@ async function scan(
           suppressed += 1;
           continue;
         }
-        const destination = campaign.channel === 'sms' ? candidate.to_phone : candidate.to_email;
-        // Every scope the catalog declares for an engagement-scoped send, not
-        // the three names this scan happened to have in hand. A campaign
-        // template naming `{{due_date}}` or `{{recipient_name}}` previewed
-        // correctly for the operator who wrote it and shipped a blank — or, for
-        // the `always` and `link` scopes, literal braces — to the client.
-        const vars = {
-          ...alwaysTemplateVars({
-            recipient_name: candidate.recipient_name,
-            recipient_email: candidate.to_email,
-            platform_name: candidate.partner_name,
-            support_email: supportEmail,
-          }),
-          ...valuationLinkVars(deps.publicBaseUrl, candidate.valuation_id),
-          ...valuationTemplateVars({
-            company_name: candidate.company_name,
-            kind: candidate.kind,
-            number: candidate.number,
-            valuation_date: candidate.valuation_date,
-            due_date: candidate.due_date,
-            state: candidate.state,
-            partner_name: candidate.partner_name,
-          }),
-        };
-        // One transaction: a queued message with no send record would be
-        // delivered by the retry sweep and then queued again by the next scan,
-        // which is the double-send this is here to prevent. The record counts
-        // against max_sends even if delivery later fails — retries are the
-        // outbox's job; the campaign must not re-fire on a flaky transport.
-        const email = await withClientTransaction(db, async (tx) => {
-          const row = await enqueueEmail(tx, {
-            valuationId: candidate.valuation_id,
-            toUserId: candidate.user_id,
-            toEmail: destination ?? candidate.to_email,
-            channel: campaign.channel,
-            templateKey: campaign.template_key,
-            subject: renderTemplate(template.subject, vars),
-            // Footer on promotional sends only — see applyPromotionalFooter.
-            body: applyPromotionalFooter(renderTemplate(template.body, vars), campaign, settingsUrl),
-            // Carried onto the row so the transport can attach `List-Unsubscribe`
-            // to this send and to nothing else (migration 0138). The campaign
-            // knows; by delivery time only the row is left to ask.
-            promotional: campaign.promotional,
-          });
-          await recordAutoEmailSend(tx, {
-            autoEmailId: campaign.id,
-            valuationId: candidate.valuation_id,
-            outboxId: row.id,
-          });
-          return row;
-        });
-
-        if (campaign.channel === 'sms' && !candidate.to_phone) {
-          await markEmail(db, email.id, 'skipped', 'no phone number on file');
-          skipped += 1;
-          continue;
-        }
-        queued += 1;
-
-        const transport = campaign.channel === 'sms' ? deps.smsTransport : deps.transport;
-        if (!transport) continue;
-        // Recording a delivery and recording a refusal are separate callbacks,
-        // so a blip on the marking UPDATE cannot be written down as the relay
-        // refusing a message it in fact accepted — which would put the row on
-        // the ladder to be delivered a second time. See email/sendAttempt.ts.
-        await sendAndRecord(transport, email, {
-          log: deps.log,
-          context: { campaign: campaign.name, valuationId: candidate.valuation_id },
-          onSent: () => markEmail(db, email.id, 'sent'),
-          onFailed: async (err) => {
-            await markEmail(db, email.id, 'failed', describeTransportFailure(err));
-            // Terminal rejection of the recipient stops the ladder and suppresses
-            // the address (0163). Uses this sweep's own client rather than taking
-            // a second one from the pool.
-            /*
-             * `null` from this write is not the same `null` as "the provider
-             * did not reject the recipient" (round 267, methodology M11), and
-             * the line below prints both as `bounce: null`. A terminal bounce
-             * that could not be recorded leaves the address *unsuppressed*, so
-             * the ladder keeps sending to a mailbox that has hard-rejected us —
-             * the one outcome `recordSendFailure` exists to stop, reached
-             * through the catch written so it could not stop the send loop.
-             */
-            const bounce = await recordSendFailure(db, email, err).catch((bookErr: unknown) => {
-              if (deps.log) {
-                logUnretried(
-                  deps.log,
-                  bookErr,
-                  { emailId: email.id, campaign: campaign.name },
-                  'send failure could not be recorded — a terminal bounce has not suppressed the address',
-                );
-              }
-              return null;
+        /*
+         * One candidate's bad minute costs that candidate, not the pass.
+         *
+         * The two sibling send loops already say why, in as many words:
+         * `hooks/stateChange.ts` — "letting one of them abort the loop hands
+         * the sweep every remaining recipient of the same transition, each
+         * waiting out the claim lease before anyone hears anything" — and
+         * `hooks/emailRetry.ts`, which contains its settle for the same reason.
+         * This is the widest of the three and was the only one uncontained: the
+         * scan walks every enabled campaign's entire backlog, so a statement
+         * timeout on one enqueue took the tail of that campaign *and every
+         * campaign after it* with it, and the pass reported a failure carrying
+         * none of what it had already queued.
+         *
+         * The bookkeeping calls inside are the ones that reach the database
+         * after a message has left the building — `markEmail`, and `onFailed`'s
+         * mark, which is the one arm `stateChange` guards and this did not.
+         *
+         * Counted, not swallowed: `failed` is a candidate this pass was due to
+         * message and did not, which is the one thing an operator reading a
+         * scan's tally has to be told.
+         */
+        try {
+          const destination = campaign.channel === 'sms' ? candidate.to_phone : candidate.to_email;
+          // Every scope the catalog declares for an engagement-scoped send, not
+          // the three names this scan happened to have in hand. A campaign
+          // template naming `{{due_date}}` or `{{recipient_name}}` previewed
+          // correctly for the operator who wrote it and shipped a blank — or, for
+          // the `always` and `link` scopes, literal braces — to the client.
+          const vars = {
+            ...alwaysTemplateVars({
+              recipient_name: candidate.recipient_name,
+              recipient_email: candidate.to_email,
+              platform_name: candidate.partner_name,
+              support_email: supportEmail,
+            }),
+            ...valuationLinkVars(deps.publicBaseUrl, candidate.valuation_id),
+            ...valuationTemplateVars({
+              company_name: candidate.company_name,
+              kind: candidate.kind,
+              number: candidate.number,
+              valuation_date: candidate.valuation_date,
+              due_date: candidate.due_date,
+              state: candidate.state,
+              partner_name: candidate.partner_name,
+            }),
+          };
+          // One transaction: a queued message with no send record would be
+          // delivered by the retry sweep and then queued again by the next scan,
+          // which is the double-send this is here to prevent. The record counts
+          // against max_sends even if delivery later fails — retries are the
+          // outbox's job; the campaign must not re-fire on a flaky transport.
+          const email = await withClientTransaction(db, async (tx) => {
+            const row = await enqueueEmail(tx, {
+              valuationId: candidate.valuation_id,
+              toUserId: candidate.user_id,
+              toEmail: destination ?? candidate.to_email,
+              channel: campaign.channel,
+              templateKey: campaign.template_key,
+              subject: renderTemplate(template.subject, vars),
+              // Footer on promotional sends only — see applyPromotionalFooter.
+              body: applyPromotionalFooter(renderTemplate(template.body, vars), campaign, settingsUrl),
+              // Carried onto the row so the transport can attach `List-Unsubscribe`
+              // to this send and to nothing else (migration 0138). The campaign
+              // knows; by delivery time only the row is left to ask.
+              promotional: campaign.promotional,
             });
-            deps.log?.warn({ err, emailId: email.id, bounce }, 'auto email delivery failed; left in outbox');
-          },
-        });
+            await recordAutoEmailSend(tx, {
+              autoEmailId: campaign.id,
+              valuationId: candidate.valuation_id,
+              outboxId: row.id,
+            });
+            return row;
+          });
+
+          if (campaign.channel === 'sms' && !candidate.to_phone) {
+            await markEmail(db, email.id, 'skipped', 'no phone number on file');
+            skipped += 1;
+            continue;
+          }
+          queued += 1;
+
+          const transport = campaign.channel === 'sms' ? deps.smsTransport : deps.transport;
+          if (!transport) continue;
+          // Recording a delivery and recording a refusal are separate callbacks,
+          // so a blip on the marking UPDATE cannot be written down as the relay
+          // refusing a message it in fact accepted — which would put the row on
+          // the ladder to be delivered a second time. See email/sendAttempt.ts.
+          await sendAndRecord(transport, email, {
+            log: deps.log,
+            context: { campaign: campaign.name, valuationId: candidate.valuation_id },
+            onSent: () => markEmail(db, email.id, 'sent'),
+            onFailed: async (err) => {
+              await markEmail(db, email.id, 'failed', describeTransportFailure(err));
+              // Terminal rejection of the recipient stops the ladder and suppresses
+              // the address (0163). Uses this sweep's own client rather than taking
+              // a second one from the pool.
+              /*
+               * `null` from this write is not the same `null` as "the provider
+               * did not reject the recipient" (round 267, methodology M11), and
+               * the line below prints both as `bounce: null`. A terminal bounce
+               * that could not be recorded leaves the address *unsuppressed*, so
+               * the ladder keeps sending to a mailbox that has hard-rejected us —
+               * the one outcome `recordSendFailure` exists to stop, reached
+               * through the catch written so it could not stop the send loop.
+               */
+              const bounce = await recordSendFailure(db, email, err).catch((bookErr: unknown) => {
+                if (deps.log) {
+                  logUnretried(
+                    deps.log,
+                    bookErr,
+                    { emailId: email.id, campaign: campaign.name },
+                    'send failure could not be recorded — a terminal bounce has not suppressed the address',
+                  );
+                }
+                return null;
+              });
+              deps.log?.warn(
+                { err, emailId: email.id, bounce },
+                'auto email delivery failed; left in outbox',
+              );
+            },
+          });
+        } catch (err) {
+          // `logUnretried` for the reason the overdue sweep uses it: nothing
+          // comes back for this candidate on this pass. The campaign's own
+          // record decides whether the next one will — a message whose
+          // `recordAutoEmailSend` committed is not owed again, and one whose
+          // enqueue transaction rolled back is.
+          if (deps.log) {
+            logUnretried(
+              deps.log,
+              err,
+              { campaign: campaign.name, valuationId: candidate.valuation_id },
+              'auto email scan could not process one candidate; the rest of the scan continues',
+            );
+          }
+          failed += 1;
+        }
       }
     }
   }
 
-  return { queued, skipped, suppressed };
+  return { queued, skipped, suppressed, failed };
 }
