@@ -1,0 +1,295 @@
+# Alerting rules for the N409 estate.
+#
+# ── What this file is, and what it is not ───────────────────────────────────
+#
+# Every service on this box exposes `GET /metrics` in the Prometheus text
+# format, gated on METRICS_TOKEN (falling back to INTERNAL_SERVICE_TOKEN). The
+# instruments have been accumulating for a dozen rounds. What was never written
+# down is the other half of a monitoring system: *at what value is a number a
+# problem*. Without that, every gauge here is a thing somebody has to already
+# suspect before they go and look at it, which is the same as not having it.
+#
+# So this file is the thresholds, argued. It is a Prometheus rule group and can
+# be loaded by one, but its first job is to be the written answer to "how would
+# we know?" — and `alertRulesCensus.test.ts` holds it to the metrics the code
+# actually exports, so a renamed instrument fails the suite instead of silently
+# turning an alert into one that can never fire.
+#
+# ── Scrape configuration ────────────────────────────────────────────────────
+#
+# Ports 3001–3004 are firewalled from the internet and only :3000 is proxied by
+# Caddy, so a scraper must run on the host. Targets:
+#
+#   web         127.0.0.1:3000
+#   valuation   127.0.0.1:3001
+#   report      127.0.0.1:3004
+#
+# with `authorization: {credentials: $INTERNAL_SERVICE_TOKEN}`. The AI (:3002)
+# and engine (:3003) services expose no scrape endpoint; they are measured from
+# the caller instead — see the `upstream_*` rules below, and the note on
+# `registerUpstreamMetrics` for why the caller's view is the one that decides
+# whether a user saw a failure.
+#
+# ── Severity ────────────────────────────────────────────────────────────────
+#
+# `page`  — a person should look now; users are affected or about to be.
+# `ticket` — real, and it will not fix itself, but it can wait for a working day.
+#
+# Nothing here is `info`. An alert nobody is expected to act on trains people to
+# close alerts.
+
+groups:
+  - name: n409-availability
+    rules:
+      # `up` is the scraper's own synthetic series, not one of ours: it is the
+      # only thing that can distinguish "the service is not answering" from "the
+      # service is answering and reporting zero of everything", which every
+      # rule below would read as health.
+      - alert: ServiceDown
+        expr: up{job=~"n409-.*"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.job }} has not answered a scrape for two minutes'
+          runbook: 'systemctl status n409-<unit>; journalctl -u n409-<unit> -n 200'
+
+      # A process that keeps coming back young is crash-looping, and the crash
+      # handler's own log line (shared/crash.ts) is on the stderr systemd is
+      # restarting. Nothing else here would notice: every counter resets with
+      # the process, so a service that restarts every ninety seconds has a
+      # permanently low error rate.
+      - alert: ServiceRestarting
+        expr: process_uptime_seconds < 300
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.service }} has restarted repeatedly in the last ten minutes'
+          runbook: 'journalctl -u n409-<unit> -n 200 — look for uncaughtException/unhandledRejection'
+
+      # The cgroup limiter SIGKILLs a unit over MemoryMax and systemd restarts
+      # it, leaving nothing in the process's own output to say why. This is the
+      # warning that comes before that.
+      - alert: MemoryNearCgroupLimit
+        expr: n409_cgroup_memory_current_bytes / n409_cgroup_memory_max_bytes > 0.9
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.service }} is within 10% of its MemoryMax'
+
+  - name: n409-http
+    rules:
+      # Rate, not count: "forty 5xx" means nothing without knowing whether that
+      # was forty requests or forty thousand. Five per cent sustained for five
+      # minutes is well clear of one bad client and well short of an outage.
+      - alert: HighServerErrorRate
+        expr: |
+          sum by (service) (rate(http_request_errors_total[5m]))
+            / sum by (service) (rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.service }} is failing more than 5% of requests'
+
+      # The other shape of a service in trouble: not failing, just not
+      # finishing. Requests pile up in flight when the event loop is blocked or
+      # every handler is waiting on the same dependency.
+      - alert: RequestsPilingUp
+        expr: http_requests_in_flight > 100
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.service }} is holding over 100 requests at once'
+
+      - alert: SlowRequests
+        expr: |
+          histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket[10m]))) > 2
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.service }} p95 request latency is over two seconds'
+
+  - name: n409-dependencies
+    rules:
+      # The platform has stopped calling a dependency altogether. Pages: every
+      # feature behind it is reporting itself unavailable to users right now.
+      - alert: UpstreamCircuitOpen
+        expr: upstream_circuit_state{state="open"} == 1
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: 'circuit open for {{ $labels.service }} — it is not being called at all'
+          runbook: 'GET /api/v1/admin/system/metrics for the breaker snapshot and what opened it'
+
+      # Before the breaker gives up. Five consecutive transient failures is the
+      # threshold; three is the window in which somebody can still get ahead of
+      # it.
+      - alert: UpstreamFailing
+        expr: upstream_circuit_consecutive_failures >= 3
+        for: 2m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.service }} is failing repeatedly and is close to being cut off'
+
+      # `failed` only — deliberately not `rejected`. A run of 4xx from the
+      # engine is this platform sending it payloads it will not accept, which is
+      # a bug in a route and not an outage in a dependency, and folding the two
+      # into one error rate is how the alert stops meaning anything.
+      - alert: UpstreamErrorRate
+        expr: |
+          sum by (service) (rate(upstream_requests_total{outcome=~"failed|timeout|unreachable"}[10m]))
+            / sum by (service) (rate(upstream_requests_total[10m])) > 0.1
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: 'more than 10% of calls to {{ $labels.service }} are failing'
+
+      # An upstream slow enough to burn the request budget fills this service's
+      # handlers, which is the cascade the breaker exists for. Sixty seconds is
+      # half the default budget.
+      - alert: UpstreamSlow
+        expr: |
+          histogram_quantile(0.95, sum by (service, le) (rate(upstream_request_duration_seconds_bucket[15m]))) > 60
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.service }} p95 is over a minute; requests are approaching the deadline'
+
+      # A dependency being down is expected to produce refusals. A *rising*
+      # refusal count while the breaker is closed is not, and means calls are
+      # being lost to a breaker that keeps flapping.
+      - alert: UpstreamCallsRefusedLocally
+        expr: rate(upstream_circuit_rejected_total[15m]) > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'calls to {{ $labels.service }} have been refused locally for half an hour'
+
+  - name: n409-background
+    rules:
+      # A sweep failing on every tick reads through the saturation gauges
+      # exactly as a healthy idle one does — it fails and returns long before a
+      # scrape, so `running` is 0 and nothing overlaps, so `skipped` is 0. This
+      # is the rule those two could not express.
+      - alert: SweepFailing
+        expr: |
+          rate(background_sweep_failures_total[30m]) / rate(background_sweep_runs_total[30m]) > 0.5
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.sweep }} sweep is failing more often than it succeeds'
+          runbook: 'journalctl -u n409-valuation | grep ''"sweep":"{{ $labels.sweep }}"'''
+
+      # And the opposite failure: a sweep that is not running at all. The timer
+      # was never scheduled, or the interval is configured to zero. Every retry
+      # ladder on this platform is a sweep.
+      - alert: SweepStopped
+        expr: rate(background_sweep_runs_total[1h]) == 0
+        for: 1h
+        labels: { severity: page }
+        annotations:
+          summary: 'the {{ $labels.sweep }} sweep has not run for an hour'
+
+      # A scheduler routinely skipping ticks has an interval too short for its
+      # work — the queue behind it is growing and nothing else says so.
+      - alert: SweepOverlapping
+        expr: rate(background_sweep_skipped_total[30m]) > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.sweep }} sweep is skipping ticks; its interval is too short'
+
+      - alert: AutoPipelineBacklog
+        expr: auto_pipeline_runs_pending > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'auto-pipeline runs have been queued behind the concurrency limit for half an hour'
+
+  - name: n409-database
+    rules:
+      # Anything waiting means the pool is saturated: the next query does not
+      # run slowly, it does not run.
+      - alert: PoolSaturated
+        expr: db_pool_connections_waiting > 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: 'callers are queued for a pg client'
+
+      # A leaked checkout never comes back on its own, so any increase is
+      # permanent loss of pool capacity.
+      - alert: PoolCheckoutLeaked
+        expr: increase(db_pool_checkouts_leaked_total[1h]) > 0
+        labels: { severity: page }
+        annotations:
+          summary: 'a pg connection was checked out and never returned'
+          runbook: 'GET /api/v1/admin/db/pool; db/poolHealth.ts holds the stack of the oldest checkout'
+
+      - alert: PoolCheckoutHeldTooLong
+        expr: db_pool_checkout_oldest_seconds > 60
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'a pg connection has been held for over a minute'
+
+      - alert: SlowQueriesAppearing
+        expr: increase(db_slow_queries_total[15m]) > 20
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'statements are crossing the slow-query threshold'
+          runbook: 'GET /api/v1/admin/db/queries for the ranked fingerprints'
+
+  - name: n409-degraded-features
+    rules:
+      # The fallback keeps producing correct bytes, so a broken offload has no
+      # other symptom — this process simply goes back to blocking its event loop
+      # for half a second per report. `not_configured` is the deployment that
+      # deliberately has no report unit and is excluded.
+      - alert: ReportOffloadFailing
+        expr: rate(report_render_total{mode="local", reason!="not_configured"}[30m]) > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'PDF renders are falling back to the valuation process ({{ $labels.reason }})'
+
+      - alert: ReportRenderQueueFull
+        expr: report_render_delegations_queued > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'report renders are queueing for a delegation slot'
+
+      # The engine turns every market-data failure into a 200 with
+      # `source: "fallback"`, so a dead source produces correct-looking
+      # valuations on substituted figures. There is no other symptom at all.
+      - alert: MarketFeedFallingBack
+        expr: |
+          sum(rate(market_feed_answers_total{outcome="fallback"}[1h]))
+            / sum(rate(market_feed_answers_total[1h])) > 0.5
+        for: 1h
+        labels: { severity: ticket }
+        annotations:
+          summary: 'over half of market-feed answers are substituted figures rather than observed ones'
+
+  - name: n409-browser
+    rules:
+      # A release that blanks a route for every user leaves the access log full
+      # of 200s: the shell and the bundle both serve fine. This counter is the
+      # only thing on the box that can see it.
+      - alert: ClientCrashSpike
+        expr: sum(rate(client_errors_total[10m])) > 0.2
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: 'the browser app is crashing for users — check the last release'
+          runbook: 'journalctl -u n409-valuation | grep client_error — the stack and page are on the line'
+
+      # The reports are throttled per address, so this firing means the counter
+      # above is capped and is no longer the whole story.
+      - alert: ClientCrashReportsDropped
+        expr: rate(client_errors_dropped_total[15m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'crash reports are being refused by the throttle; client_errors_total is an undercount'

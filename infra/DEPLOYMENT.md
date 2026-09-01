@@ -144,6 +144,22 @@ The Python pair has no `/metrics` endpoint — the same reason the readiness
 contract covers three services rather than five — so their ceilings are visible
 through `systemctl show` and the journal only.
 
+### Alert thresholds
+
+Every instrument named above — and the three dozen beside it — is a number
+somebody has to already suspect before they go and look at it. The thresholds
+that turn them into a signal live in `infra/monitoring/alerts.yml`, as a
+Prometheus rule group: what value is a problem, for how long, and whether it is
+worth waking somebody for. That file's header carries the scrape configuration
+(the three targets, the token, and why the Python pair is measured from the
+caller instead) and the two-level severity policy.
+
+Nothing on the box scrapes it today. The file is still the written answer to
+"how would we know?", and `alertRulesCensus.test.ts` holds every metric it names
+to one the code actually registers — so a renamed instrument fails the suite
+rather than silently converting an alert into one that can never fire. A rule
+matching no series is indistinguishable from a healthy system.
+
 ### How much journal there is to read
 
 `journalctl` is only useful for as far back as the journal goes, and that used
