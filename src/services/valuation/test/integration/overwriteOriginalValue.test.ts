@@ -86,11 +86,50 @@ describe.skipIf(!dbUp)('an override’s original_value is held to the field it d
     expect(res.json().detail).toMatch(/finite number/);
   });
 
-  it('refuses an original outside the range the field allows', async () => {
+  /*
+   * R303 reverses this. R299 checked the original against the field's policy
+   * range along with everything else, by handing both figures on the body to
+   * one `validateOverwriteValue` call.
+   *
+   * The range is a rule about the figure being imposed. `original_value` is the
+   * figure being replaced, and out of policy is the commonest reason it is
+   * being replaced — a DLOM the pipeline read as 0.99 from a source saying 99%,
+   * which is precisely what an analyst imposing 0.28 is correcting. Refusing
+   * the write leaves that figure both uncorrected and unrecorded, over the one
+   * number in the body nobody is disputing.
+   *
+   * Class, finiteness and length still refuse, above and below: those say the
+   * original is not a figure of this kind. The range says only that the old
+   * number was wrong, which is the premise.
+   */
+  it('accepts an original outside the range, which is why it is being replaced', async () => {
     const id = await newValuation();
     const res = await put(id, 'dlom', JSON.stringify({ value: 0.21, original_value: 42 }));
-    expect(res.statusCode).toBe(422);
-    expect(res.json().detail).toMatch(/original_value/);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().overwrite.original_value).toBe(42);
+    // The imposed value is still held to the range on the same request.
+    const bad = await put(id, 'dlom', JSON.stringify({ value: 42, original_value: 0.21 }));
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().detail).toMatch(/Invalid value/);
+  });
+
+  /**
+   * The asymmetry that made the above visible. On a second write the UPDATE
+   * branch of `upsertOverwrite` does not touch `original_value` — it stays
+   * frozen from the first write, which is the contract the overwrites tab
+   * renders "was X" from. A range check therefore refused the request over a
+   * figure the route was about to discard unread; every other test here starts
+   * from a fresh valuation, so all of them are first writes.
+   */
+  it('does not refuse an update over the original it is about to discard', async () => {
+    const id = await newValuation();
+    const first = await put(id, 'dlom', JSON.stringify({ value: 0.21, original_value: 0.24 }));
+    expect(first.statusCode).toBe(200);
+
+    const second = await put(id, 'dlom', JSON.stringify({ value: 0.28, original_value: 0.99 }));
+    expect(second.statusCode).toBe(200);
+    expect(second.json().overwrite.value).toBe(0.28);
+    expect(second.json().overwrite.original_value).toBe(0.24);
   });
 
   /**

@@ -113,9 +113,25 @@ export function registerOverwriteRoutes(app: FastifyInstance, deps: { pool: pg.P
      *
      * `null` stays legal — it is how "no prior value" is said, and it is what
      * the client sends by omitting the field entirely.
+     *
+     * R303: everything above, except the field's policy range, which R299 also
+     * brought along by handing both figures to one call. The range is a rule
+     * about the number being imposed, and `original_value` is the number being
+     * replaced — out of policy is the commonest reason it is being replaced. A
+     * DLOM the pipeline read as 0.99 from a source saying 99% sits outside the
+     * 0.9 ceiling, and refusing the write means the analyst can neither correct
+     * it nor record what it was: a 422 about the one number in the body nobody
+     * disputes. See `validateOverwriteValue`'s `range` option.
+     *
+     * The asymmetry that made this visible: on a second write `upsertOverwrite`
+     * takes the UPDATE branch, which does not touch `original_value` at all —
+     * it stays frozen from the first write, which is the whole contract. So the
+     * range check was refusing the request over a figure the route was about to
+     * discard unread. R299's own tests each start from a fresh valuation, so
+     * every one of them is a first write and none could see it.
      */
     if (parsed.data.original_value !== undefined && parsed.data.original_value !== null) {
-      const badOriginal = validateOverwriteValue(def, parsed.data.original_value);
+      const badOriginal = validateOverwriteValue(def, parsed.data.original_value, { range: false });
       if (badOriginal)
         throw problems.unprocessable(`Invalid original_value for "${field_key}": ${badOriginal}`);
     }

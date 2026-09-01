@@ -632,12 +632,36 @@ export const OVERWRITE_FIELDS_BY_KEY: ReadonlyMap<string, OverwriteFieldDef> = n
  * Validates a candidate value against a field's class (and numeric range).
  * Returns a problem message or null when valid.
  */
-export function validateOverwriteValue(def: OverwriteFieldDef, value: unknown): string | null {
+export function validateOverwriteValue(
+  def: OverwriteFieldDef,
+  value: unknown,
+  /*
+   * R303. Whether the field's policy range applies.
+   *
+   * It applies to `value` — the figure the analyst is imposing, which becomes
+   * the valuation's input and has to be one the model can stand behind. It does
+   * not apply to `original_value`, and R299 applied it to both by handing the
+   * two figures to one call.
+   *
+   * `original_value` is the figure being *replaced*. Out of policy is not a
+   * malformed original; it is the commonest reason there is an override at all
+   * — a DLOM extracted as 0.99 because the source said 99%, which is exactly
+   * the correction an analyst is making when they impose 0.28. Range-checking
+   * it refuses that write outright, so the one bad figure cannot be corrected
+   * *and* cannot be recorded, and the provenance the field exists to carry is
+   * lost to a 422 about the number nobody is disputing.
+   *
+   * Class, finiteness and length still apply. Those say the original is not a
+   * figure of this kind, which is a malformed body; the range says only that
+   * the old number was wrong, which is the premise.
+   */
+  { range = true }: { range?: boolean } = {},
+): string | null {
   switch (def.class) {
     case 'numeric': {
       if (typeof value !== 'number' || !Number.isFinite(value)) return 'must be a finite number';
-      if (def.min !== undefined && value < def.min) return `must be ≥ ${def.min}`;
-      if (def.max !== undefined && value > def.max) return `must be ≤ ${def.max}`;
+      if (range && def.min !== undefined && value < def.min) return `must be ≥ ${def.min}`;
+      if (range && def.max !== undefined && value > def.max) return `must be ≤ ${def.max}`;
       return null;
     }
     case 'date': {
