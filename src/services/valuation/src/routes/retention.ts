@@ -15,7 +15,10 @@ import {
   type RetentionDataType,
 } from '../domain/retention.js';
 import { restoreValuations, retireValuations } from '../repos/valuationPurge.js';
-import { firePartnerWebhooksForRetirement } from '../hooks/partnerWebhooks.js';
+import {
+  firePartnerWebhooksForRestoration,
+  firePartnerWebhooksForRetirement,
+} from '../hooks/partnerWebhooks.js';
 import {
   findArchivableValuations,
   HOLD_PAGE_LIMIT,
@@ -709,6 +712,13 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
           acknowledged_rearchival: parsed.data.acknowledge_rearchival === true,
           sla_credited: slaCredited,
         });
+        // The pair to the retirement route's announcement, in the same place
+        // and the same order: the spine first, then the outside world. A
+        // partner told `valuation.retired` — which this API documents as
+        // terminal — otherwise has no event saying the engagement came back,
+        // and the `valuation.state_changed` it resumes emitting arrives against
+        // a record the integration has closed.
+        await firePartnerWebhooksForRestoration({ pool: deps.pool, log: app.log }, [id]);
         return {
           restored,
           sla_credited: slaCredited,

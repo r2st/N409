@@ -1051,6 +1051,13 @@ export const WEBHOOK_EVENTS: Array<{ name: string; description: string }> = [
       'receive cannot tell that from work still in progress.',
   },
   {
+    name: 'valuation.restored',
+    description:
+      'A withdrawn engagement is back in the product — writes are accepted again and it will go on ' +
+      'transitioning. The undo of the event above, so an integration that closed the engagement out ' +
+      'knows to reopen it.',
+  },
+  {
     name: 'webhook.test',
     description: 'A signed ping you can trigger yourself while building the receiver.',
   },

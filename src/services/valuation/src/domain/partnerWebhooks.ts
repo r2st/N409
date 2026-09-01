@@ -23,6 +23,25 @@ export const WEBHOOK_EVENT_TYPES = [
    * has no way to distinguish that from work still in progress.
    */
   'valuation.retired',
+  /**
+   * A withdrawn engagement is back in the product.
+   *
+   * The pair to `valuation.retired`, and it was missing (round 327, methodology
+   * M4). Retirement is reversible — `POST /admin/retention/valuations/{id}/restore`
+   * clears `archived_at`, un-freezes every write, puts the engagement back in
+   * `GET /valuations` and lets it transition again — and the announcement of it
+   * went one way only. So an integration that did what `valuation.retired` tells
+   * it to do, and closed the engagement out, was never told to reopen it: the
+   * `valuation.state_changed` events that resume afterwards arrive against a
+   * record it has filed as terminal, and the `valuation.report_ready` for the
+   * deliverable it is waiting on arrives there too.
+   *
+   * A distinct event rather than a `state_changed`, for the reason the retire
+   * side already gives: retirement and restoration are not lifecycle
+   * transitions — `state` does not move across either — so the transition
+   * vocabulary cannot express them.
+   */
+  'valuation.restored',
   /** Sent by POST /webhooks/{id}/test — a signed ping to verify the receiver. */
   'webhook.test',
 ] as const;

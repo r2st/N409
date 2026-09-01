@@ -161,7 +161,7 @@ POST   /api/partner/v1/webhooks/{id}/deliveries/{deliveryId}/retry
 POST   /api/partner/v1/webhooks/{id}/test                # signed ping
 ```
 Webhooks (partner-registered): `valuation.state_changed`, `valuation.report_ready`,
-`valuation.retired`, `webhook.test`. Signed (HMAC-SHA256 over the raw body, `x-n409-signature:
+`valuation.retired`, `valuation.restored`, `webhook.test`. Signed (HMAC-SHA256 over the raw body, `x-n409-signature:
 sha256=<hex>`); at-least-once with retry/backoff.
 
 The vocabulary is deliberately transitions rather than states. One `valuation.state_changed`
@@ -170,9 +170,12 @@ saying it when a state is added, where a per-state "drafted" and "published" pai
 need a new member and a new subscription. `valuation.report_ready` is the exception because it is
 not a state — it is the two transitions (draft shared, opinion published) that first put a
 deliverable in front of the partner, which is the thing an integration actually waits on.
-`valuation.retired` is terminal and exists because nothing else says so: a withdrawn engagement
-leaves `GET /valuations` and simply stops emitting, which an integration cannot distinguish from
-work still in progress.
+`valuation.retired` exists because nothing else says so: a withdrawn engagement leaves
+`GET /valuations` and simply stops emitting, which an integration cannot distinguish from work
+still in progress. `valuation.restored` is its undo, and is a separate event for the same reason —
+neither retirement nor restoration moves `state`, so the transition vocabulary cannot express
+either. Retirement is reversible from the retention screen, so an integration told the engagement
+was finished with has to be told when it is not.
 
 This block is pinned by `test/unit/apiDesignPartnerSection.test.ts` — the operation list against
 the route registry in `routes/partnerApi.ts`, and the event list against `WEBHOOK_EVENT_TYPES`.

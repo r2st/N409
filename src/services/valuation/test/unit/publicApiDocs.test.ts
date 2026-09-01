@@ -34,7 +34,13 @@ const PUBLISHED = {
   eventHeader: 'x-n409-event',
   deliveryHeader: 'x-n409-delivery',
   retryLadderMinutes: [1, 5, 30, 120, 360],
-  events: ['valuation.state_changed', 'valuation.report_ready', 'valuation.retired', 'webhook.test'],
+  events: [
+    'valuation.state_changed',
+    'valuation.report_ready',
+    'valuation.retired',
+    'valuation.restored',
+    'webhook.test',
+  ],
 };
 
 describe('the public /developers page still describes this API', () => {

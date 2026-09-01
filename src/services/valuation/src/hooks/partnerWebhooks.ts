@@ -621,6 +621,41 @@ export async function firePartnerWebhooksForRetirement(
   deps: WebhookDeps,
   valuationIds: readonly string[],
 ): Promise<void> {
+  return announceArchivalChange(deps, valuationIds, 'valuation.retired');
+}
+
+/**
+ * The other direction, which nothing announced (round 327, methodology M4).
+ *
+ * `valuation.retired` tells an integration the engagement is finished with:
+ * every write answers 409, it leaves `GET /valuations`, and it will not
+ * transition again. A restore makes all three false, and said nothing — so a
+ * partner that acted on the terminal event has no way back, and the
+ * `valuation.state_changed` that resumes lands against a record it closed.
+ *
+ * Same fan-out as the retirement it undoes, because it is the same shape: a
+ * batch of ids, grouped by partner, one serial chain per receiver. The row is
+ * read after the restore, so `company_name` has lost its `[retired]` suffix and
+ * `state` is the state the engagement is resuming from.
+ */
+export async function firePartnerWebhooksForRestoration(
+  deps: WebhookDeps,
+  valuationIds: readonly string[],
+): Promise<void> {
+  return announceArchivalChange(deps, valuationIds, 'valuation.restored');
+}
+
+/**
+ * Announce a retirement or a restoration to every partner receiver that wants
+ * it. One body for both, so the batching, the per-receiver chaining and the
+ * failure containment written up below cannot be half-copied into the second
+ * direction.
+ */
+async function announceArchivalChange(
+  deps: WebhookDeps,
+  valuationIds: readonly string[],
+  event: 'valuation.retired' | 'valuation.restored',
+): Promise<void> {
   const ids = [...new Set(valuationIds)];
   if (ids.length === 0) return;
   // Contained, like the transition entry point above. The sweep call site's
@@ -639,7 +674,7 @@ export async function firePartnerWebhooksForRetirement(
           deps.log,
           err,
           { valuationIds: ids.length },
-          'could not look up retired engagements to announce; partner webhooks not queued',
+          `could not look up engagements to announce as ${event}; partner webhooks not queued`,
         );
       }
       return [];
@@ -695,19 +730,19 @@ export async function firePartnerWebhooksForRetirement(
    */
   const chains: Array<() => Promise<void>> = [];
   for (const [partnerId, partnerRows] of byPartner) {
-    const hooks = await readEnabledWebhooks(deps, partnerId, 'valuation.retired', null);
+    const hooks = await readEnabledWebhooks(deps, partnerId, event, null);
     if (hooks === null) continue;
-    for (const hook of hooks.filter((h) => webhookWantsEvent(h.events, 'valuation.retired'))) {
+    for (const hook of hooks.filter((h) => webhookWantsEvent(h.events, event))) {
       chains.push(async () => {
         for (const row of partnerRows) {
-          const payload = buildWebhookPayload('valuation.retired', {
+          const payload = buildWebhookPayload(event, {
             id: row.id,
             number: row.number,
             kind: row.kind,
             state: row.state,
             company_name: row.company_name,
           });
-          await dispatchToWebhook(deps, hook, partnerId, 'valuation.retired', payload, row.id);
+          await dispatchToWebhook(deps, hook, partnerId, event, payload, row.id);
         }
       });
     }

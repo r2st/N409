@@ -121,6 +121,40 @@ describe.skipIf(!dbUp)('the retirement webhook', () => {
     expect(sent[0]!.body.event).toBe('valuation.retired');
   });
 
+  /**
+   * The undo, which said nothing (round 327, methodology M4).
+   *
+   * `valuation.retired` is documented as the event an integration acts on when
+   * the engagement is finished with — it will not transition again, every write
+   * is refused, and it has left the list. All three of those are undone by
+   * `POST /admin/retention/valuations/{id}/restore`, and the announcement went
+   * one way: a partner that closed the engagement out was never told to reopen
+   * it, and the `valuation.state_changed` events that resume afterwards arrive
+   * against a record it has filed as terminal.
+   */
+  it('announces the restore that undoes it', async () => {
+    received.length = 0;
+    const id = await createPartnerValuation('Brought Back Co');
+    expect((await retire(id)).statusCode).toBe(200);
+    expect(retirements(id)).toHaveLength(1);
+
+    const restored = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/retention/valuations/${id}/restore`,
+      headers: authHeader(adminToken),
+      payload: {},
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().restored).toBe(true);
+
+    const sent = received.filter((r) => r.event === 'valuation.restored' && r.body.valuation?.id === id);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.body.event).toBe('valuation.restored');
+    // Read after the restore, so the `[retired]` suffix has gone with it — the
+    // event describes the row as it now is, exactly as the retirement does.
+    expect(sent[0]!.body.valuation.company_name).toBe('Brought Back Co');
+  });
+
   it('is sent by the retention sweep, for the whole batch it archived', async () => {
     received.length = 0;
     const ids = [await createPartnerValuation('Aged Out One'), await createPartnerValuation('Aged Out Two')];
