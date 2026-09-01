@@ -9,10 +9,12 @@ import { ActivityLogPage } from '../src/pages/ActivityLogPage';
  * an auditor is pointed at when they ask whether a figure was touched after
  * the board adopted it. Its usefulness is entirely in the filtering.
  *
- * Two things are worth pinning hardest. The "to" date is sent as
- * `T23:59:59Z`, not as the bare date — a bare date is midnight, so an auditor
- * filtering "up to the 14th" would silently lose every event on the 14th,
- * which is exactly the day they are asking about.
+ * Two things are worth pinning hardest. The "to" date is sent as the last
+ * instant of that day *in the reader's own zone*, not as the bare date — a bare
+ * date is midnight, so an auditor filtering "up to the 14th" would silently
+ * lose every event on the 14th, which is exactly the day they are asking about;
+ * and a UTC end-of-day loses the evening of it for every reader west of
+ * Greenwich, whose rows this page renders locally.
  *
  * And "Load more" appends rather than replaces, and carries the *same*
  * filters: a second page fetched under different filters, or one that
@@ -292,16 +294,54 @@ describe('ActivityLogPage', () => {
       renderPage();
       await ready();
       await user.type(screen.getByLabelText('To date'), '2026-02-14');
-      await waitFor(() => expect(lastQuery(calls).get('to')).toBe('2026-02-14T23:59:59Z'));
+      await waitFor(() =>
+        expect(lastQuery(calls).get('to')).toBe(new Date(2026, 1, 14, 23, 59, 59, 999).toISOString()),
+      );
     });
 
-    it('sends the start date as given', async () => {
+    it('bounds the window in the zone the rows are displayed in', async () => {
+      /*
+       * The two bounds used to be UTC — a bare `from` date is UTC midnight and
+       * `to` was hand-written as `T23:59:59Z` — while every row on the page is
+       * rendered through `formatDateTime`, i.e. locally. West of Greenwich that
+       * window starts on the previous evening and ends hours before the picked
+       * day is over, so an event written at 20:00 on the 14th in New York was
+       * outside a filter reading "to the 14th" and shown as the 14th by the
+       * table beside it. On an append-only log, a row missing from the answer
+       * reads as a thing that did not happen.
+       *
+       * Asserted as a round trip rather than against a fixed string, because
+       * the correct instant depends on the zone the suite runs in — which is
+       * the whole point.
+       */
       const user = userEvent.setup();
       const calls = mockApi();
       renderPage();
       await ready();
       await user.type(screen.getByLabelText('From date'), '2026-02-01');
-      await waitFor(() => expect(lastQuery(calls).get('from')).toBe('2026-02-01'));
+      await user.type(screen.getByLabelText('To date'), '2026-02-14');
+
+      await waitFor(() => expect(lastQuery(calls).get('to')).toBeTruthy());
+      const query = lastQuery(calls);
+      const localDay = (iso: string) => {
+        const d = new Date(iso);
+        return [d.getFullYear(), d.getMonth() + 1, d.getDate()].join('-');
+      };
+      expect(localDay(query.get('from')!)).toBe('2026-2-1');
+      expect(localDay(query.get('to')!)).toBe('2026-2-14');
+      // Inclusive to the last millisecond of the local day, and starting at its
+      // first: a row written in either edge second is still in the day asked for.
+      expect(new Date(query.get('from')!).getHours()).toBe(0);
+      expect(new Date(query.get('to')!).getMilliseconds()).toBe(999);
+    });
+
+    it('sends the start date as that day’s local midnight', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi();
+      renderPage();
+      await ready();
+      await user.type(screen.getByLabelText('From date'), '2026-02-01');
+      await waitFor(() => expect(lastQuery(calls).get('from')).toBe(new Date(2026, 1, 1).toISOString()));
     });
 
     it('commits the event type when the box loses focus', async () => {

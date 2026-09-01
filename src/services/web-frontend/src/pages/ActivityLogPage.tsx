@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
-import { eventLabel, formatDateTime } from '../lib/format';
+import { eventLabel, formatDateTime, localDayEnd, localDayStart } from '../lib/format';
 import {
   Button,
   EmptyState,
@@ -101,8 +101,18 @@ export function ActivityLogPage() {
       if (actorId) query.set('actor_id', actorId);
       if (actorType) query.set('actor_type', actorType);
       if (type) query.set('type', type);
-      if (from) query.set('from', from);
-      if (to) query.set('to', `${to}T23:59:59Z`);
+      // Both bounds as instants in the *reader's* zone, because the rows they
+      // filter are rendered in it. See `localDayStart` / `localDayEnd`: the bare
+      // date and the hand-written `T23:59:59Z` this replaces were UTC, so west
+      // of Greenwich the window ran from the previous evening to five hours
+      // short of the day the operator picked — and the events it dropped are
+      // displayed on this very page as belonging to that day.
+      //
+      // A value the pickers cannot produce falls back to what was sent before,
+      // so an unparseable date is still the server's to refuse rather than a
+      // filter that quietly disappears.
+      if (from) query.set('from', localDayStart(from) ?? from);
+      if (to) query.set('to', localDayEnd(to) ?? `${to}T23:59:59Z`);
       return query;
     },
     [scope, actorId, actorType, type, from, to],

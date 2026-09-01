@@ -158,6 +158,40 @@ function parseDateInput(iso: string): Date | null {
   return local;
 }
 
+/**
+ * A picked calendar day as the two instants that bound it, **locally**.
+ *
+ * A date picker hands back `YYYY-MM-DD`, and the log rows it filters are
+ * timestamps rendered through `formatDateTime` — i.e. in the reader's own zone.
+ * So the window has to be the reader's day, and turning the picked day into an
+ * instant is where that goes wrong: `from=2026-02-14` reaches the server as UTC
+ * midnight and `to=2026-02-14T23:59:59Z` as UTC end-of-day, which in New York
+ * is 14 Feb 19:00 through 14 Feb 18:59 — a window that starts on the evening of
+ * the 13th and ends five hours before the day the operator asked about is over.
+ *
+ * The visible half is the end: an admin event written at 20:00 local on the
+ * 14th is 01:00Z on the 15th, so filtering "to the 14th" hid rows the same page
+ * displays as the 14th. On an append-only log consulted to answer "was this
+ * touched after the board adopted it", an event that is not in the answer reads
+ * as an event that did not happen.
+ *
+ * `end` is the last millisecond of the day rather than `23:59:59`, because the
+ * bound is inclusive and a row written in the final second of a local day is
+ * still in that day.
+ */
+export function localDayStart(iso: string): string | null {
+  const day = parseDateInput(iso);
+  return day && DATE_ONLY.test(iso) ? day.toISOString() : null;
+}
+
+export function localDayEnd(iso: string): string | null {
+  const day = parseDateInput(iso);
+  if (!day || !DATE_ONLY.test(iso)) return null;
+  const end = new Date(day.getTime());
+  end.setHours(23, 59, 59, 999);
+  return end.toISOString();
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = parseDateInput(iso);
@@ -251,10 +285,7 @@ export function moneyFormatter(
   return format;
 }
 
-function buildMoneyFormatter(
-  code: string,
-  options: Intl.NumberFormatOptions,
-): (value: number) => string {
+function buildMoneyFormatter(code: string, options: Intl.NumberFormatOptions): (value: number) => string {
   try {
     return new Intl.NumberFormat(undefined, { style: 'currency', currency: code, ...options }).format;
   } catch {
