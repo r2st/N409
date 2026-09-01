@@ -16,6 +16,11 @@ Group=n409
 EnvironmentFile=/opt/N409/.env
 Environment=BACKUP_ROOT=/opt/n409-backups
 ExecStart=/opt/N409/infra/backup/pg-backup.sh
+# The dump is the whole database in the clear. pg-backup.sh sets `umask 077`
+# itself so a hand-run is protected too; this is the same bound stated where an
+# operator reading the unit can see it, and it covers anything else the unit
+# comes to create.
+UMask=0077
 # ── Memory (round 99) ────────────────────────────────────────────────────────
 # `pg_dump -Fc` streams: it holds the schema, one row's worth of buffer and a
 # zlib window, and the sorting and index work that could actually allocate

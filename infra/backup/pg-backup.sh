@@ -55,6 +55,26 @@
 # pg-verify.sh does on its own schedule — see infra/backup/README.md.
 set -euo pipefail
 
+# ── On file modes ────────────────────────────────────────────────────────────
+#
+# A `pg_dump` of this database is every client's working papers in the clear:
+# names, addresses, cap tables, employee grants, message bodies. The blobs on
+# disk are envelope-encrypted precisely so a stolen copy yields nothing, and the
+# dump is the copy that undoes that — jsonb, text columns and all, in one file.
+#
+# Nothing here set a mode, so the answer was the invoking umask: 022 under
+# systemd's default, which is a 0644 dump inside a 0755 directory. This host
+# also serves two unrelated products (see infra/journald/10-n409.conf), so
+# "world-readable" is not hypothetical — it is every other local account and
+# every process they run.
+#
+# 077 rather than a chmod after the fact: the window between `pg_dump` creating
+# the file and a later chmod is the whole exposure, and it is the window a
+# backup spends at its largest. The chmods below are for what this script did
+# not create — the directories on a host provisioned before this change, and the
+# dumps already sitting in them.
+umask 077
+
 ENV_FILE="${ENV_FILE:-/opt/N409/.env}"
 BACKUP_ROOT="${BACKUP_ROOT:-/opt/n409-backups}"
 KEEP_DAILY="${KEEP_DAILY:-7}"
@@ -85,6 +105,14 @@ DOW="${BACKUP_DOW:-$(date -u +%u)}"
 DAILY_DIR="$BACKUP_ROOT/daily"
 WEEKLY_DIR="$BACKUP_ROOT/weekly"
 mkdir -p "$DAILY_DIR" "$WEEKLY_DIR"
+# Retroactive, and deliberately not conditional: a host that has been taking
+# backups since before the umask above was set has a directory of 0644 dumps
+# that no future run would otherwise touch, and the oldest of them outlives four
+# weeks of rotation. Owner-only on the directories too — the file names alone
+# say when the backups run and when one is missing. Not applied to BACKUP_ROOT,
+# which this script may not own.
+chmod 700 "$DAILY_DIR" "$WEEKLY_DIR"
+find "$DAILY_DIR" "$WEEKLY_DIR" -maxdepth 1 -type f -name 'n409-*' -exec chmod 600 {} +
 
 DEST="$DAILY_DIR/n409-$DATE.dump"
 TMP="$DEST.partial"

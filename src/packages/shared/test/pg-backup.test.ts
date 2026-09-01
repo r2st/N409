@@ -6,7 +6,16 @@
 // weekly-promotion behaviour that the DR runbook depends on.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, chmodSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  chmodSync,
+  statSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -220,6 +229,43 @@ describe('pg-backup.sh rotation', () => {
     for (const f of files.filter((f) => f.endsWith('.sha256'))) {
       expect(files).toContain(f.replace(/\.sha256$/, ''));
     }
+  });
+
+  // A dump is the whole database in the clear — the one copy of the documents
+  // that is not envelope-encrypted, plus every name, address and grant beside
+  // them. Nothing set a mode, so it was the invoking umask (0644 under systemd)
+  // on a host shared with two unrelated products.
+  it('writes dumps and manifests readable only by their owner', () => {
+    backupRoot = path.join(work, 'root12');
+    mkdirSync(backupRoot, { recursive: true });
+    runDay('20261001-020000', 7); // a weekly day, so the promoted copy is covered too
+    for (const dir of ['daily', 'weekly']) {
+      const abs = path.join(backupRoot, dir);
+      for (const f of readdirSync(abs)) {
+        const mode = statSync(path.join(abs, f)).mode & 0o777;
+        expect({ file: `${dir}/${f}`, mode: mode.toString(8) }).toEqual({
+          file: `${dir}/${f}`,
+          mode: '600',
+        });
+      }
+      expect((statSync(abs).mode & 0o777).toString(8)).toBe('700');
+    }
+  });
+
+  // The retroactive half: a host that has been taking backups since before the
+  // umask above still has a directory of 0644 dumps, and the oldest of them
+  // outlives four weeks of rotation, so no future run would ever touch them.
+  it('tightens dumps and directories left behind by earlier runs', () => {
+    backupRoot = path.join(work, 'root13');
+    const daily = path.join(backupRoot, 'daily');
+    mkdirSync(daily, { recursive: true });
+    const stale = path.join(daily, 'n409-20250101-020000.dump');
+    writeFileSync(stale, 'FAKE-DUMP\n12\n', { mode: 0o644 });
+    chmodSync(stale, 0o644);
+    chmodSync(daily, 0o755);
+    runDay('20261002-020000', 1);
+    expect((statSync(stale).mode & 0o777).toString(8)).toBe('600');
+    expect((statSync(daily).mode & 0o777).toString(8)).toBe('700');
   });
 
   it('fails loudly when DATABASE_URL cannot be resolved', () => {

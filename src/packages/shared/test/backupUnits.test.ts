@@ -118,6 +118,13 @@ describe('the backup pair, for comparison', () => {
     expect(service).toContain('ExecStart=/opt/N409/infra/backup/pg-backup.sh');
   });
 
+  // The dump is the only unencrypted copy of the estate. The script sets its
+  // own umask so a hand-run is covered; the unit states the same bound where an
+  // operator reading it can see it, and covers anything else it comes to write.
+  it('creates nothing another local account can read', () => {
+    expect(directives(read(BACKUP_SERVICE))).toContain('UMask=0077');
+  });
+
   it('every ExecStart points at a script that exists in the repo', () => {
     for (const name of [BACKUP_SERVICE, VERIFY_SERVICE]) {
       const exec = directives(read(name)).find((l) => l.startsWith('ExecStart='));
