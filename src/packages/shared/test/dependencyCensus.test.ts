@@ -1051,3 +1051,122 @@ describe('CI pins the actions it runs to an immutable ref', () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Node: runtime vs dev, which the checks above deliberately cannot tell apart
+// ---------------------------------------------------------------------------
+
+/**
+ * Value imports only — the ones that survive compilation into `dist/`.
+ *
+ * `import type { FastifyInstance } from 'fastify'` is erased by tsc and needs
+ * nothing installed at run time; `import { fastify } from 'fastify'` is a
+ * `require` in the emitted file. Only the second is a runtime dependency, and
+ * the difference is invisible to {@link importSpecifiers}, which is why the
+ * whole-repo checks above pool `dependencies` with `devDependencies`.
+ *
+ * Reading the distinction off the *syntax* is only sound because
+ * `@typescript-eslint/consistent-type-imports` is `error` repo-wide
+ * (eslint.config.js): a type-only import that is written without `type` would
+ * also be elided by tsc — `verbatimModuleSyntax` is off — and would read here
+ * as a runtime import it is not. Lint is what keeps that case from existing.
+ * If that rule is ever relaxed, this test starts over-reporting rather than
+ * under-reporting, which is the right way round.
+ */
+function valueImportSpecifiers(source: string): string[] {
+  const runtime = source
+    // `import type { A } from 'x'`, `export type { A } from 'x'`
+    .replace(/\b(?:import|export)\s+type\s[\s\S]*?\bfrom\s*['"][^'"\n]+['"]/g, '')
+    // `import { type A, type B } from 'x'` — no binding survives erasure
+    .replace(/\bimport\s*\{(?:\s*type\s+[^,{}]+,)*\s*type\s+[^,{}]+,?\s*\}\s*from\s*['"][^'"\n]+['"]/g, '');
+  return importSpecifiers(runtime);
+}
+
+/**
+ * The workspaces whose `src/` is compiled into an image built with `--omit=dev`.
+ *
+ * Derived, not listed. The seed is every workspace whose Dockerfile installs
+ * with `--omit=dev`; the closure adds the `@n409/*` workspaces those declare as
+ * runtime dependencies, because each image copies their `dist/` too. A list
+ * written by hand here is the shape [[n409-census-population-blind-spot]] keeps
+ * describing: the next service is added to the repo and not to the list, and
+ * the census stays green by not asking about it.
+ *
+ * `@n409/web-frontend` is correctly outside the closure. Nothing declares it as
+ * a dependency — web copies its built `dist/` as static files — and Vite bundles
+ * its imports at build time, so no `node_modules` lookup happens at run time and
+ * `dependencies` vs `devDependencies` decides nothing there.
+ */
+function shippedWorkspaces(): string[] {
+  const nameToWs = new Map(WORKSPACES.map((ws) => [manifest(ws).name as string, ws]));
+  const shipped = new Set<string>();
+
+  for (const ws of WORKSPACES) {
+    const dockerfile = path.join(repoRoot, ws, 'Dockerfile');
+    if (!existsSync(dockerfile)) continue;
+    if (!/npm ci[^\n]*--omit=dev/.test(readFileSync(dockerfile, 'utf8'))) continue;
+    shipped.add(ws);
+  }
+
+  for (const ws of [...shipped]) {
+    const queue = [ws];
+    while (queue.length) {
+      const cur = queue.pop()!;
+      for (const dep of Object.keys(manifest(cur).dependencies ?? {})) {
+        const depWs = nameToWs.get(dep);
+        if (!depWs || shipped.has(depWs)) continue;
+        shipped.add(depWs);
+        queue.push(depWs);
+      }
+    }
+  }
+  return [...shipped].sort();
+}
+
+describe('shipped code imports nothing that a production install omits', () => {
+  const shipped = shippedWorkspaces();
+
+  // Anti-vacuity: this whole describe is derived from Dockerfiles, so a rename
+  // that stops matching would leave it silently asking about nothing at all.
+  it('the shipped set is the services that build a production image', () => {
+    expect(shipped).toEqual([
+      'src/packages/shared',
+      'src/services/report',
+      'src/services/valuation',
+      'src/services/web',
+    ]);
+  });
+
+  for (const ws of shipped) {
+    it(ws, () => {
+      const m = manifest(ws);
+      const prod = new Set(Object.keys(m.dependencies ?? {}));
+      const dev = new Set(Object.keys(m.devDependencies ?? {}));
+      const misclassified = new Map<string, string>();
+
+      // `src/` is what tsc compiles into `dist/`; `test/` is a sibling and is
+      // never copied into an image. Both tsconfig.json (`include: src/**/*`)
+      // and every Dockerfile's COPY list say so.
+      const srcDir = path.join(repoRoot, ws, 'src');
+      for (const file of filesUnder(srcDir)) {
+        if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(file)) continue;
+        for (const spec of valueImportSpecifiers(readFileSync(file, 'utf8'))) {
+          const pkg = packageOf(spec);
+          if (!pkg || prod.has(pkg)) continue;
+          // Not declared at all is the undeclared-import case above, not this one.
+          if (!dev.has(pkg)) continue;
+          if (!misclassified.has(pkg)) misclassified.set(pkg, path.relative(repoRoot, file));
+        }
+      }
+
+      expect(
+        [...misclassified].map(([pkg, where]) => `${pkg} (imported for value in ${where})`),
+        `${ws} ships these but declares them under devDependencies. Its image runs ` +
+          `\`npm ci --omit=dev\`, so the production tree does not contain them — the ` +
+          `container either dies on the first require, or, worse, survives on npm ` +
+          `hoisting another workspace's copy and runs a version this manifest never ` +
+          `chose. Move them to dependencies.`,
+      ).toEqual([]);
+    });
+  }
+});
