@@ -143,17 +143,51 @@ describe('valuation bridge (feature 3)', () => {
     }
   });
 
-  it('averages the market approach multiples and ignores non-numeric ones', () => {
-    const withMultiples = (multiples: unknown) => ({
-      fmv_per_share: 1,
-      equity_value: 1_000_000,
-      approaches: { market: { weight: 1, multiples } },
-    });
+  const withMultiples = (multiples: unknown, extra: Record<string, unknown> = {}) => ({
+    fmv_per_share: 1,
+    equity_value: 1_000_000,
+    approaches: { market: { weight: 1, multiples, ...extra } },
+  });
+
+  it('medians the market approach multiples and ignores non-numeric ones', () => {
     const bridge = buildBridge(withMultiples([4, 6, 'n/a']), withMultiples([5, 9]));
     const mm = bridge.drivers.find((d) => d.key === 'market_multiple')!;
-    expect(mm.from).toBe(5); // (4+6)/2, the 'n/a' dropped
+    expect(mm.from).toBe(5); // median of [4, 6], the 'n/a' dropped
     expect(mm.to).toBe(7);
     expect(mm.delta).toBe(2);
+  });
+
+  it('reports the multiple the engine selected, not the mean of the set', () => {
+    // A comp set with one richly-priced peer is the normal shape, and the mean
+    // is far from the median the engine strikes. This row sits in a table of
+    // drivers for a conclusion neither side of it moved: both runs value the
+    // company at 6×, and the mean would have reported 10× falling to 6.8×.
+    const bridge = buildBridge(withMultiples([4, 5, 6, 7, 28]), withMultiples([4, 5, 6, 7, 12]));
+    const mm = bridge.drivers.find((d) => d.key === 'market_multiple')!;
+    expect(mm.from).toBe(6);
+    expect(mm.to).toBe(6);
+    expect(mm.delta).toBe(0);
+  });
+
+  it('prefers the engine’s own selected_multiple when the run recorded one', () => {
+    const bridge = buildBridge(
+      withMultiples([4, 6, 8], { selected_multiple: 6 }),
+      withMultiples([4, 6, 8], { selected_multiple: 7.5 }),
+    );
+    const mm = bridge.drivers.find((d) => d.key === 'market_multiple')!;
+    expect(mm.from).toBe(6);
+    expect(mm.to).toBe(7.5);
+  });
+
+  it('drops a non-positive multiple, as the market approach does', () => {
+    // `auto_comparables` takes EV/EBITDA straight off each ticker, so a peer
+    // with negative EBITDA contributes a negative multiple. The engine filters
+    // those before selecting; averaging them in put the driver row below every
+    // multiple the set contains.
+    const bridge = buildBridge(withMultiples([-8, 5, 7]), withMultiples([-8, 5, 7]));
+    const mm = bridge.drivers.find((d) => d.key === 'market_multiple')!;
+    expect(mm.from).toBe(6);
+    expect(mm.to).toBe(6);
   });
 
   it('falls back to a scalar multiple when the list is absent or empty', () => {

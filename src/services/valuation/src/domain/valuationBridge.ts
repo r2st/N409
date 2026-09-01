@@ -22,6 +22,7 @@
  */
 
 import { isSpecialtyKind } from './specialty.js';
+import { appliedMarketMultiple } from './valuationAnalytics.js';
 import type { ValuationKind } from './valuation.js';
 
 /**
@@ -108,17 +109,26 @@ function approachWeight(r: Results, name: string): number | null {
   return entry ? num(entry.weight) : null;
 }
 
-/** Average market multiple, if the market approach carries one. */
+/**
+ * The multiple the market approach applied, on each side of the bridge.
+ *
+ * The **mean** of the comparable set before, called "Market multiple" in the
+ * driver table beside the factors that move the conclusion. The engine selects
+ * `statistics.median` of the positive multiples and puts its answer on the
+ * result as `selected_multiple`, so on the ordinary shape of a comp set — one
+ * richly-priced peer among five — the row named a figure the valuation never
+ * used, and its `delta` was the movement of a statistic nobody struck. A set
+ * that goes from `[4, 5, 6, 7, 28]` to `[4, 5, 6, 7, 12]` moved the multiple
+ * the opinion rests on not at all, and this reported it falling 3.2×.
+ *
+ * `appliedMarketMultiple` is the one answer to that question — the same
+ * function the analytics benchmark reads, fixed there for the same reason and
+ * left restated here.
+ */
 function marketMultiple(r: Results): number | null {
   const approaches = (r.approaches ?? {}) as Results;
-  const market = approaches.market as Results | undefined;
-  if (!market) return null;
-  const ms = market.multiples;
-  if (Array.isArray(ms) && ms.length > 0) {
-    const vals = ms.map(Number).filter((n) => Number.isFinite(n));
-    if (vals.length > 0) return vals.reduce((a, b) => a + b, 0) / vals.length;
-  }
-  return num(market.multiple);
+  if (!approaches.market) return null;
+  return appliedMarketMultiple(r) ?? num((approaches.market as Results).multiple);
 }
 
 function driver(key: string, label: string, from: number | null, to: number | null): BridgeDriver {
