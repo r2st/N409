@@ -127,6 +127,26 @@ function registeredLabels(): Map<string, string[]> {
   return labels;
 }
 
+/**
+ * Each metric's help text, from the same registration the names come from.
+ *
+ * Only the ones whose help says the gauge reads zero for something other than
+ * a measurement are interesting here, and saying so in the help is the
+ * convention this estate already follows — see `n409_cgroup_memory_max_bytes`.
+ */
+function registeredHelp(): Map<string, string> {
+  const help = new Map<string, string>();
+  for (const file of sourceFiles(path.join(REPO, 'src'))) {
+    const src = readFileSync(file, 'utf8');
+    for (const m of src.matchAll(
+      /\.(?:counter|histogram|gauge)\(\s*'([a-z_][a-z0-9_]*)'\s*,\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g,
+    )) {
+      help.set(m[1]!, m[2] ?? m[3] ?? '');
+    }
+  }
+  return help;
+}
+
 /** One rule: its expression, and the whole block including its annotations. */
 interface Rule {
   name: string;
@@ -203,6 +223,62 @@ describe('alert rules', () => {
     expect(RULES).toContain('n409_build_info{source="unknown"}');
     expect(UNKNOWN_BUILD.source).toBe('unknown');
     expect(readBuildInfo({ BUILD_SHA: 'a'.repeat(40) }, { defaultFile: undefined }).source).toBe('env');
+  });
+
+  it('never divides by a gauge whose zero means "there is no such limit"', () => {
+    /*
+     * R337, and the fourth direction this file watches. The three above are
+     * about a rule that matches *nothing*: a metric nothing exports, a label
+     * value nothing sets, a label name nothing carries. This one is the
+     * opposite failure and is worse for the same reason — a rule that matches
+     * *everything*, permanently, and says the opposite of the truth.
+     *
+     * Several gauges here report 0 for a state that is not a measurement, and
+     * that is a deliberate choice each of them argues: `cgroupMemory.ts` says
+     * "a ceiling of zero is impossible, so the value is unambiguous, and it
+     * makes 'this unit has no limit' something an alert can match on rather
+     * than an absent series that looks the same as a service that is down".
+     * True — and it makes the same gauge lethal as a divisor.
+     * `MemoryNearCgroupLimit` divided by `n409_cgroup_memory_max_bytes`, so a
+     * unit with no ceiling produced `current / 0` = `+Inf`, which is greater
+     * than 0.9, and raised a ticket that could not be closed for a condition
+     * that did not exist.
+     *
+     * `(metric > 0)` as the denominator is the fix and the thing held here: it
+     * is a filter, so it keeps the value and drops only the reading that means
+     * "there is nothing to be near".
+     */
+    const zeroMeansAbsent = [...registeredHelp()]
+      .filter(([, help]) => /\bor 0 when\b/.test(help))
+      .map(([name]) => name);
+    // Non-vacuity: the convention has to still be in the source for the scan
+    // below to have anything to check.
+    expect(zeroMeansAbsent).toContain('n409_cgroup_memory_max_bytes');
+
+    const unguarded: string[] = [];
+    for (const rule of parsedRules()) {
+      for (const metric of zeroMeansAbsent) {
+        if (!new RegExp(`/[\\s(]*${metric}\\b`).test(rule.expr)) continue;
+        // Parenthesised, and that is not pedantry: the unguarded expression
+        // `current / max_bytes > 0.9` *contains* the substring `max_bytes > 0`,
+        // so a looser pattern here passes on exactly the rule this case exists
+        // to fail. `(metric > 0)` is also the only spelling that is a filter
+        // rather than a comparison against the whole division.
+        if (!new RegExp(`\\(\\s*${metric}\\s*>\\s*0\\s*\\)`).test(rule.expr))
+          unguarded.push(`${rule.name}/${metric}`);
+      }
+    }
+    expect(unguarded, 'rules dividing by a gauge that reads 0 when the limit is unset').toEqual([]);
+  });
+
+  it('has a rule for a unit whose memory ceiling has gone', () => {
+    // The other half of the fix above: filtering the divisor drops the
+    // no-ceiling unit out of `MemoryNearCgroupLimit` entirely, and a reading
+    // that is dropped by every rule is one nobody sees. R99 gave all five
+    // units a MemoryMax because the box is 3.8 GB and one unit's leak must not
+    // be able to take the other four with it; a unit that has lost its ceiling
+    // is back to that, silently.
+    expect(RULES).toContain('n409_cgroup_memory_max_bytes == 0');
   });
 
   it('groups and annotates by labels the metrics in that rule actually carry', () => {

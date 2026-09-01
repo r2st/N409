@@ -133,12 +133,46 @@ groups:
       # The cgroup limiter SIGKILLs a unit over MemoryMax and systemd restarts
       # it, leaving nothing in the process's own output to say why. This is the
       # warning that comes before that.
+      #
+      # The denominator is filtered, not divided by raw, and the `> 0` is doing
+      # real work rather than being defensive (R337, methodology M11).
+      # `n409_cgroup_memory_max_bytes` is documented as "MemoryMax for this
+      # unit, or 0 when unlimited", and 0 was chosen deliberately: `cgroupMemory.ts`
+      # says a ceiling of zero is impossible, so the value is unambiguous and
+      # "this unit has no limit" becomes something a rule can match. Dividing by
+      # it turns exactly that case into `current / 0` — `+Inf` in PromQL, which
+      # is greater than 0.9 — so a unit with no ceiling raised a ticket that
+      # could never be closed and said the opposite of the truth while doing it.
+      # `(metric > 0)` is a filter: it keeps the series and its value, and drops
+      # the reading that means "there is nothing to be near".
       - alert: MemoryNearCgroupLimit
-        expr: n409_cgroup_memory_current_bytes / n409_cgroup_memory_max_bytes > 0.9
+        expr: n409_cgroup_memory_current_bytes / (n409_cgroup_memory_max_bytes > 0) > 0.9
         for: 10m
         labels: { severity: ticket }
         annotations:
           summary: '{{ $labels.job }} is within 10% of its MemoryMax'
+
+      # And the case the filter above now drops, which is a finding of its own
+      # and had no rule at all. R99 gave all five units a MemoryMax on the
+      # argument that the box is 3.8 GB and one unit's leak must not be allowed
+      # to take the other four down with it. A unit whose ceiling has gone —
+      # an edited unit file, a drop-in, a hand-started process — is back to
+      # exactly that, and every other memory instrument keeps reading normally
+      # right up until the host OOM killer picks a victim that need not be the
+      # process at fault.
+      #
+      # Paired with `current > 0` rather than standing alone: off Linux and on
+      # a cgroup v1 host `cgroupMemory.ts` reports 0 for *every* field, so the
+      # bare `max == 0` is also what a laptop looks like. A readable cgroup
+      # always charges a running process something, so the pair says "we can
+      # read the cgroup, and it has no ceiling".
+      - alert: MemoryCeilingMissing
+        expr: n409_cgroup_memory_max_bytes == 0 and n409_cgroup_memory_current_bytes > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} is running with no MemoryMax; a leak here takes the whole box'
+          runbook: 'systemctl show n409-<unit> -p MemoryMax; infra/systemd holds the intended value'
 
   - name: n409-http
     rules:
