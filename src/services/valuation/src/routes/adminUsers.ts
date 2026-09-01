@@ -82,8 +82,8 @@ const CreateBody = z.object({
   password: z
     .string()
     .min(PASSWORD_MIN_LENGTH, `password must be at least ${PASSWORD_MIN_LENGTH} characters`),
-  first_name: z.string().min(1).max(100).optional(),
-  last_name: z.string().min(1).max(100).optional(),
+  first_name: nonBlankText(1, 100).optional(),
+  last_name: nonBlankText(1, 100).optional(),
   partner_id: z.string().nullable().optional(),
   verified: z.boolean().optional(),
   roles: RoleSet.min(1),

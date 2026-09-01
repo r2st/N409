@@ -17,6 +17,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { quoteForMessage } from '../domain/displayText.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * Narrative prompt library management (migration 0114). The sibling of the Bot
@@ -30,7 +31,7 @@ import { quoteForMessage } from '../domain/displayText.js';
 
 const PatchBody = z
   .object({
-    label: z.string().min(1).max(200),
+    label: nonBlankText(1, 200),
     guidance: z.string().min(1).max(8000),
     enabled: z.boolean(),
     // Sparse ordering; bounded so a typo can't sort a section into next week.

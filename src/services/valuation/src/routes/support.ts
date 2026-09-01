@@ -7,6 +7,7 @@ import { createSupportMessage, listSupportMessages, setSupportMessageStatus } fr
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * In-app support (remaining-gaps §3 #8, the Intercom-style widget): any
@@ -15,7 +16,7 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  */
 
 const CreateBody = z.object({
-  subject: z.string().min(1).max(300),
+  subject: nonBlankText(1, 300),
   body: z.string().min(1).max(20_000),
   page_path: z.string().max(500).optional(),
 });

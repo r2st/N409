@@ -17,6 +17,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { int4Version } from '../domain/int4.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * Bot Prompts management (remaining-gaps §3 #4, §6 P1 #8): the DB-backed
@@ -27,7 +28,7 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 const PatchBody = z
   .object({
-    label: z.string().min(1).max(120),
+    label: nonBlankText(1, 120),
     description: z.string().max(2000).nullable(),
     system_prompt: z.string().min(1).max(20_000),
     model: z.string().min(1).max(200).nullable(),

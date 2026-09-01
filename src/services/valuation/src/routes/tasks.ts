@@ -13,10 +13,11 @@ import { pageParam } from '../domain/pagination.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { refuseIfRetired, refuseIfSubjectRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 const CreateBody = z.object({
   kind: z.enum(REVIEW_TASK_KINDS),
-  title: z.string().min(1).max(300),
+  title: nonBlankText(1, 300),
   description: z.string().max(5000).nullable().optional(),
   assignee_id: z.string().nullable().optional(),
   sla_hours: z
@@ -32,7 +33,7 @@ const CreateBody = z.object({
 const PatchBody = z
   .object({
     kind: z.enum(REVIEW_TASK_KINDS),
-    title: z.string().min(1).max(300),
+    title: nonBlankText(1, 300),
     description: z.string().max(5000).nullable(),
     status: z.enum(REVIEW_TASK_STATUSES),
     assignee_id: z.string().nullable(),

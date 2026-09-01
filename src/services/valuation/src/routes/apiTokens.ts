@@ -19,6 +19,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * M3 feature 14 — partner API token management. Tokens are scoped to a
@@ -62,7 +63,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
         'An API token cannot mint another API token — create it from the partner console while signed in',
       );
 
-    const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(req.body);
+    const parsed = z.object({ name: nonBlankText(1, 200) }).safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid token', parsed.error);
 
     const { token, secret } = await createApiToken(deps.pool, {

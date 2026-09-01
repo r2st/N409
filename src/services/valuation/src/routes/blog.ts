@@ -18,6 +18,7 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * The marketing blog (design §16.2, P2-20).
@@ -74,7 +75,7 @@ const Slug = z
 
 const PostBody = z.object({
   slug: Slug,
-  title: z.string().min(1).max(200),
+  title: nonBlankText(1, 200),
   excerpt: z.string().max(500).default(''),
   body_html: z.string().min(1).max(200_000),
   category: z.string().min(1).max(100).default('General'),

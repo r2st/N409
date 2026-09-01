@@ -18,6 +18,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { updateArticle } from '../repos/helpArticles.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * Help / knowledge base (P2 #10): any signed-in user reads published
@@ -43,7 +44,7 @@ const Slug = z
 
 const ArticleBody = z.object({
   slug: Slug,
-  title: z.string().min(1).max(200),
+  title: nonBlankText(1, 200),
   category: z.string().min(1).max(100).default('General'),
   keywords: z.string().max(500).default(''),
   body_html: z.string().min(1).max(50_000),

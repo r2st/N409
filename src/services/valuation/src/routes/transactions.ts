@@ -19,6 +19,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * Transaction & funding-round history (M4, P1 #24). Reads follow valuation
@@ -33,7 +34,7 @@ const isoDate = z
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 
 const RoundBody = z.object({
-  name: z.string().min(1).max(200),
+  name: nonBlankText(1, 200),
   security_type: z.string().min(1).max(200).nullable().optional(),
   closed_on: isoDate.nullable().optional(),
   amount_raised_cents: cents.nullable().optional(),

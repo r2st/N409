@@ -58,12 +58,13 @@ import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 const RegisterBody = z.object({
   email: EmailAddress,
   password: z.string().min(10, 'password must be at least 10 characters'),
-  first_name: z.string().min(1).max(100).optional(),
-  last_name: z.string().min(1).max(100).optional(),
+  first_name: nonBlankText(1, 100).optional(),
+  last_name: nonBlankText(1, 100).optional(),
 });
 
 const LoginBody = z.object({
@@ -101,8 +102,8 @@ const InviteTokenBody = z.object({ token: z.string().min(1) });
 const AcceptInviteBody = z.object({
   token: z.string().min(1),
   password: z.string().min(10, 'password must be at least 10 characters'),
-  first_name: z.string().min(1).max(100).optional(),
-  last_name: z.string().min(1).max(100).optional(),
+  first_name: nonBlankText(1, 100).optional(),
+  last_name: nonBlankText(1, 100).optional(),
 });
 
 /**

@@ -33,6 +33,7 @@ import {
 } from '../domain/research.js';
 import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * Web-grounded market research (design §12.3).
@@ -74,7 +75,7 @@ const RunBody = z
      * caller-supplied string that reaches the provider, and the reason
      * `assertSubjectNotClient` exists.
      */
-    subject: z.string().min(2).max(120).optional(),
+    subject: nonBlankText(2, 120).optional(),
   })
   .strict();
 
