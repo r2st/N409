@@ -159,6 +159,46 @@ export async function latestDeliveredVersion(pool: pg.Pool, reportId: string): P
   return rows[0]?.version ?? null;
 }
 
+/**
+ * Which version of this report an outside reader is owed, given the engagement's
+ * state — the delivered one where there is one, the current body otherwise.
+ *
+ * THE QUESTION, RATHER THAN A FOURTH ANSWER TO IT (round 327, methodology M4).
+ *
+ * R319 pinned the session PDF download to {@link latestDeliveredVersion} and
+ * named three doors that had to agree about the deliverable: that download, the
+ * evidence bundle and the partner API. It counted the doors that serve *bytes*.
+ * The auditor portal serves the same document as content — it is the page an
+ * outside auditor is sent a link to, and it titles what it shows with
+ * `reportStatusFor(state)`, which on a published engagement reads `published` —
+ * and it asked for `current_version`. So the defect R319 closed on the PDF was
+ * still reachable, by the reader it most concerns: an analyst saves a body after
+ * publication, and the auditor verifying the 409A is shown that body as the
+ * issued report. Nothing about it went through the publish gate — it carries no
+ * signature covering it (rule 4) and no QA review of it (rule 3) — and the
+ * portal does not so much as say the version number, so there is nothing on the
+ * page to notice it by.
+ *
+ * `GET /report` is the same door for the client and the partner: the report tab
+ * renders whatever content it is handed, so a published engagement showed the
+ * edit on screen while `report.pdf` beside it delivered the signed version.
+ *
+ * Asked here, once, so a fifth reader inherits the answer rather than choosing
+ * one. Draft states are unchanged and deliberately so: a draft renders fresh on
+ * every read, which is the whole point of the stamp.
+ */
+export async function deliverableVersion(
+  pool: pg.Pool,
+  report: Pick<ReportRow, 'id' | 'current_version'>,
+  state: ValuationState,
+): Promise<number> {
+  if (!DELIVERED_REPORT_STATES.has(state)) return report.current_version;
+  // Null where a published engagement never rendered anything. Its current body
+  // is then the only body there is, and the lazy render in `report.pdf` is what
+  // issues the first deliverable — see `reportPostPublishEdit.test.ts`.
+  return (await latestDeliveredVersion(pool, report.id)) ?? report.current_version;
+}
+
 /** Version list for the history panel — content itself is fetched per version. */
 export type ReportVersionSummary = Omit<ReportVersionRow, 'content' | 'pdf'> & { has_pdf: boolean };
 

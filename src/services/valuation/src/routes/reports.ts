@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import type { ReportPdfSection, ReportPdfSummary } from '@n409/report/pdf';
 import { renderReportPdf } from '../clients/reportRender.js';
-import { canEditWorkingData, canReadReport, canReadValuation } from '../auth/rbac.js';
+import { canEditWorkingData, canReadReport, canReadValuation, isOps } from '../auth/rbac.js';
 import {
   contentFromManagedTemplate,
   DELIVERED_REPORT_STATES,
@@ -25,7 +25,7 @@ import {
   findReportByValuation,
   getVersionContent,
   getVersionPdf,
-  latestDeliveredVersion,
+  deliverableVersion,
   listVersions,
   REPORT_VERSION_PAGE_LIMIT,
   reportView,
@@ -697,7 +697,28 @@ export function registerReportRoutes(
     const valuation = await loadValuation(deps.pool, principal, id);
     if (!canReadReport(principal, toRef(valuation))) throw problems.notFound();
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
-    const version = await getVersionContent(deps.pool, report.id, report.current_version);
+    /*
+     * Ops get the body they are editing; everybody else gets the one that was
+     * issued.
+     *
+     * The report tab renders whatever content this hands back, and on a
+     * published engagement the newest saved body is not the deliverable — see
+     * `deliverableVersion`. So a client or a partner reading the report on
+     * screen was shown an edit made after publication, while the PDF download
+     * beside it correctly served the signed version. Two answers to one
+     * question, on one screen.
+     *
+     * An analyst must keep seeing `current_version` or the editor would load a
+     * body over their own unsaved work; the `If-Match` below is the same
+     * pointer for the same reason, and no non-ops caller can reach `PUT`.
+     */
+    const version = await getVersionContent(
+      deps.pool,
+      report.id,
+      isOps(principal)
+        ? report.current_version
+        : await deliverableVersion(deps.pool, report, valuation.state),
+    );
     // The validator an editor sends back as If-Match when it saves. The report
     // pointer, not the valuation's `version` — the two move independently and
     // an analyst editing prose is racing other prose, not the engagement's
@@ -1114,12 +1135,12 @@ export function registerReportRoutes(
      * Only on a published engagement: a draft renders its current body fresh
      * and stamped on every read, which is the whole point of the stamp.
      */
-    const deliveredVersion =
-      report && DELIVERED_REPORT_STATES.has(valuation.state)
-        ? await latestDeliveredVersion(deps.pool, report.id)
-        : null;
     const version = report
-      ? await getVersionContent(deps.pool, report.id, deliveredVersion ?? report.current_version)
+      ? await getVersionContent(
+          deps.pool,
+          report.id,
+          await deliverableVersion(deps.pool, report, valuation.state),
+        )
       : null;
     if (!report || !version) throw problems.notFound('No report yet');
 

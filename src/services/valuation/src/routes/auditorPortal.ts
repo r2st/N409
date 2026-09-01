@@ -7,7 +7,7 @@ import { isOps, REPORT_VISIBLE_STATES, type Principal } from '../auth/rbac.js';
 import { reportStatusFor } from '../domain/report.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
-import { findReportByValuation, getVersionContent } from '../repos/reports.js';
+import { deliverableVersion, findReportByValuation, getVersionContent } from '../repos/reports.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { listQaReviews } from '../repos/qaReviews.js';
 import { headlineLabels } from '../domain/specialty.js';
@@ -203,7 +203,16 @@ export function registerAuditorPortalRoutes(
     const reportShared = REPORT_VISIBLE_STATES.has(valuation.state);
     const reportRow = reportShared ? await findReportByValuation(deps.pool, valuation.id) : null;
     if (reportRow) {
-      const version = await getVersionContent(deps.pool, reportRow.id, reportRow.current_version);
+      // The version that was issued, not the newest one somebody has typed.
+      // Saving a body after publication is allowed and the publish gate never
+      // runs again, so on a published engagement the two are different
+      // questions — see `deliverableVersion`, which is where R319's answer for
+      // the PDF now lives so this door gives the same one.
+      const version = await getVersionContent(
+        deps.pool,
+        reportRow.id,
+        await deliverableVersion(deps.pool, reportRow, valuation.state),
+      );
       report = version
         ? {
             template_version: reportRow.template_version,

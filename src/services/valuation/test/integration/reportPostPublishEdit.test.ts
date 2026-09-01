@@ -149,6 +149,70 @@ describe.skipIf(!dbUp)('a report edited after publication', () => {
     expect(readable(res.rawPayload)).toContain('Unsigned Revision After Publication');
   });
 
+  /**
+   * The reader R319's fix was written for, at the door it did not cover.
+   *
+   * The auditor portal serves the report as content rather than as bytes, so it
+   * was not one of the three doors that were made to agree — and it is the one
+   * an outside auditor is sent a link to, titled with `reportStatusFor(state)`,
+   * which on a published engagement reads `published`. It asked for
+   * `current_version`, so the body saved after publication — covered by no
+   * signature and by no QA review — was shown to the auditor as the issued 409A.
+   */
+  it('shows an auditor the issued report, not a body saved after publication', async () => {
+    const id = await publishedThenEdited('Auditor Reads The Edit, Inc.');
+
+    const link = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/auditor-access`,
+      headers: authHeader(ops.token),
+      payload: { label: 'PwC', expires_in_days: 30 },
+    });
+    expect(link.statusCode).toBe(201);
+
+    const bundle = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auditor/portal',
+      payload: { token: link.json().token },
+    });
+    expect(bundle.statusCode).toBe(200);
+    const report = bundle.json().report as { status: string; content: { title: string } } | null;
+    expect(report).not.toBeNull();
+    // It still says `published`, which is the claim that makes serving the edit
+    // wrong rather than merely inconsistent.
+    expect(report!.status).toBe('published');
+    expect(report!.content.title).not.toBe('Unsigned Revision After Publication');
+  });
+
+  /**
+   * The same divergence on the client's own screen: the report tab renders
+   * whatever `GET /report` hands back, so the body on the page disagreed with
+   * the PDF the download button beside it serves.
+   */
+  it('shows the client the issued body on screen, while ops keep editing the current one', async () => {
+    const id = await publishedThenEdited('Client Reads The Edit, Inc.');
+
+    const seen = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${id}/report`,
+      headers: authHeader(client.token),
+    });
+    expect(seen.statusCode).toBe(200);
+    expect(seen.json().version.version).toBe(1);
+    expect(seen.json().version.content.title).not.toBe('Unsigned Revision After Publication');
+
+    // The editor is untouched — an analyst opening the tab must get the body
+    // they are working on, or the next save would write over it.
+    const editing = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${id}/report`,
+      headers: authHeader(ops.token),
+    });
+    expect(editing.statusCode).toBe(200);
+    expect(editing.json().version.version).toBe(2);
+    expect(editing.json().version.content.title).toBe('Unsigned Revision After Publication');
+  });
+
   it('still lets an engagement published before any render produce its first deliverable', async () => {
     const created = await ctx.app.inject({
       method: 'POST',
