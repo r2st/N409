@@ -25,6 +25,20 @@ export interface OpmInputs {
   commonShares: number;
   /** Discount for lack of marketability as a decimal, e.g. 0.30. */
   dlom: number;
+  /**
+   * Discount for lack of control as a decimal, e.g. 0.10. Optional, and absent
+   * means none.
+   *
+   * The engine concludes `fmv_per_share = common_per_share × (1 − dloc) ×
+   * (1 − dlom)` on every allocation path it has, so a stress of that conclusion
+   * that applies only the marketability leg is not a stress of it. This was
+   * omitted because the analyst dashboard — the first and for a while the only
+   * caller — takes its assumptions from a form that has never asked for a DLOC,
+   * and it still does not: the field is optional and that caller passes
+   * nothing. What changed is that Exhibits F-2 and F-3 now restate the *report's*
+   * conclusion, and they must apply the pair the conclusion applied.
+   */
+  dloc?: number;
 }
 
 /** Abramowitz & Stegun 7.1.26 erf approximation (|error| < 1.5e-7). */
@@ -66,7 +80,15 @@ export function blackScholesCall(
   return spot * normCdf(d1) - strike * Math.exp(-riskFreeRate * termYears) * normCdf(d2);
 }
 
-/** Per-common-share FMV in cents: OPM call value spread over common, less DLOM. */
+/**
+ * Per-common-share FMV in cents: the OPM call value spread over common, then
+ * the discount pair.
+ *
+ * Multiplicatively, as `compute._record_discounts` says in as many words: at a
+ * 10% DLOC and a 30% DLOM the shareholder keeps 63% of the marketable value,
+ * not 60%. Subtracting the sum is the arithmetic this mirrors the engine to
+ * avoid.
+ */
 export function opmFmvPerShareCents(inputs: OpmInputs): number {
   if (inputs.commonShares <= 0) return 0;
   const call = blackScholesCall(
@@ -77,8 +99,8 @@ export function opmFmvPerShareCents(inputs: OpmInputs): number {
     inputs.riskFreeRate,
   );
   const perShare = call / inputs.commonShares;
-  const dlomClamped = Math.max(0, Math.min(inputs.dlom, 0.99));
-  return perShare * (1 - dlomClamped);
+  const clamp = (d: number) => Math.max(0, Math.min(d, 0.99));
+  return perShare * (1 - clamp(inputs.dloc ?? 0)) * (1 - clamp(inputs.dlom));
 }
 
 export interface SensitivityCell {

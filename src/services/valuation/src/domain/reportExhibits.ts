@@ -2199,7 +2199,24 @@ function sensitivityBasis(
   const equityValue = num(results.equity_value);
   const commonShares = num(results.fully_diluted_common);
   const strike = aggregatePreference(inputs);
-  const dlom = num(record(results.discounts)?.dlom) ?? 0;
+  const discounts = record(results.discounts);
+  const dlom = num(discounts?.dlom) ?? 0;
+  /*
+   * Both discounts, because the conclusion applies both.
+   *
+   * `fmv_per_share = common_per_share × (1 − dloc) × (1 − dlom)` on every
+   * allocation path the engine has, and this grid read only the marketability
+   * leg. On any engagement carrying a control discount — the ordinary case for
+   * a minority common interest — every cell of F-2 and F-3 stood above the
+   * conclusion by 1/(1 − dloc), and the cell marked "(base)" disagreed with the
+   * concluded value per share printed in Exhibit H and on the summary page of
+   * the same report. A 10% DLOC put the base case 11% over its own conclusion,
+   * under a sentence saying the table restates it.
+   *
+   * The spread the exhibit reports is unaffected — a constant factor cancels
+   * out of every delta — which is exactly why nothing in the prose read wrong.
+   */
+  const dloc = num(discounts?.dloc) ?? 0;
 
   if (
     volatility === null ||
@@ -2223,6 +2240,7 @@ function sensitivityBasis(
     riskFreeRate,
     commonShares,
     dlom,
+    dloc,
   };
 }
 

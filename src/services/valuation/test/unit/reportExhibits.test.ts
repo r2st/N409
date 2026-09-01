@@ -1487,6 +1487,42 @@ describe('Exhibit F-2 — allocation sensitivity', () => {
     }
   });
 
+  /**
+   * The base cell is the conclusion, so it carries the conclusion's discounts.
+   *
+   * The engine concludes `common_per_share × (1 − dloc) × (1 − dlom)` on every
+   * allocation path it has. This grid applied only the marketability leg, so on
+   * an engagement carrying a control discount every cell stood above the
+   * conclusion by 1/(1 − dloc) and the cell marked "(base)" disagreed with the
+   * concluded value per share on the summary page and in Exhibit H of the same
+   * report. Nothing caught it: a constant factor cancels out of every delta, so
+   * the spread the exhibit reports — and every assertion above about shape —
+   * was right either way.
+   */
+  const baseCell = (results: Record<string, unknown>): number => {
+    const html = f2(results)!.html;
+    const match = /<strong>([^<]+)<\/strong> \(base\)/.exec(html);
+    expect(match).not.toBeNull();
+    return Number(match![1]!.replace(/[^0-9.]/g, ''));
+  };
+
+  it('applies the control discount the conclusion applied', () => {
+    const withDloc = baseCell(RESULTS);
+    const without = baseCell({ ...RESULTS, discounts: { ...RESULTS.discounts, dloc: 0 } });
+    // The fixture's DLOC is 10%, and the two must differ by exactly that.
+    expect(withDloc).toBeLessThan(without);
+    expect(withDloc).toBeCloseTo(without * 0.9, 4);
+  });
+
+  it('takes the two discounts multiplicatively, as the engine does', () => {
+    // At 10% and 25% the holder keeps 67.5% of the marketable value, not 65%.
+    // Subtracting the sum is the slip `compute._record_discounts` names.
+    const neither = baseCell({ ...RESULTS, discounts: { dloc: 0, dlom: 0 } });
+    const both = baseCell(RESULTS);
+    expect(both).toBeCloseTo(neither * 0.9 * 0.75, 4);
+    expect(both).not.toBeCloseTo(neither * (1 - 0.35), 4);
+  });
+
   it('reads the preference off the blended model when there are no share classes', () => {
     const s = f2(RESULTS, { liquidation_preference: 10_000_000 });
     expect(s).not.toBeNull();
