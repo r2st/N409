@@ -34,6 +34,7 @@ decimal places would be false precision.
 from __future__ import annotations
 
 import math
+from datetime import date
 
 from .errors import EngineInputError
 
@@ -65,6 +66,37 @@ def _level(value: object, name: str) -> float:
     if out <= 0:
         raise EngineInputError(f"market_movement.{name} must be positive (it is an index level)")
     return out
+
+
+def _period(value: object, name: str) -> date | None:
+    """One end of the interval the benchmark return was measured over.
+
+    Absent is fine — the exhibit falls back to "Round date to valuation date" —
+    but a string that is not a day is not. These two fields are not arithmetic:
+    they are printed verbatim into Exhibit C's market-movement block as the
+    window the index levels were read at, on a signed §409A opinion. The block
+    took whatever it was handed and truncated it to ten characters, so
+    ``2026-02-31`` reached the page as a date that does not exist and
+    ``"last autumn"`` reached it as ``"last autumn"``, each stated as the
+    period a measurement covers.
+
+    Checked against the calendar rather than a shape, for the reason
+    `rollforward.ts`'s `isoDate` gives: ``2026-02-31`` matches every plausible
+    pattern and is not a day. Sliced to ten characters first, so a caller
+    passing a full ISO instant keeps working.
+    """
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        raise EngineInputError(f"market_movement.{name} must be an ISO date (YYYY-MM-DD)")
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError as exc:
+        raise EngineInputError(
+            f"market_movement.{name} must be an ISO date (YYYY-MM-DD); got {value.strip()[:40]!r}"
+        ) from exc
 
 
 def market_movement(block: dict) -> dict:
@@ -130,12 +162,23 @@ def market_movement(block: dict) -> dict:
     name = block.get("index_name")
     if isinstance(name, str) and name.strip():
         out["index_name"] = name.strip()[:120]
-    period_start = block.get("period_start")
-    period_end = block.get("period_end")
-    if isinstance(period_start, str) and period_start.strip():
-        out["period_start"] = period_start.strip()[:10]
-    if isinstance(period_end, str) and period_end.strip():
-        out["period_end"] = period_end.strip()[:10]
+    period_start = _period(block.get("period_start"), "period_start")
+    period_end = _period(block.get("period_end"), "period_end")
+    if period_start is not None:
+        out["period_start"] = period_start.isoformat()
+    if period_end is not None:
+        out["period_end"] = period_end.isoformat()
+    # The interval is the claim the two index levels are evidence for, so it
+    # cannot run backwards: `end / start - 1` is a return earned going forward,
+    # and a window whose end precedes its start says the benchmark was read in
+    # the other order — which would make the sign of the adjustment wrong on
+    # the page that explains it.
+    if period_start is not None and period_end is not None and period_end < period_start:
+        raise EngineInputError(
+            f"market_movement.period_end ({period_end.isoformat()}) precedes "
+            f"market_movement.period_start ({period_start.isoformat()}) — the benchmark "
+            "return is measured from the round date forward to the valuation date"
+        )
     return out
 
 

@@ -246,3 +246,42 @@ class TestReusedAcrossARecalculation:
             first["approaches"]["opm_backsolve"]["equity_value"]
         )
         assert again["equity_value"] == pytest.approx(first["equity_value"])
+
+
+class TestMovementPeriod:
+    """The two period fields are printed verbatim onto the deliverable.
+
+    Exhibit C's market-movement block states them as the window the benchmark
+    levels were read over ("2025-10-15 to 2026-06-30"), so they are a claim
+    about a measurement rather than free text beside one. They were taken as
+    given and truncated to ten characters.
+    """
+
+    def _block(self, **over):
+        return {"index_start": 100.0, "index_end": 110.0, **over}
+
+    def test_accepts_and_normalises_an_iso_instant(self):
+        got = market_movement(
+            self._block(period_start="2025-10-15T00:00:00Z", period_end="2026-06-30")
+        )
+        assert got["period_start"] == "2025-10-15"
+        assert got["period_end"] == "2026-06-30"
+
+    def test_a_day_that_does_not_exist_is_refused(self):
+        with pytest.raises(EngineInputError) as exc:
+            market_movement(self._block(period_start="2026-02-31", period_end="2026-06-30"))
+        assert "period_start" in str(exc.value)
+
+    def test_free_text_is_refused_rather_than_printed(self):
+        with pytest.raises(EngineInputError) as exc:
+            market_movement(self._block(period_start="2025-10-15", period_end="last autumn"))
+        assert "period_end" in str(exc.value)
+
+    def test_a_window_running_backwards_is_refused(self):
+        with pytest.raises(EngineInputError) as exc:
+            market_movement(self._block(period_start="2026-06-30", period_end="2025-10-15"))
+        assert "precedes" in str(exc.value)
+
+    def test_an_absent_period_is_still_fine(self):
+        got = market_movement(self._block())
+        assert "period_start" not in got and "period_end" not in got
