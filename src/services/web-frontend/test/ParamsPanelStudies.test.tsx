@@ -351,7 +351,63 @@ describe('ParamsPanel — DLOC study selection', () => {
     await userEvent.type(screen.getByTestId('dloc-studies-row-0-study'), 'Odd one');
     await userEvent.type(screen.getByTestId('dloc-studies-row-0-value'), '-0.1');
 
-    expect(screen.getByText(/cannot be negative/)).toBeInTheDocument();
+    expect(screen.getByText(/a premium is between 0 and 10/)).toBeInTheDocument();
+    await userEvent.click(saveButton());
+    expect(patched).toHaveLength(0);
+  });
+
+  /**
+   * R339, M19 — `studyTableProblem` exists to restate the route's row schema,
+   * and three of its rules had drifted permissive: the discount ceiling was 1
+   * where the schema's is 0.99, the premium had none where the schema's is 10,
+   * and the years were checked as numbers where the schema's are `.int()`. Each
+   * of the three was a figure this page called fine and the save came back a
+   * 422 for. The boxes themselves already declared the right bound —
+   * `max={valueKey === 'discount' ? 0.99 : 10}` — so only the validator behind
+   * them disagreed.
+   */
+  const openCustomRs = async () => {
+    const patched = mockApi();
+    render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
+    await chooseDlom('restricted_stock', 'dlom-studies');
+    await userEvent.click(screen.getByTestId('dlom-studies-custom-toggle'));
+    return patched;
+  };
+
+  it('refuses a discount above the ceiling the route declares', async () => {
+    const patched = await openCustomRs();
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-study'), 'Ours');
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-value'), '0.995');
+
+    expect(screen.getByText(/a discount is a fraction between 0 and 0.99/)).toBeInTheDocument();
+    await userEvent.click(saveButton());
+    expect(patched).toHaveLength(0);
+  });
+
+  it('refuses a period bound that is not a whole year', async () => {
+    const patched = await openCustomRs();
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-study'), 'Ours');
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-value'), '0.3');
+    await userEvent.type(screen.getByLabelText('From 1'), '1998.5');
+
+    expect(screen.getByText(/from must be a year/)).toBeInTheDocument();
+    await userEvent.click(saveButton());
+    expect(patched).toHaveLength(0);
+  });
+
+  /**
+   * `tableForApi` drops a row with no study name, and nothing refused it: the
+   * discount on that row was left out of the request while the page went on
+   * showing it, so the concluded statistic was struck over a shorter table.
+   */
+  it('refuses a row carrying a figure under no study name', async () => {
+    const patched = await openCustomRs();
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-study'), 'Ours');
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-value'), '0.3');
+    await userEvent.click(screen.getByTestId('dlom-studies-add-row'));
+    await userEvent.type(screen.getByTestId('dlom-studies-row-1-value'), '0.45');
+
+    expect(screen.getByText(/Every study row needs a name/)).toBeInTheDocument();
     await userEvent.click(saveButton());
     expect(patched).toHaveLength(0);
   });

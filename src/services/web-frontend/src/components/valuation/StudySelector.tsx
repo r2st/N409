@@ -280,36 +280,69 @@ export function tableForApi(
   return rows.length > 0 ? rows : null;
 }
 
+/** The bound each value column carries, exactly as `ParamsPatchBody` writes it. */
+const VALUE_BOUNDS: Record<StudyValueKey, { max: number; rule: string }> = {
+  // `z.number().min(0).max(0.99)`. Not "below 1": the engine caps every modelled
+  // DLOM at 0.99 (`_MAX_DLOM`) and the route's schema follows it, so 0.995 was a
+  // figure this page called fine and the server refused.
+  discount: { max: 0.99, rule: 'a discount is a fraction between 0 and 0.99' },
+  // `z.number().min(0).max(10)`. The premium had no ceiling stated here at all,
+  // which read as "unbounded above" — it is not; a 1000% control premium is
+  // refused by the route.
+  premium: { max: 10, rule: 'a premium is between 0 and 10' },
+};
+
 /**
  * What is wrong with a custom table, in the words of the field it is wrong in —
  * mirroring the route's schema so the analyst is told here rather than by a 422.
  *
- * A discount is a fraction below 1 (a security worth nothing is not a
- * marketability problem); a premium is unbounded above, and only its sign is
- * constrained, because a negative one is a discount paid for control and the
- * engine's inversion would read it as a premium.
+ * ## The mirror has to be exact (R339, methodology M19)
+ *
+ * Three of its rules had drifted from the schema they restate, all in the
+ * permissive direction, so the page said nothing and the save came back a 422
+ * naming a row index: the discount ceiling was 1 where the route's is 0.99, the
+ * premium had no ceiling where the route's is 10, and the period years were
+ * checked as *numbers* in a range where the route's are `.int()` — so `1998.5`
+ * passed here and was refused there.
+ *
+ * The fourth is the one nothing refused at either end. `tableForApi` drops every
+ * row whose study name is blank, and this only complained when *all* of them
+ * were: a row carrying a discount under no name was silently left out of the
+ * request, so the concluded statistic was struck over a table with one fewer
+ * observation than the one on screen. On a median that is not a rounding
+ * difference — it is a different row.
  */
 export function studyTableProblem(table: CustomStudyRow[] | null, valueKey: StudyValueKey): string | null {
   if (table === null) return null;
   const named = table.filter((r) => r.study.trim() !== '');
   if (named.length === 0) return 'A custom table needs at least one named study.';
+  // A row with figures and no name is dropped by `tableForApi` rather than
+  // refused by the route, so this is the only place it can be said. An entirely
+  // empty row is left alone: that is what "Supply our own study rows" starts
+  // with, and it is answered by the message above once nothing else is named.
+  const unnamed = table.find(
+    (r) =>
+      r.study.trim() === '' &&
+      (r.value.trim() !== '' || r.period_start.trim() !== '' || r.period_end.trim() !== ''),
+  );
+  if (unnamed) return 'Every study row needs a name, or it is left out of the table.';
   const names = named.map((r) => r.study.trim());
   const duplicate = names.find((n, i) => names.indexOf(n) !== i);
   if (duplicate !== undefined) return `"${duplicate}" is listed twice.`;
+  const bound = VALUE_BOUNDS[valueKey];
   for (const row of named) {
     const n = Number(row.value);
     if (row.value.trim() === '' || !Number.isFinite(n)) {
       return `"${row.study.trim()}" needs a ${valueKey}.`;
     }
-    if (valueKey === 'discount' && (n < 0 || n >= 1)) {
-      return `"${row.study.trim()}": a discount is a fraction in [0, 1).`;
-    }
-    if (valueKey === 'premium' && n < 0) {
-      return `"${row.study.trim()}": a premium cannot be negative.`;
+    if (n < 0 || n > bound.max) {
+      return `"${row.study.trim()}": ${bound.rule}.`;
     }
     for (const key of ['period_start', 'period_end'] as const) {
       const raw = row[key].trim();
-      if (raw !== '' && !(Number(raw) >= 1900 && Number(raw) <= 2200)) {
+      if (raw === '') continue;
+      const year = Number(raw);
+      if (!Number.isInteger(year) || year < 1900 || year > 2200) {
         return `"${row.study.trim()}": ${key === 'period_start' ? 'from' : 'to'} must be a year.`;
       }
     }
