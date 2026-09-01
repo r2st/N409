@@ -297,11 +297,27 @@ def test_ppa_bargain_purchase_reported_not_negative_goodwill():
     assert out["bargain_purchase_gain"] > 0
 
 
-def test_ppa_deferred_revenue_haircut_reduces_tangibles():
+def test_ppa_deferred_revenue_haircut_relieves_a_liability():
+    """The haircut writes an assumed liability *down*, so it lifts net assets.
+
+    ASC 805 records acquired deferred revenue at the fair value of the legal
+    performance obligation, which is below the balance the target's books
+    carry. The difference is a liability the acquirer does not assume, so the
+    identifiable net assets are larger by it and the residual is smaller —
+    which is the direction that matters, because the whole point of the
+    schedule is to say how much of the price was not goodwill.
+
+    This asserted the opposite until R335, when the haircut was subtracted
+    alongside `assumed_liabilities` as though it were a second liability.
+    """
     base = purchase_price_allocation(**_ppa_inputs())
     cut = purchase_price_allocation(**_ppa_inputs(deferred_revenue_haircut=200_000.0))
-    assert cut["tangible_net_assets"] == pytest.approx(base["tangible_net_assets"] - 200_000.0)
-    assert cut["goodwill"] == pytest.approx(base["goodwill"] + 200_000.0)
+    assert cut["tangible_net_assets"] == pytest.approx(base["tangible_net_assets"] + 200_000.0)
+    assert cut["goodwill"] == pytest.approx(base["goodwill"] - 200_000.0)
+    # And the allocation still ties out at the new figures.
+    assert cut["tangible_net_assets"] + cut["total_intangible_value"] + cut["goodwill"] == pytest.approx(
+        cut["consideration_transferred"]
+    )
 
 
 def test_ppa_empty_intangibles_rejected():

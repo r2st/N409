@@ -436,6 +436,25 @@ def purchase_price_allocation(
     consideration − (tangible net assets + Σ intangible fair values). A
     negative residual is reported as a bargain-purchase gain rather than
     negative goodwill, because that is what ASC 805-30-25-2 makes of it.
+
+    ``deferred_revenue_haircut`` is the **write-down** of the acquiree's
+    deferred revenue to its fair value — the legal performance obligation is
+    routinely worth less than the balance the target's books carry, and ASC 805
+    records the liability assumed at that lower figure. So it *reduces* an
+    assumed liability, which raises identifiable net assets and lowers goodwill
+    by the same amount.
+
+    It used to be subtracted alongside ``assumed_liabilities``, i.e. treated as
+    a further liability rather than as the relief of one, which put the haircut
+    on the wrong side of the allocation twice over: tangible net assets came
+    out low by it and goodwill high by it, on a schedule whose whole purpose is
+    to say how much of the price was *not* goodwill. The sample engagement
+    carries a $650,000 haircut, so the residual it printed was $650,000 larger
+    than the standard makes it.
+
+    ``assumed_liabilities`` is therefore the acquiree's liabilities as its books
+    carry them, deferred revenue included; the haircut is the one remeasurement
+    this schedule takes as an input rather than deriving.
     """
     consideration = _num(consideration_transferred, "ppa.consideration_transferred", minimum=0.0)
     if consideration <= 0:
@@ -460,7 +479,7 @@ def purchase_price_allocation(
         valued.append({"name": name, **result})
         total_intangibles += result["fair_value"]
 
-    tangible_net_assets = nwc + fixed + other - liabilities - haircut
+    tangible_net_assets = nwc + fixed + other - liabilities + haircut
     identifiable_net_assets = tangible_net_assets + total_intangibles
     residual = consideration - identifiable_net_assets
 

@@ -905,6 +905,13 @@ const PPA_SECTIONS: readonly IntakeSection[] = [
         label: 'Deferred revenue haircut',
         type: 'number',
         required: false,
+        // Which of the two figures to type. The haircut is the *write-down* —
+        // the amount by which the fair value of the performance obligation
+        // falls short of the book balance — not the remaining liability, and
+        // the two are the same order of magnitude on most deals. The engine
+        // adds it back to net assets, so the wrong one of the pair moves
+        // goodwill by their difference with nothing on the schedule to show it.
+        hint: 'The write-down from the book balance to the fair value of the obligation, not the remaining liability. Leave blank if the assumed liabilities are already at fair value.',
         rules: { min: 0 },
       },
       {
