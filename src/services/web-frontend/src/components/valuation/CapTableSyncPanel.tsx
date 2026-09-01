@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, describeActionFailure } from '../../lib/api';
 import { CONNECTOR_HEALTH_LABEL, cadenceNote, connectorHealth, retryNote } from '../../lib/connectorState';
-import { Button, ErrorNote, LoadError, Select, Spinner, useRetry } from '../ui';
+import { describeCallbackOutcome, providerLabel } from '../../lib/integrationCallback';
+import { Button, ErrorNote, LoadError, Select, Spinner, SuccessNote, useRetry } from '../ui';
 
 type Provider = 'carta' | 'pulley';
 type Frequency = 'manual' | 'daily' | 'weekly';
@@ -48,6 +50,13 @@ interface SyncOutcome {
   validation: { valid: boolean };
 }
 
+/**
+ * The provider names this panel is willing to print, for the reason
+ * `lib/integrationCallback` gives: `?provider=` arrives on a URL somebody else
+ * may have composed. Mirrors the server's `CAP_TABLE_PROVIDER_LABELS`.
+ */
+const PROVIDER_LABELS: Record<string, string> = { carta: 'Carta', pulley: 'Pulley' };
+
 const fmtVal = (v: number | string | null) =>
   v === null ? '—' : typeof v === 'number' ? v.toLocaleString() : v;
 
@@ -67,6 +76,8 @@ export function CapTableSyncPanel({
   const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, setPending] = useState<{ provider: Provider; outcome: SyncOutcome } | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [callback, setCallback] = useState<{ ok: boolean; message: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +91,46 @@ export function CapTableSyncPanel({
   useEffect(() => {
     void load();
   }, [load, token]);
+
+  /*
+   * Say what came back from the provider, then clean the URL.
+   *
+   * `/api/v1/cap-table-sync/callback` redirects here with `?sync=…&provider=…`
+   * and nothing on this page read either one. `connected` needs no sentence —
+   * the refetch above draws the connection — but the three refusals do, and an
+   * analyst who pressed Cancel on Carta's consent screen was returned to a
+   * panel that looked exactly as it had before they left, with the answer
+   * sitting unread in the address bar.
+   */
+  useEffect(() => {
+    const outcome = searchParams.get('sync');
+    if (!outcome) return;
+    setCallback(
+      describeCallbackOutcome(
+        outcome,
+        providerLabel(PROVIDER_LABELS, searchParams.get('provider')),
+        'pull the cap table below to review it.',
+      ),
+    );
+    searchParams.delete('sync');
+    searchParams.delete('provider');
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  /*
+   * Drawn by every branch below, including the two that return early. A load
+   * that failed is not a reason to lose the one sentence saying whether a third
+   * party was just granted access to the client's cap table — and the failed
+   * branch is `LoadError`, which offers a Retry that re-runs the list request
+   * and would otherwise be the whole answer to "did my connection work?".
+   */
+  const callbackNote = callback ? (
+    callback.ok ? (
+      <SuccessNote>{callback.message}</SuccessNote>
+    ) : (
+      <ErrorNote>{callback.message}</ErrorNote>
+    )
+  ) : null;
 
   const connect = async (provider: Provider) => {
     setError(null);
@@ -143,8 +194,20 @@ export function CapTableSyncPanel({
 
   // Before the spinner: a failed load sets the error and leaves `providers`
   // null, so the ErrorNote below this return would never render.
-  if (error && !providers) return <LoadError message={error} {...retryProps} />;
-  if (!providers) return <Spinner />;
+  if (error && !providers)
+    return (
+      <div className="space-y-3">
+        {callbackNote}
+        <LoadError message={error} {...retryProps} />
+      </div>
+    );
+  if (!providers)
+    return (
+      <div className="space-y-3">
+        {callbackNote}
+        <Spinner />
+      </div>
+    );
 
   return (
     <section
@@ -157,6 +220,7 @@ export function CapTableSyncPanel({
           Pull the cap table directly from your equity-management provider.
         </p>
       </div>
+      {callbackNote}
       {error && <ErrorNote>{error}</ErrorNote>}
 
       <div className="space-y-3">

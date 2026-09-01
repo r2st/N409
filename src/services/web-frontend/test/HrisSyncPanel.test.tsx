@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import type { ReactElement } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { HrisSyncPanel } from '../src/components/valuation/HrisSyncPanel';
 
 const VAL = '01N409VAL000000000000000AA';
@@ -37,6 +39,16 @@ function mockApi(overrides: Partial<Record<string, () => Response>> = {}) {
   });
 }
 
+/**
+ * The panel now reads the OAuth callback's result out of the URL
+ * (`?hris=…&provider=…`), so it needs a router the way `AccountingConnect`
+ * always has. Wrapped here rather than at twenty call sites, with the entry as
+ * a parameter so the callback cases can land on one.
+ */
+function renderPanel(ui: ReactElement, initialEntry = '/') {
+  return render(<MemoryRouter initialEntries={[initialEntry]}>{ui}</MemoryRouter>);
+}
+
 describe('HrisSyncPanel (feature 11)', () => {
   beforeEach(() => vi.restoreAllMocks());
 
@@ -47,7 +59,7 @@ describe('HrisSyncPanel (feature 11)', () => {
       'POST /valuations/01N409VAL000000000000000AA/hris/rippling/pull': () =>
         jsonResponse({ roster_count: 12, grants_found: 8, grants_created: 8, grants_skipped: 0 }),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={onImported} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={onImported} />);
 
     expect(await screen.findByText('Rippling')).toBeInTheDocument();
     expect(screen.getByText(/Connected · Acme/)).toBeInTheDocument();
@@ -81,7 +93,7 @@ describe('HrisSyncPanel (feature 11)', () => {
           grants_rejected: 2,
         }),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: 'Import now' }));
     expect(await screen.findByText(/2 grants were skipped/)).toBeInTheDocument();
   });
@@ -98,7 +110,7 @@ describe('HrisSyncPanel (feature 11)', () => {
           grants_rejected: 0,
         }),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: 'Import now' }));
     expect(await screen.findByText(/8 grants imported/)).toBeInTheDocument();
     expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
@@ -111,14 +123,14 @@ describe('HrisSyncPanel (feature 11)', () => {
    */
   it('reports a failed provider load instead of spinning forever', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
     expect(await screen.findByText('Could not load HRIS providers.')).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('offers no connection to a provider this deployment has no keys for', async () => {
     mockApi();
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
     // Pressing it could only ever fail at the OAuth handoff, so it is refused
     // here with the reason next to it.
     expect(await screen.findByRole('button', { name: 'Connect Gusto' })).toBeDisabled();
@@ -139,7 +151,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         jsonResponse({ authorize_url: 'https://api.gusto.com/oauth/authorize?state=abc' }),
       'GET /valuations/01N409VAL000000000000000AA/hris': () => jsonResponse({ providers: withGustoKeys }),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Connect Gusto' }));
     await waitFor(() => expect(window.location.href).toBe('https://api.gusto.com/oauth/authorize?state=abc'));
@@ -153,7 +165,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         jsonResponse({ title: 'Bad Gateway', detail: 'Gusto declined the handshake.', status: 502 }, 502),
       'GET /valuations/01N409VAL000000000000000AA/hris': () => jsonResponse({ providers: withGustoKeys }),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Connect Gusto' }));
     expect(await screen.findByText('Gusto declined the handshake.')).toBeInTheDocument();
@@ -170,7 +182,7 @@ describe('HrisSyncPanel (feature 11)', () => {
       },
       'GET /valuations/01N409VAL000000000000000AA/hris': () => jsonResponse({ providers: withGustoKeys }),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Connect Gusto' }));
     expect(await screen.findByText(/Could not start the connection\./)).toBeInTheDocument();
@@ -183,7 +195,7 @@ describe('HrisSyncPanel (feature 11)', () => {
       'POST /valuations/01N409VAL000000000000000AA/hris/rippling/pull': () =>
         jsonResponse({ title: 'Unauthorized', detail: 'The Rippling token was revoked.', status: 401 }, 401),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={onImported} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={onImported} />);
 
     await user.click(await screen.findByRole('button', { name: 'Import now' }));
     expect(await screen.findByText('The Rippling token was revoked.')).toBeInTheDocument();
@@ -198,7 +210,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         throw new TypeError('network down');
       },
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Import now' }));
     expect(await screen.findByText(/Sync failed\./)).toBeInTheDocument();
@@ -221,7 +233,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         ),
       });
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     const cadence = await screen.findByLabelText('Rippling sync frequency');
     await user.selectOptions(cadence, 'weekly');
@@ -236,7 +248,7 @@ describe('HrisSyncPanel (feature 11)', () => {
       'POST /valuations/01N409VAL000000000000000AA/hris/rippling/frequency': () =>
         jsonResponse({ title: 'Forbidden', detail: 'Daily sync needs a paid plan.', status: 403 }, 403),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.selectOptions(await screen.findByLabelText('Rippling sync frequency'), 'daily');
     expect(await screen.findByText('Daily sync needs a paid plan.')).toBeInTheDocument();
@@ -256,7 +268,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         ),
       });
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }));
     expect(await screen.findByRole('button', { name: 'Connect Rippling' })).toBeInTheDocument();
@@ -274,7 +286,7 @@ describe('HrisSyncPanel (feature 11)', () => {
       'DELETE /valuations/01N409VAL000000000000000AA/hris/rippling': () =>
         jsonResponse({ title: 'Conflict', detail: 'A sync is still running.', status: 409 }, 409),
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }));
     expect(await screen.findByText('A sync is still running.')).toBeInTheDocument();
@@ -289,7 +301,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         throw new TypeError('network down');
       },
     });
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }));
     expect(await screen.findByText(/Could not disconnect the provider\./)).toBeInTheDocument();
@@ -314,7 +326,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         ],
       }),
     );
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     expect(await screen.findByText('Last error: Refresh token rejected.')).toBeInTheDocument();
     // A revoked link cannot sync, so the row offers reconnection rather than an
@@ -349,7 +361,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         ],
       }),
     );
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     expect(await screen.findByText(/Not syncing · Acme/)).toBeInTheDocument();
     expect(screen.queryByText(/Connected · Acme/)).not.toBeInTheDocument();
@@ -398,7 +410,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         ],
       }),
     );
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     expect(await screen.findByText(/Sync failing · retrying · Acme/)).toBeInTheDocument();
     expect(screen.queryByText(/Not syncing/)).not.toBeInTheDocument();
@@ -435,7 +447,7 @@ describe('HrisSyncPanel (feature 11)', () => {
         ],
       }),
     );
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     expect(await screen.findByText(/Not syncing · Acme/)).toBeInTheDocument();
     expect(screen.queryByText(/Retrying automatically/)).not.toBeInTheDocument();
@@ -461,9 +473,48 @@ describe('HrisSyncPanel (feature 11)', () => {
         ],
       }),
     );
-    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     const badge = await screen.findByText('Connected');
     expect(badge.textContent).toBe('Connected');
+  });
+  /**
+   * The other half of the OAuth hop, which this panel did not have at all.
+   *
+   * `/api/v1/hris/callback` redirects back here with `?hris=…` and
+   * `?provider=…`; nothing read either. So the two ways the hop fails — the
+   * reader pressing Cancel on Rippling's consent screen, and a token exchange
+   * that did not work — returned to a panel that looked exactly as it had
+   * before they left. The list refetches, finds no connection, and draws the
+   * same Connect button: no wrong claim, and no answer either.
+   */
+  describe('the OAuth callback outcome in the URL', () => {
+    it('says a cancelled connection was cancelled, and that nothing was connected', async () => {
+      mockApi();
+      renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />, '/?hris=denied&provider=gusto');
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/Connection to Gusto was cancelled/);
+      expect(note).toHaveTextContent(/nothing was connected/);
+    });
+
+    it('names the retirement rather than offering the button again', async () => {
+      // The engagement was withdrawn while the reader was on the consent
+      // screen — see the callback's own guard. Not a failure they can retry.
+      mockApi();
+      renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />, '/?hris=retired&provider=deel');
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/This engagement was retired while you were connecting to Deel/);
+      expect(note).not.toHaveTextContent(/Press Connect to try again/);
+    });
+
+    it('will not print a provider name the server did not send', async () => {
+      mockApi();
+      renderPanel(
+        <HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />,
+        '/?hris=error&provider=__proto__',
+      );
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/Connecting to the provider failed/);
+    });
   });
 });

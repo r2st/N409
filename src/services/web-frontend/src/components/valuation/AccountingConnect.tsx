@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, ApiError, describeRequestFailure, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
+import { describeCallbackOutcome, providerLabel } from '../../lib/integrationCallback';
 import { Button, ErrorNote, SuccessNote } from '../ui';
 
 /**
  * Accounting software connections (409.ai §23) — shown on the Documents tab.
  * Connect opens the provider's OAuth consent in a new tab; the callback
- * bounces back here with ?accounting=connected|denied|error.
+ * bounces back here with ?accounting=connected|denied|error|retired.
  */
 
 export interface AccountingProviderStatus {
@@ -76,8 +77,6 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
   useEffect(() => {
     const outcome = searchParams.get('accounting');
     if (!outcome) return;
-    const named = searchParams.get('provider');
-    const provider = named && Object.hasOwn(PROVIDER_LABELS, named) ? PROVIDER_LABELS[named] : 'the provider';
     /*
      * Three outcomes, and until R277 one voice for all of them: every sentence
      * went into `notice`, which is drawn in the success colour and carries no
@@ -88,19 +87,19 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
      *
      * A refusal goes to `error` (`ErrorNote`, `role="alert"`) and a success to
      * `SuccessNote` (`role="status"`), which is the pairing the rest of the
-     * product uses. A cancellation is the reader's own deliberate act, so it is
-     * stated as a refusal — the connection did not happen and the button has to
-     * be pressed again — rather than as a fault.
+     * product uses.
+     *
+     * The wording moved to `lib/integrationCallback` in R334, when the other
+     * two panels — which read their parameter not at all — got the same reader.
+     * There are four outcomes now, not three.
      */
-    if (outcome === 'connected') {
-      setNotice(`Connected to ${provider} — you can import financials now.`);
-    } else {
-      setError(
-        outcome === 'denied'
-          ? `Connection to ${provider} was cancelled — nothing was connected. Press Connect to try again.`
-          : `Connecting to ${provider} failed — nothing was connected. Press Connect to try again.`,
-      );
-    }
+    const said = describeCallbackOutcome(
+      outcome,
+      providerLabel(PROVIDER_LABELS, searchParams.get('provider')),
+      'you can import financials now.',
+    );
+    if (said.ok) setNotice(said.message);
+    else setError(said.message);
     searchParams.delete('accounting');
     searchParams.delete('provider');
     setSearchParams(searchParams, { replace: true });

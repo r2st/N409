@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, describeActionFailure } from '../../lib/api';
 import { CONNECTOR_HEALTH_LABEL, cadenceNote, connectorHealth, retryNote } from '../../lib/connectorState';
+import { describeCallbackOutcome, providerLabel } from '../../lib/integrationCallback';
 import { Button, ErrorNote, LoadError, Select, Spinner, SuccessNote, useRetry } from '../ui';
 
 type Provider = 'rippling' | 'gusto' | 'deel';
+
+/**
+ * The provider names this panel is willing to print, for the reason
+ * `lib/integrationCallback` gives: `?provider=` arrives on a URL somebody else
+ * may have composed. Mirrors the server's `HRIS_PROVIDER_LABELS`.
+ */
+const PROVIDER_LABELS: Record<string, string> = {
+  rippling: 'Rippling',
+  gusto: 'Gusto',
+  deel: 'Deel',
+};
 type Frequency = 'manual' | 'daily' | 'weekly';
 
 interface Connection {
@@ -48,6 +61,8 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
   const { token, retryProps } = useRetry(() => setError(null));
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [callback, setCallback] = useState<{ ok: boolean; message: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +76,46 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
   useEffect(() => {
     void load();
   }, [load, token]);
+
+  /*
+   * Say what came back from the provider, then clean the URL.
+   *
+   * `/api/v1/hris/callback` redirects here with `?hris=…&provider=…` and
+   * nothing on this page read either one. `connected` needs no sentence — the
+   * refetch above draws the connection — but the three refusals do, and an
+   * analyst who pressed Cancel on Rippling's consent screen was returned to a
+   * panel that looked exactly as it had before they left, with the answer
+   * sitting unread in the address bar.
+   */
+  useEffect(() => {
+    const outcome = searchParams.get('hris');
+    if (!outcome) return;
+    setCallback(
+      describeCallbackOutcome(
+        outcome,
+        providerLabel(PROVIDER_LABELS, searchParams.get('provider')),
+        'pull the roster and grants below.',
+      ),
+    );
+    searchParams.delete('hris');
+    searchParams.delete('provider');
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  /*
+   * Drawn by every branch below, including the two that return early. A load
+   * that failed is not a reason to lose the one sentence saying whether a third
+   * party was just granted access to the client's payroll — and the failed
+   * branch is `LoadError`, which offers a Retry that re-runs the list request
+   * and would otherwise be the whole answer to "did my connection work?".
+   */
+  const callbackNote = callback ? (
+    callback.ok ? (
+      <SuccessNote>{callback.message}</SuccessNote>
+    ) : (
+      <ErrorNote>{callback.message}</ErrorNote>
+    )
+  ) : null;
 
   const connect = async (provider: Provider) => {
     setError(null);
@@ -130,8 +185,20 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
 
   // Before the spinner: a failed load sets the error and leaves `providers`
   // null, so the ErrorNote below this return would never render.
-  if (error && !providers) return <LoadError message={error} {...retryProps} />;
-  if (!providers) return <Spinner />;
+  if (error && !providers)
+    return (
+      <div className="space-y-3">
+        {callbackNote}
+        <LoadError message={error} {...retryProps} />
+      </div>
+    );
+  if (!providers)
+    return (
+      <div className="space-y-3">
+        {callbackNote}
+        <Spinner />
+      </div>
+    );
 
   return (
     <section
@@ -144,6 +211,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
           Import the employee roster and equity grants from your HR platform.
         </p>
       </div>
+      {callbackNote}
       {error && <ErrorNote>{error}</ErrorNote>}
       {note && <SuccessNote>{note}</SuccessNote>}
 

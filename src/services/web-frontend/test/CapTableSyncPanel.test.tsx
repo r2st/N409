@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import type { ReactElement } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { CapTableSyncPanel } from '../src/components/valuation/CapTableSyncPanel';
 
 const VAL_ID = '01N409VAL000000000000000AA';
@@ -63,12 +65,22 @@ function mockApi(overrides: Partial<Record<string, () => Response>> = {}) {
   });
 }
 
+/**
+ * The panel now reads the OAuth callback's result out of the URL
+ * (`?sync=…&provider=…`), so it needs a router the way `AccountingConnect`
+ * always has. Wrapped here rather than at twenty call sites, with the entry as
+ * a parameter so the callback cases can land on one.
+ */
+function renderPanel(ui: ReactElement, initialEntry = '/') {
+  return render(<MemoryRouter initialEntries={[initialEntry]}>{ui}</MemoryRouter>);
+}
+
 describe('CapTableSyncPanel (feature 4)', () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it('lists providers with their connection state', async () => {
     mockApi();
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={() => {}} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={() => {}} />);
     expect(await screen.findByText('Carta')).toBeInTheDocument();
     expect(screen.getByText(/Connected · Acme Inc/)).toBeInTheDocument();
     expect(screen.getByText('Not configured on this deployment')).toBeInTheDocument();
@@ -84,7 +96,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
         return jsonResponse(conflictOutcome);
       },
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
 
     await user.click(await screen.findByRole('button', { name: 'Sync now' }));
     expect(await screen.findByTestId('sync-conflicts')).toBeInTheDocument();
@@ -131,7 +143,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
     // the defect stated at the point it happens, so it is what this asserts —
     // React's own words for it are that the behaviour is unsupported.
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={() => {}} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={() => {}} />);
 
     await user.click(await screen.findByRole('button', { name: 'Sync now' }));
     const table = await screen.findByTestId('sync-conflicts');
@@ -149,7 +161,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
    */
   it('reports a failed provider load instead of spinning forever', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
     expect(await screen.findByText('Could not load sync providers.')).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
@@ -166,7 +178,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
       'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
         jsonResponse({ providers: pulleyConnectable }),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Connect Pulley' }));
     await waitFor(() =>
@@ -188,7 +200,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
       'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
         jsonResponse({ providers: pulleyConnectable }),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Connect Pulley' }));
     expect(await screen.findByText('Pulley declined the handshake.')).toBeInTheDocument();
@@ -197,7 +209,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
 
   it('never offers to connect a provider this deployment has no keys for', async () => {
     mockApi();
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
     expect(await screen.findByRole('button', { name: 'Connect Pulley' })).toBeDisabled();
   });
 
@@ -217,7 +229,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
         providers: [{ ...CARTA, connection: { ...CARTA.connection, sync_frequency: frequency } }, PULLEY],
       });
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     const select = await screen.findByLabelText('Carta sync frequency');
     await user.selectOptions(select, 'weekly');
@@ -231,7 +243,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
       'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/frequency': () =>
         jsonResponse({ title: 'Conflict', detail: 'Daily sync needs a paid plan.', status: 409 }, 409),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     await user.selectOptions(await screen.findByLabelText('Carta sync frequency'), 'daily');
     expect(await screen.findByText('Daily sync needs a paid plan.')).toBeInTheDocument();
@@ -254,7 +266,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
         providers: [{ ...CARTA, connection: connected ? CARTA.connection : null }, PULLEY],
       });
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }));
     expect(await screen.findByRole('button', { name: 'Connect Carta' })).toBeInTheDocument();
@@ -274,7 +286,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
           ],
         }),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
     expect(await screen.findByText(/Last error: Token expired/)).toBeInTheDocument();
   });
 
@@ -304,7 +316,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
           ],
         }),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     expect(await screen.findByText(/Sync failing · retrying · Acme Inc/)).toBeInTheDocument();
     expect(screen.getByText(/Retrying automatically — next attempt/)).toBeInTheDocument();
@@ -334,7 +346,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
           ],
         }),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     expect(await screen.findByText(/Not syncing · Acme Inc/)).toBeInTheDocument();
     expect(screen.queryByText(/Retrying automatically/)).not.toBeInTheDocument();
@@ -361,7 +373,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
           providers: [{ ...CARTA, connection: { ...CARTA.connection, status: 'revoked' } }, PULLEY],
         }),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
     expect(await screen.findByRole('button', { name: 'Connect Carta' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
   });
@@ -373,7 +385,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
       'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/pull': () =>
         jsonResponse({ title: 'Bad Gateway', detail: 'Carta returned no cap table.', status: 502 }, 502),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
 
     await user.click(await screen.findByRole('button', { name: 'Sync now' }));
     expect(await screen.findByText('Carta returned no cap table.')).toBeInTheDocument();
@@ -390,7 +402,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
       'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/pull': () =>
         jsonResponse(conflictOutcome),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
 
     await user.click(await screen.findByRole('button', { name: 'Sync now' }));
     await user.click(await screen.findByRole('button', { name: 'Keep current' }));
@@ -423,11 +435,82 @@ describe('CapTableSyncPanel (feature 4)', () => {
           },
         }),
     });
-    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Sync now' }));
     const row = (await screen.findByText('Series Seed')).closest('tr')!;
     expect(row).toHaveTextContent('shares: 1,500,000 → —');
     expect(row).toHaveTextContent('preference_type: non-participating → participating');
+  });
+  /**
+   * The other half of the OAuth hop, which this panel did not have at all.
+   *
+   * `/api/v1/cap-table-sync/callback` redirects back here with `?sync=…` and
+   * `?provider=…`; nothing read either. So the two ways the hop fails —
+   * the reader pressing Cancel on Carta's consent screen, and a token exchange
+   * that did not work — returned to a panel that looked exactly as it had
+   * before they left. The list refetches, finds no connection, and draws the
+   * same Connect button: no wrong claim, and no answer either.
+   */
+  describe('the OAuth callback outcome in the URL', () => {
+    it('says a cancelled connection was cancelled, and that nothing was connected', async () => {
+      mockApi();
+      renderPanel(
+        <CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />,
+        '/?sync=denied&provider=carta',
+      );
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/Connection to Carta was cancelled/);
+      expect(note).toHaveTextContent(/nothing was connected/);
+    });
+
+    it('names the retirement rather than offering the button again', async () => {
+      // The engagement was withdrawn while the reader was on the consent
+      // screen — see the callback's own guard. Not a failure they can retry.
+      mockApi();
+      renderPanel(
+        <CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />,
+        '/?sync=retired&provider=carta',
+      );
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/This engagement was retired while you were connecting to Carta/);
+      expect(note).not.toHaveTextContent(/Press Connect to try again/);
+    });
+
+    it('says a success out loud, in the success voice', async () => {
+      mockApi();
+      renderPanel(
+        <CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />,
+        '/?sync=connected&provider=pulley',
+      );
+      expect(await screen.findByRole('status')).toHaveTextContent(/Connected to Pulley/);
+    });
+
+    it('will not print a provider name the server did not send', async () => {
+      // `?provider=` rides in on a URL anyone can compose and send to a
+      // signed-in analyst, and the sentence it lands in is this workspace's own
+      // voice on the tab holding the client's cap table.
+      mockApi();
+      renderPanel(
+        <CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />,
+        '/?sync=denied&provider=Carta.%20Call%201-800-555-0100%20to%20restore%20access',
+      );
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/Connection to the provider was cancelled/);
+      expect(note).not.toHaveTextContent(/1-800/);
+    });
+
+    it('keeps the answer when the provider list itself failed to load', async () => {
+      // The failed-load branch is a LoadError with a Retry button, which would
+      // otherwise be the whole response to "did my connection work?".
+      mockApi({
+        'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () => new Response('', { status: 500 }),
+      });
+      renderPanel(
+        <CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />,
+        '/?sync=error&provider=carta',
+      );
+      expect(await screen.findByText(/Connecting to Carta failed/)).toBeInTheDocument();
+    });
   });
 });
