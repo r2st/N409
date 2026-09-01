@@ -819,9 +819,43 @@ export function specialtyRunKind(results: unknown): SpecialtyKind | null {
   if (results === null || typeof results !== 'object' || Array.isArray(results)) return null;
   const row = results as Record<string, unknown>;
   const specialty = row.specialty;
-  if (specialty === null || typeof specialty !== 'object') return null;
   const kind = row.kind;
-  if (typeof kind !== 'string') return null;
+  return specialtyRunKindOf(typeof kind === 'string' ? kind : null, {
+    // `typeof null === 'object'`, which is why the original spelling tested
+    // both. Stated here once so the probe form below cannot disagree with it.
+    specialtyIsObject: specialty !== null && typeof specialty === 'object',
+  });
+}
+
+/**
+ * {@link specialtyRunKind} answered from the two facts it actually reads,
+ * rather than from the document that contains them.
+ *
+ * WHY THIS EXISTS AT ALL. `specialtyRunKind` looks at `results.kind` and asks
+ * whether `results.specialty` is an object — nothing else, and nothing nested.
+ * A caller that already has the whole document should keep calling
+ * `specialtyRunKind`; this is for the one that would have to *fetch* the
+ * document to ask, and where the document is an engine result document and the
+ * caller wants an answer about five hundred of them.
+ *
+ * `repos/calculations.ts:latestSucceededCalculationHeadsByValuationIds` is that
+ * caller. It probes both facts in SQL (`results->>'kind'` and
+ * `jsonb_typeof(results->'specialty')`) so the result document never leaves the
+ * database, and hands them here. See R298: the monitoring snapshot was shipping
+ * 5.45 MB of `results` per page to read a string and a type tag.
+ *
+ * The two forms share this function rather than restating the rule, because a
+ * second copy of "which shapes count as a specialty run" is exactly the drift
+ * that would make the dashboard and the report disagree about which engine
+ * wrote a figure. `specialtyRunKindProbeParity` in `specialty.test.ts` runs both
+ * over the same documents.
+ */
+export function specialtyRunKindOf(
+  kind: string | null,
+  probe: { specialtyIsObject: boolean },
+): SpecialtyKind | null {
+  if (!probe.specialtyIsObject) return null;
+  if (kind === null) return null;
   const candidate = kind as ValuationKind;
   return isSpecialtyKind(candidate) ? candidate : null;
 }

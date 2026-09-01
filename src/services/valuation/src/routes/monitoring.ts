@@ -11,8 +11,8 @@ import {
 } from '../repos/valuations.js';
 import {
   latestSucceededCalculation,
-  latestSucceededCalculationsByValuationIds,
-  type CalculationRow,
+  latestSucceededCalculationHeadsByValuationIds,
+  type CalculationHead,
 } from '../repos/calculations.js';
 import { findParams, findParamsByValuationIds, type ValuationParamsRow } from '../repos/params.js';
 import { findCapTable, findCapTablesByValuationIds, type CapTableRow } from '../repos/capTables.js';
@@ -85,7 +85,18 @@ async function loadValuation(pool: pg.Pool, id: string): Promise<ValuationRow> {
 
 /** The four rows a snapshot reads, however they were fetched. */
 interface SnapshotSources {
-  calc: CalculationRow | null;
+  /**
+   * The *head* of the run history rather than the run.
+   *
+   * Narrowed to the two facts `assembleSnapshot` reads (R298). It used to be the
+   * whole `CalculationRow`, and the batch reader behind it therefore shipped an
+   * engine result document per valuation — 5.45 MB a page at 500 — so that this
+   * function could take a number off one column and a string off one key of
+   * another. The type is what keeps it narrow: a later reader that wants
+   * `inputs` or the approaches has to widen the reader deliberately rather than
+   * find them already fetched.
+   */
+  calc: CalculationHead | null;
   params: ValuationParamsRow | null;
   capTable: CapTableRow | null;
   resolution: BoardResolutionRow | null;
@@ -176,7 +187,7 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
     // run rather than the engagement's kind, for the reason
     // `POST /valuations/:id/board` asks it that way: it is this row's
     // conclusion the sentence is about.
-    run_kind: specialtyRunKind(calc?.results ?? null),
+    run_kind: calc?.run_kind ?? null,
     fmv_per_share: calc?.fmv_per_share ? Number(calc.fmv_per_share) : null,
     annual_revenue: annualRevenue,
     fully_diluted_shares: capTable?.validation?.summary?.fully_diluted_shares ?? null,
@@ -194,8 +205,15 @@ async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<Li
     findCapTable(pool, valuation.id),
     findResolutionByValuation(pool, valuation.id),
   ]);
+  // The single-valuation path keeps reading the whole run — it is one row, and
+  // `latestSucceededCalculation` is what every other caller uses — and narrows
+  // it here, so both paths hand `assembleSnapshot` the same shape and the
+  // specialty rule is applied by the same function either way.
+  const head: CalculationHead | null = calc
+    ? { fmv_per_share: calc.fmv_per_share, run_kind: specialtyRunKind(calc.results ?? null) }
+    : null;
   return {
-    snapshot: assembleSnapshot(valuation, { calc, params, capTable, resolution }),
+    snapshot: assembleSnapshot(valuation, { calc: head, params, capTable, resolution }),
     cap_table_changed_at: capTable?.updated_at ?? null,
   };
 }
@@ -209,7 +227,7 @@ async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<Li
 async function buildSnapshots(pool: pg.Pool, valuations: ValuationRow[]): Promise<Map<string, LiveState>> {
   const ids = valuations.map((v) => v.id);
   const [calcs, params, capTables, resolutions] = await Promise.all([
-    latestSucceededCalculationsByValuationIds(pool, ids),
+    latestSucceededCalculationHeadsByValuationIds(pool, ids),
     findParamsByValuationIds(pool, ids),
     findCapTablesByValuationIds(pool, ids),
     findResolutionsByValuationIds(pool, ids),

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
-import { latestSucceededCalculationsByValuationIds } from '../../src/repos/calculations.js';
+import { latestSucceededCalculationHeadsByValuationIds } from '../../src/repos/calculations.js';
 import { isDbAvailable, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -22,7 +22,7 @@ const RUNS = 50;
 /**
  * The monitoring snapshot must read the head of each run history, not all of it.
  *
- * `latestSucceededCalculationsByValuationIds` answers "the newest succeeded run
+ * `latestSucceededCalculationHeadsByValuationIds` answers "the newest succeeded run
  * for each of these valuations", and it was a `DISTINCT ON` — which is a sort
  * with a filter on top, and a sort cannot stop at the first row of a group. So
  * it read *every* succeeded run of every valuation on the page and ordered the
@@ -82,7 +82,7 @@ describe.skipIf(!dbUp)('the monitoring snapshot reads the head of each run histo
   let valuationIds: string[] = [];
   let current = '';
   /** The DISTINCT ON spelling, kept as the discriminator. */
-  const previous = `SELECT DISTINCT ON (valuation_id) id, valuation_id, created_at
+  const previous = `SELECT DISTINCT ON (valuation_id) valuation_id, fmv_per_share, created_at
        FROM calculations
       WHERE valuation_id = ANY($1::ulid[]) AND status = 'succeeded'
       ORDER BY valuation_id, created_at DESC`;
@@ -120,9 +120,13 @@ describe.skipIf(!dbUp)('the monitoring snapshot reads the head of each run histo
      * spelling wins on blocks, for a layout no append-only table ever has.
      */
     await q(
-      `INSERT INTO calculations (id, valuation_id, engine_version, status, inputs, results, created_at)
+      `INSERT INTO calculations (id, valuation_id, engine_version, status, inputs, results,
+                                 fmv_per_share, created_at)
        SELECT ${ULID('(m - 1) * ' + VALUATIONS + ' + v', 'C')}, ${ULID('v', 'B')},
               '1.0.0', 'succeeded', '{}'::jsonb, jsonb_build_object('approaches', '{}'::jsonb),
+              -- Distinct per run, so "the head" is a value the assertion below
+              -- can check rather than a row count it has to trust.
+              (m * 1000 + v)::numeric / 10000,
               now() - ((m * ${VALUATIONS} + v) || ' minutes')::interval
          FROM generate_series(1, ${RUNS}) m, generate_series(1, ${VALUATIONS}) v`,
     );
@@ -133,7 +137,7 @@ describe.skipIf(!dbUp)('the monitoring snapshot reads the head of each run histo
 
     const t = tap(db.pool);
     try {
-      await latestSucceededCalculationsByValuationIds(db.pool, valuationIds);
+      await latestSucceededCalculationHeadsByValuationIds(db.pool, valuationIds);
     } finally {
       t.restore();
     }
@@ -161,11 +165,14 @@ describe.skipIf(!dbUp)('the monitoring snapshot reads the head of each run histo
     // The answers-match assertion. A faster plan that reads a different row is
     // not a performance fix, and `created_at DESC` is the whole ordering both
     // spellings claim to apply.
-    const now = await latestSucceededCalculationsByValuationIds(db.pool, valuationIds);
-    const { rows } = await db.pool.query<{ id: string; valuation_id: string }>(previous, [valuationIds]);
+    const now = await latestSucceededCalculationHeadsByValuationIds(db.pool, valuationIds);
+    const { rows } = await db.pool.query<{ valuation_id: string; fmv_per_share: string }>(previous, [
+      valuationIds,
+    ]);
     expect(rows.length).toBe(VALUATIONS);
     expect(now.size).toBe(VALUATIONS);
-    for (const r of rows) expect(now.get(r.valuation_id)?.id).toBe(r.id);
+    // The figure identifies the run, since the seed gives every run its own.
+    for (const r of rows) expect(now.get(r.valuation_id)?.fmv_per_share).toBe(r.fmv_per_share);
   });
 
   it('touches one run per valuation, not the whole history', () => {

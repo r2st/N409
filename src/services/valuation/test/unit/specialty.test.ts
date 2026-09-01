@@ -5,6 +5,8 @@ import {
   SpecialtyInputError,
   specialtyEngineRequest,
   specialtyHeadline,
+  specialtyRunKind,
+  specialtyRunKindOf,
 } from '../../src/domain/specialty.js';
 
 describe('specialtyEngineRequest', () => {
@@ -478,5 +480,57 @@ describe('isSpecialtyKind', () => {
       }
       expect(path).toMatch(/^\/engine\/v1\//);
     }
+  });
+});
+
+/**
+ * The two ways of asking which engine wrote a run must agree (R298).
+ *
+ * `specialtyRunKind` reads a stored `results` document.
+ * `latestSucceededCalculationHeadsByValuationIds` cannot afford to fetch one —
+ * it asks about five hundred at a time and the documents are engine results —
+ * so it probes the same two facts in SQL and calls {@link specialtyRunKindOf}
+ * with them. If those two ever disagree, the monitoring dashboard and everything
+ * that reads the run itself start reporting different engines for the same row,
+ * and nothing else in the codebase would notice.
+ *
+ * The interesting cases are the ones where the two languages differ about what
+ * `typeof x === 'object'` means. `jsonb_typeof` calls an array 'array' and null
+ * 'null'; JavaScript calls an array an object and `typeof null` is also
+ * 'object'. The SQL probe is `IN ('object', 'array')` because of the first, and
+ * `->'''specialty'''` yields SQL NULL for an absent key rather than JSON null,
+ * which is why the probe can come back NULL at all.
+ */
+describe('specialtyRunKind and its probe form agree', () => {
+  /** What `jsonb_typeof(results->'specialty') IN ('object','array')` answers. */
+  const sqlProbe = (specialty: unknown): boolean =>
+    specialty !== null && specialty !== undefined && typeof specialty === 'object';
+
+  const kind = SPECIALTY_KINDS[0]!;
+  const documents: Array<[string, unknown]> = [
+    ['a specialty run', { kind, specialty: { anything: 1 } }],
+    ['a 409A run (neither key)', { approaches: {}, discounts: {} }],
+    ['a kind with no specialty payload', { kind }],
+    ['a specialty payload with no kind', { specialty: {} }],
+    ['an explicitly null payload', { kind, specialty: null }],
+    ['an array payload — object in JS, "array" in jsonb', { kind, specialty: [] }],
+    ['a scalar payload', { kind, specialty: 7 }],
+    ['a string payload', { kind, specialty: 'yes' }],
+    ['a kind that is not a specialty kind', { kind: '409a', specialty: {} }],
+    ['a non-string kind', { kind: 12, specialty: {} }],
+  ];
+
+  it.each(documents)('%s', (_name, doc) => {
+    const row = doc as Record<string, unknown>;
+    const viaProbe = specialtyRunKindOf(typeof row.kind === 'string' ? row.kind : null, {
+      specialtyIsObject: sqlProbe(row.specialty),
+    });
+    expect(viaProbe).toBe(specialtyRunKind(doc));
+  });
+
+  it('is not vacuous — the corpus contains both answers', () => {
+    const answers = new Set(documents.map(([, doc]) => specialtyRunKind(doc)));
+    expect(answers.has(null)).toBe(true);
+    expect(answers.has(kind)).toBe(true);
   });
 });

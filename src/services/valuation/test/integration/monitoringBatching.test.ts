@@ -2,10 +2,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { SPECIALTY_KINDS, specialtyRunKind } from '../../src/domain/specialty.js';
 import {
   createCalculation,
   latestSucceededCalculation,
-  latestSucceededCalculationsByValuationIds,
+  latestSucceededCalculationHeadsByValuationIds,
 } from '../../src/repos/calculations.js';
 import { findParams, findParamsByValuationIds } from '../../src/repos/params.js';
 import { findCapTable, findCapTablesByValuationIds } from '../../src/repos/capTables.js';
@@ -215,12 +216,66 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
   });
 
   describe('batch repo helpers agree with the per-valuation form', () => {
-    it('latestSucceededCalculationsByValuationIds', async () => {
-      const batch = await latestSucceededCalculationsByValuationIds(pool, monitored);
+    it('latestSucceededCalculationHeadsByValuationIds', async () => {
+      // The head reader answers about the same *row* as the per-valuation form
+      // and returns two fields off it rather than the row (R298), so the
+      // agreement is asserted on those two — including `run_kind`, which the
+      // batch form derives from a SQL probe and the single form from the
+      // document. `specialtyRunKindProbeParity` pins the two rules against each
+      // other; this pins them against the same stored run.
+      const batch = await latestSucceededCalculationHeadsByValuationIds(pool, monitored);
       expect(batch.size).toBe(monitored.length);
       for (const id of monitored) {
-        expect(batch.get(id)?.id).toBe((await latestSucceededCalculation(pool, id))?.id);
+        const single = await latestSucceededCalculation(pool, id);
+        expect(batch.get(id)?.fmv_per_share).toBe(single?.fmv_per_share);
+        expect(batch.get(id)?.run_kind).toBe(specialtyRunKind(single?.results ?? null));
       }
+    });
+
+    /**
+     * The SQL probe against the document rule, on rows Postgres actually stored
+     * (R298).
+     *
+     * `specialtyRunKindProbeParity` in `specialty.test.ts` pins the two
+     * *TypeScript* rules against each other, but its notion of what the SQL
+     * answers is a model of the SQL written beside it — and a model of a query
+     * cannot catch the query being wrong. These are the shapes where the two
+     * languages disagree about `typeof x === 'object'`: `jsonb_typeof` calls an
+     * array 'array' and an absent key SQL NULL, JavaScript calls an array an
+     * object and `typeof null` 'object'. The `IN ('object', 'array')` in the
+     * reader exists for the first of those, and this is what would notice if it
+     * were narrowed back to `= 'object'`.
+     */
+    it('derives run_kind in SQL exactly as the document rule does', async () => {
+      const kind = SPECIALTY_KINDS[0]!;
+      const shapes: Array<Record<string, unknown>> = [
+        { kind, specialty: { anything: 1 } },
+        { approaches: {}, discounts: {} },
+        { kind },
+        { specialty: {} },
+        { kind, specialty: null },
+        { kind, specialty: [] },
+        { kind, specialty: 7 },
+        { kind: '409a', specialty: {} },
+      ];
+      const ids: string[] = [];
+      for (const [i, results] of shapes.entries()) {
+        const id = await seedMonitoredValuation(`Probe ${i}`);
+        await pool.query(`UPDATE calculations SET results = $1 WHERE valuation_id = $2`, [
+          JSON.stringify(results),
+          id,
+        ]);
+        ids.push(id);
+      }
+      const heads = await latestSucceededCalculationHeadsByValuationIds(pool, ids);
+      for (const [i, id] of ids.entries()) {
+        expect(heads.get(id)?.run_kind, `shape ${i}: ${JSON.stringify(shapes[i])}`).toBe(
+          specialtyRunKind(shapes[i]),
+        );
+      }
+      // Not vacuous: the corpus has to contain a run the rule says *is* a
+      // specialty one, or every assertion above is `null === null`.
+      expect(ids.some((id) => heads.get(id)?.run_kind === kind)).toBe(true);
     });
 
     it('findParamsByValuationIds', async () => {
@@ -248,7 +303,7 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
 
     it('every helper short-circuits on an empty id list', async () => {
       for (const helper of [
-        latestSucceededCalculationsByValuationIds,
+        latestSucceededCalculationHeadsByValuationIds,
         findParamsByValuationIds,
         findCapTablesByValuationIds,
         findResolutionsByValuationIds,

@@ -4,7 +4,7 @@ import { withTransaction, type Queryable } from '../db/pool.js';
 import { lockPublishGate } from './publishLock.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
-import { isSpecialtyKind } from '../domain/specialty.js';
+import { isSpecialtyKind, specialtyRunKindOf, type SpecialtyKind } from '../domain/specialty.js';
 import type { ValuationKind } from '../domain/valuation.js';
 
 export interface CalculationRow {
@@ -68,21 +68,14 @@ export interface CalculationStep {
  * across the wire every time, for nobody. `SELECT *` is what made that the
  * default, so the column list is written out once here instead.
  */
+/** The two facts the monitoring snapshot reads off a run; see the reader below. */
+export interface CalculationHead {
+  fmv_per_share: string | null;
+  run_kind: SpecialtyKind | null;
+}
+
 const CALCULATION_COLUMNS = `id, valuation_id, engine_version, status, inputs, results,
   equity_value, fmv_per_share, error, diagnostics, created_by, created_at`;
-
-/**
- * {@link CALCULATION_COLUMNS} with every name qualified by `alias`.
- *
- * Needed wherever the column list sits beside another relation that also has an
- * `id` — `unnest(...) AS v(id)` in the batch reader below makes the bare list
- * ambiguous, and the failure is a query that does not parse rather than one
- * that quietly reads the wrong column.
- */
-const qualified = (alias: string): string =>
-  CALCULATION_COLUMNS.split(',')
-    .map((c) => `${alias}.${c.trim()}`)
-    .join(', ');
 
 /**
  * The 409 a superseded per-approach recalculation is refused with.
@@ -291,44 +284,74 @@ export async function latestSucceededCalculation(
 }
 
 /**
- * Batch form of {@link latestSucceededCalculation}: the newest succeeded
- * calculation for each of `valuationIds`, keyed by valuation id. One round trip
- * however many valuations are asked for.
+ * What the monitoring snapshot reads off the newest succeeded run, for a whole
+ * list of valuations: the headline figure, and which engine wrote it.
  *
  * A LATERAL AND NOT A `DISTINCT ON`, for the reason `funds.latestMarks` is one
  * (R283): the two read different amounts of the table to give the same answer.
  * `DISTINCT ON` is a sort with a filter on top, and a sort cannot stop at the
  * first row of a group — so it must read *every* succeeded run of every
- * valuation on the page and order the lot to keep one row each. The LATERAL
- * makes one stopping index scan per valuation against
- * `calculations_latest_succeeded_idx`, whose leading columns are exactly
- * `(valuation_id, created_at DESC)`.
+ * valuation on the page and order the lot to keep one row each. This makes one
+ * stopping index scan per valuation against `calculations_latest_succeeded_idx`,
+ * whose leading columns are exactly `(valuation_id, created_at DESC)`.
  *
  * WHICH IS THE DIFFERENCE BETWEEN A PAGE AND A HISTORY. The cost of the old
  * spelling was the *run history* of the page, not the page: an engagement
  * re-runs the engine many times a day (see `CALCULATION_PAGE_LIMIT`, which
- * exists because of it), so the rows read grow with how long the platform has
- * been running while the answer stays one row per valuation. Measured on 200k
- * calculations, a 500-monitor page 100 runs deep: 50,000 rows read, an external
- * merge sort spilling 9.5 MB to disk, 246 ms — against 500 rows, no sort, 22 ms.
+ * exists because of it), so the rows read grew with how long the platform had
+ * been running while the answer stayed one row per valuation. Measured on 200k
+ * calculations, a 500-valuation page 100 runs deep: 50,000 rows read, an
+ * external merge sort spilling 9.5 MB to disk, 246 ms — against 500 rows, no
+ * sort, 22 ms.
  *
- * Both callers make that the shape that matters. `GET /api/v1/monitors` asks it
- * for a `MONITOR_PAGE_LIMIT` page, and `POST /monitors/scan` asks it once per
- * page while paging the entire enabled book.
+ * AND NARROW, BECAUSE THE DOCUMENT IS THE OTHER HALF OF THE COST.
+ * `assembleSnapshot` (`routes/monitoring.ts`) touches exactly two things on this
+ * row — `fmv_per_share`, and `specialtyRunKind(results)`, which itself reads
+ * only `results.kind` and whether `results.specialty` is an object. Everything
+ * else was fetched, detoasted, sent and parsed to be thrown away, and `results`
+ * is an engine result document: approaches, discounts, assumptions, waterfall.
+ * At 500 valuations with ~11 kB documents that was 5.45 MB on the wire per page,
+ * 44-52 ms against 12-27 ms — before the driver parses those 5.45 MB into
+ * JavaScript objects, which this measurement does not include and the scan does
+ * pay.
+ *
+ * Both callers make the page the shape that matters. `GET /api/v1/monitors` asks
+ * for a `MONITOR_PAGE_LIMIT` page; `POST /api/v1/monitors/scan` asks once per
+ * page while paging the entire enabled book, so at 20k monitors that is forty
+ * pages of it per scan.
+ *
+ * THE `specialty` PROBE IS `IN ('object', 'array')`, DELIBERATELY. The rule it
+ * stands in for is `typeof specialty === 'object'` (see
+ * {@link specialtyRunKindOf}), and in JavaScript an array satisfies that.
+ * `jsonb_typeof` separates the two, so testing `= 'object'` alone would make
+ * this reader answer `null` where the document reader answers a kind. The parity
+ * test over both spellings is what keeps that honest rather than this comment.
+ *
+ * There is no wide batch form. A caller that needs whole runs for a list of
+ * valuations should add one and say why, rather than find one lying about
+ * pre-fetched for a path that reads two fields.
  */
-export async function latestSucceededCalculationsByValuationIds(
+export async function latestSucceededCalculationHeadsByValuationIds(
   pool: pg.Pool,
   valuationIds: string[],
-): Promise<Map<string, CalculationRow>> {
+): Promise<Map<string, CalculationHead>> {
   if (valuationIds.length === 0) return new Map();
-  const { rows } = await pool.query<CalculationRow>(
+  const { rows } = await pool.query<{
+    valuation_id: string;
+    fmv_per_share: string | null;
+    results_kind: string | null;
+    specialty_is_object: boolean | null;
+  }>(
     // `unnest(...) AS v(id)` rather than `= ANY($1)`: the LATERAL needs a row
     // per requested id to correlate against, and `ANY` is a predicate rather
     // than a relation.
-    `SELECT ${qualified('c')}
+    `SELECT c.valuation_id,
+            c.fmv_per_share,
+            c.results->>'kind' AS results_kind,
+            jsonb_typeof(c.results->'specialty') IN ('object', 'array') AS specialty_is_object
        FROM unnest($1::ulid[]) AS v(id)
        CROSS JOIN LATERAL (
-         SELECT ${CALCULATION_COLUMNS}
+         SELECT c.valuation_id, c.fmv_per_share, c.results
            FROM calculations c
           WHERE c.valuation_id = v.id AND c.status = 'succeeded'
           ORDER BY c.created_at DESC
@@ -336,7 +359,17 @@ export async function latestSucceededCalculationsByValuationIds(
        ) c`,
     [[...new Set(valuationIds)]],
   );
-  return new Map(rows.map((row) => [row.valuation_id, row]));
+  return new Map(
+    rows.map((row) => [
+      row.valuation_id,
+      {
+        fmv_per_share: row.fmv_per_share,
+        run_kind: specialtyRunKindOf(row.results_kind, {
+          specialtyIsObject: row.specialty_is_object === true,
+        }),
+      },
+    ]),
+  );
 }
 
 /**
