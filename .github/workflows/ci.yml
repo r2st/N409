@@ -26,8 +26,8 @@ jobs:
     env:
       DATABASE_URL: postgres://n409:n409_dev@localhost:5432/n409_dev
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -72,8 +72,8 @@ jobs:
       run:
         working-directory: src/services/${{ matrix.service }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
           cache: pip
@@ -86,7 +86,7 @@ jobs:
     name: Shell scripts (shellcheck)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # infra/*.sh restart production and rotate backups. A quoting slip in one
       # of them is not caught by any other job — the Node and Python suites
       # never execute them, and deploy.sh's own tests exercise behaviour rather
@@ -100,10 +100,10 @@ jobs:
     name: Dependency & secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # gitleaks scans the full history
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -133,7 +133,7 @@ jobs:
       # This step is the half that asks the registry what it says today.
       - name: deprecated dependencies (live registry)
         run: node tools/check-deprecations.mjs
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
       # Gating, like npm audit above. It was advisory, and an advisory scan is
@@ -194,7 +194,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [node]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build valuation image
         run: docker build -f src/services/valuation/Dockerfile .
       - name: Build web (BFF) image
@@ -208,8 +208,8 @@ jobs:
     name: Terraform validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
       - run: terraform fmt -check -recursive
         working-directory: infra/terraform
       - run: terraform init -backend=false && terraform validate

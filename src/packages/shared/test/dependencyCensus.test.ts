@@ -980,3 +980,74 @@ describe('CI verifies the binaries it downloads and runs', () => {
     });
   }
 });
+
+/**
+ * Third-party code CI runs, addressed by a pointer somebody else can move.
+ *
+ * The digest case above refuses a `curl` whose bytes nothing verifies, on the
+ * grounds that "a release tag is a mutable pointer: whoever can change what
+ * that URL serves runs code in a job holding the repository and the workflow
+ * token". Every `uses:` line was exempt from that reasoning while being the
+ * larger instance of it — `actions/checkout@v4` is not a version, it is a
+ * branch-shaped label the publisher force-pushes on every v4.x release, and a
+ * compromised or coerced publisher moves it to whatever they like. There is no
+ * lockfile for actions and no `--frozen` mode; the SHA in the ref *is* the
+ * lockfile.
+ *
+ * The risk is not uniform and the rule is still uniform, deliberately. Two of
+ * these jobs hold `security-events: write` (CodeQL) and one runs Terraform
+ * against real state, so the blast radius of the third-party action
+ * (`hashicorp/setup-terraform`) is the worst of the set — but `actions/*` being
+ * GitHub-owned buys availability, not immutability, and tj-actions/changed-files
+ * was a GitHub-Marketplace action whose tags were rewritten across every
+ * version at once. Allowing "trusted publisher" here would mean maintaining a
+ * trust list, and the exemption would be the thing that rots.
+ *
+ * A pin is only as good as the comment beside it: the SHA says what runs and
+ * the `# vX.Y.Z` says what it was when a human last looked. Renovate/Dependabot
+ * both read that pair and keep it in step.
+ */
+describe('CI pins the actions it runs to an immutable ref', () => {
+  const workflowDir = path.join(repoRoot, '.github/workflows');
+  const FULL_SHA = /^[0-9a-f]{40}$/;
+
+  for (const file of readdirSync(workflowDir).filter((f) => /\.ya?ml$/.test(f))) {
+    it(file, () => {
+      const lines = readFileSync(path.join(workflowDir, file), 'utf8').split('\n');
+      const unpinned: string[] = [];
+      const uncommented: string[] = [];
+
+      for (const [i, line] of lines.entries()) {
+        const m = /^\s*(?:-\s*)?uses:\s*(\S+)/.exec(line);
+        if (!m) continue;
+        const ref = m[1]!;
+        // A local action (`./.github/actions/x`) is this repository's own code
+        // at this commit; there is no third party and nothing to pin to.
+        if (ref.startsWith('./') || ref.startsWith('docker://')) continue;
+
+        const at = ref.lastIndexOf('@');
+        const rev = at === -1 ? '' : ref.slice(at + 1);
+        if (!FULL_SHA.test(rev)) {
+          unpinned.push(`${file}:${i + 1} ${ref}`);
+          continue;
+        }
+        if (!/#\s*v?\d+\.\d+\.\d+/.test(line)) uncommented.push(`${file}:${i + 1} ${ref}`);
+      }
+
+      expect(
+        unpinned,
+        `${file} runs an action at a tag or branch. That ref is mutable: the publisher ` +
+          `(or anyone who compromises them) can repoint it at new code, which then runs ` +
+          `in a job holding this repository's checkout and workflow token — no diff here, ` +
+          `no review, no lockfile entry. Pin the full 40-character commit SHA.`,
+      ).toEqual([]);
+
+      expect(
+        uncommented,
+        `${file} pins a SHA with no version comment. The pin is then unreadable and ` +
+          `unmaintainable — nobody can tell how stale it is, and Dependabot/Renovate ` +
+          `key their updates off the trailing \`# vX.Y.Z\`. Add it.`,
+      ).toEqual([]);
+    });
+  }
+});
