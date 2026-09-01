@@ -62,7 +62,39 @@ export function mintSignoffToken(): { token: string; hash: string } {
   return { token, hash: hashToken(token) };
 }
 
-/** Insert-or-replace the resolution: regenerating supersedes the body + resets status. */
+/**
+ * Insert-or-replace the resolution: regenerating supersedes the body + resets
+ * status.
+ *
+ * THE THIRD DOOR ONTO approved → pending, AND THE ONLY ONE THAT LEFT NO TRACE
+ * (round 312, methodology M3).
+ *
+ * `refreshResolutionStatusTx` is where the aggregate is meant to move, and it
+ * records every direction it moves in — including the way back out of a
+ * decision, which is what `board_resolution_reopened` is for. R288 closed the
+ * `addBoardMember` door onto that direction by refusing under the row lock;
+ * `deleteBoardMember` is allowed through it and says so on the spine.
+ *
+ * This statement reaches the same place without going near either: the
+ * `DO UPDATE` writes `status = 'pending'` and `approved_at = NULL` directly, so
+ * regenerating over a resolution the board had already adopted withdrew that
+ * adoption — the safe-harbor timestamp cleared, every director's signature
+ * deleted by the statement below — and put nothing on the trail but
+ * `board_resolution_generated`, which is the same event a first generation
+ * writes. A reader could not tell a fresh document from one that replaced an
+ * approved 409A adoption, and options struck at the superseded FMV
+ * (`routes/grants.ts` snapshots `fmv_conclusion`) go on citing a board approval
+ * the spine no longer records happening.
+ *
+ * Recorded rather than refused, which is the distinction R288's comment draws:
+ * an addition that withdrew an approval nobody asked to withdraw is a refusal,
+ * and an operator generating a new document has asked for exactly this. So the
+ * prior status is read under the row lock the upsert takes anyway, and the
+ * discarded sign-off ids come back from the DELETE that discards them — the
+ * `board_member_added` and `board_signoff_recorded` rows naming those same ids
+ * are still on the spine, so the trail joins without a second copy of anyone's
+ * address.
+ */
 export async function upsertResolution(
   pool: pg.Pool,
   input: {
@@ -78,6 +110,14 @@ export async function upsertResolution(
   actor: EventActor,
 ): Promise<BoardResolutionRow> {
   return withTransaction(pool, async (client) => {
+    // Under the same row lock the upsert below takes, so the status this reads
+    // is the one it is about to overwrite. No row on a first generation, which
+    // is the case with nothing to withdraw.
+    const { rows: prior } = await client.query<{ status: BoardResolutionStatus }>(
+      'SELECT status FROM board_resolutions WHERE valuation_id = $1 FOR UPDATE',
+      [input.valuationId],
+    );
+    const previous = prior[0]?.status ?? null;
     const { rows } = await client.query<BoardResolutionRow>(
       `INSERT INTO board_resolutions
          (id, valuation_id, valuation_date, fmv_conclusion, currency,
@@ -107,13 +147,43 @@ export async function upsertResolution(
       ],
     );
     // Regenerating invalidates prior sign-offs so nobody's signature carries
-    // over to a materially different document.
-    await client.query('DELETE FROM board_signoffs WHERE resolution_id = $1', [rows[0]!.id]);
+    // over to a materially different document. Returned, because which ones
+    // went is the fact the trail below has to carry: the rows are gone after
+    // this statement and a count alone cannot say whose signature was in them.
+    const { rows: discarded } = await client.query<{ id: string }>(
+      'DELETE FROM board_signoffs WHERE resolution_id = $1 RETURNING id',
+      [rows[0]!.id],
+    );
+    const discardedIds = discarded.map((row) => row.id);
+    // Ordered before the generation event so the spine reads in the order the
+    // two things happened: the board's adoption was withdrawn, then a new
+    // document took its place.
+    if (previous === 'approved' || previous === 'rejected') {
+      await recordEvent(client, {
+        valuationId: input.valuationId,
+        type: BOARD_EVENT_TYPES.resolutionReopened,
+        actor,
+        // Same `from` the other door writes — 'approved' and 'rejected' are the
+        // only two values it can take and it means the same thing in both.
+        payload: {
+          resolution_id: rows[0]!.id,
+          from: previous,
+          discarded_signoffs: discardedIds,
+        },
+      });
+    }
     await recordEvent(client, {
       valuationId: input.valuationId,
       type: BOARD_EVENT_TYPES.resolutionGenerated,
       actor,
-      payload: { resolution_id: rows[0]!.id, fmv_conclusion: input.fmvConclusion },
+      payload: {
+        resolution_id: rows[0]!.id,
+        fmv_conclusion: input.fmvConclusion,
+        // Non-empty on every regeneration, decided or not: a resolution still
+        // collecting signatures loses them here too, and the operator who
+        // pressed Generate is not the person whose signature was thrown away.
+        discarded_signoffs: discardedIds,
+      },
     });
     return resolution(rows[0]!);
   });

@@ -144,4 +144,65 @@ describe.skipIf(!dbUp)('board resolution reopened', () => {
     expect((await board(valuationId)).status).toBe('pending');
     expect(await spine(valuationId, 'board_resolution_reopened')).toHaveLength(0);
   });
+
+  /*
+   * REGENERATION IS THE THIRD DOOR ONTO THE SAME DIRECTION (round 312).
+   *
+   * `POST /valuations/:id/board` upserts over whatever is there, and its
+   * `DO UPDATE` writes `status = 'pending'`, `approved_at = NULL` and deletes
+   * every sign-off — without going through `refreshResolutionStatusTx`, which
+   * is where the event above is emitted. So the one door that destroys the
+   * board's adoption outright was the one that said nothing about it: the trail
+   * showed `board_resolution_approved`, then `board_resolution_generated`,
+   * which is also what a first generation writes.
+   */
+  const regenerate = (valuationId: string, fmv: number) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/board`,
+      headers: authHeader(ops.token),
+      payload: { fmv_conclusion: fmv },
+    });
+
+  it('records the withdrawal when a regeneration replaces an approved resolution', async () => {
+    const { valuationId, memberId, token } = await newBoard('RegenCo');
+    expect((await sign(token, 'signed')).statusCode).toBe(200);
+    expect((await board(valuationId)).status).toBe('approved');
+
+    expect((await regenerate(valuationId, 6.25)).statusCode).toBe(201);
+
+    const after = await board(valuationId);
+    expect(after.status).toBe('pending');
+    expect(after.approved_at).toBeNull();
+
+    const reopened = await spine(valuationId, 'board_resolution_reopened');
+    expect(reopened).toHaveLength(1);
+    // Named, not counted: the `board_member_added` and `board_signoff_recorded`
+    // rows carrying this same id are still on the spine, so an auditor can say
+    // whose signature the regeneration threw away.
+    expect(reopened[0]!.payload).toMatchObject({
+      from: 'approved',
+      discarded_signoffs: [memberId],
+    });
+  });
+
+  it('names the discarded sign-offs even when the resolution had not been decided', async () => {
+    const { valuationId, memberId } = await newBoard('PartSignedCo');
+    // Nobody signed: the aggregate does not move, so there is nothing to
+    // withdraw — but the director on the list is still deleted, and the
+    // operator who pressed Generate is not the person who loses their link.
+    expect((await regenerate(valuationId, 3.1)).statusCode).toBe(201);
+
+    expect(await spine(valuationId, 'board_resolution_reopened')).toHaveLength(0);
+    const generated = await spine(valuationId, 'board_resolution_generated');
+    expect(generated).toHaveLength(2);
+    expect(generated[1]!.payload).toMatchObject({ discarded_signoffs: [memberId] });
+  });
+
+  it('discards nothing on a first generation', async () => {
+    const { valuationId } = await newBoard('FirstGenCo');
+    const generated = await spine(valuationId, 'board_resolution_generated');
+    expect(generated).toHaveLength(1);
+    expect(generated[0]!.payload).toMatchObject({ discarded_signoffs: [] });
+  });
 });

@@ -58,7 +58,10 @@ const DECIDED: Record<string, Verdict> = {
     unguarded:
       'the aggregate is recomputed from the sign-offs under a FOR UPDATE on the resolution, and a ' +
       'member added or removed is meant to move it — except out of `approved`, which R288 refuses ' +
-      'under that same lock rather than letting an addition clear an approval and its `approved_at`',
+      'under that same lock rather than letting an addition clear an approval and its `approved_at`; ' +
+      "the upsert's `DO UPDATE` writes 'pending' over any status at all, which is a regeneration the " +
+      'operator asked for — R312 records it as `board_resolution_reopened` rather than refusing it, ' +
+      'because a decided resolution replaced silently is an approval withdrawn with nothing on the spine',
   },
   'repos/capTableConnections.ts :: cap_table_connections': {
     guard:
