@@ -161,6 +161,18 @@ const RESULTS = {
   discounts: { dloc: 0.1, dlom: 0.25, dlom_method: 'chaffee' },
 };
 
+/**
+ * The same run, with the conclusion the single-breakpoint re-strike actually
+ * produces.
+ *
+ * `RESULTS` is a participating-preferred cap table allocated through the full
+ * waterfall, so its concluded $1.2345 is not what F-2's simplified model gets
+ * ($2.8935). That difference is real and the schedules now disclose it — but
+ * the sentences they say when the two *do* agree still have to be tested, and
+ * a single-breakpoint engagement is where they are said.
+ */
+const AGREEING_RESULTS = { ...RESULTS, fmv_per_share: 2.8935 };
+
 function calculation(over: Partial<CalculationRow> = {}): CalculationRow {
   return {
     id: '01J000000000000000000000',
@@ -1460,9 +1472,34 @@ describe('Exhibit F-2 — allocation sensitivity', () => {
   it('marks every cell but the base as one the valuation does not adopt', () => {
     // The exhibit is a robustness statement, not a range of defensible values,
     // and a reader who takes a corner cell as an alternative conclusion has
-    // taken the wrong number out of a signed report.
-    const seen = plain(f2()!.html);
+    // taken the wrong number out of a signed report. Said only when the grid's
+    // base case really is the conclusion — see the two tests below.
+    const seen = plain(f2(AGREEING_RESULTS)!.html);
     expect(seen).toContain('No cell other than the base case is adopted');
+    expect(seen).not.toContain('single-breakpoint option model');
+  });
+
+  /**
+   * The grid does not re-run the waterfall, and says so when it matters.
+   *
+   * `sensitivity.ts` strikes one call on the whole equity value against the
+   * whole preference stack and spreads it over common; the conclusion is
+   * allocated class by class, and on this fixture's participating preferred and
+   * option pool the two are a factor apart — $2.8935 against the $1.2345 in
+   * Exhibit H. The schedule used to print the first of those under the sentence
+   * "no cell OTHER than the base case is adopted by this valuation", which
+   * states that the second is not the conclusion.
+   */
+  it('says so when its base case is not the concluded value per share', () => {
+    const seen = plain(f2()!.html);
+    expect(seen).toContain('single-breakpoint option model');
+    // Both figures, so the reader is not left to find the other one.
+    expect(seen).toContain('$2.8935');
+    expect(seen).toContain('$1.2345');
+    expect(seen).toContain('no cell in this table is a value adopted by this valuation');
+    // And it stops claiming the centre of the grid is the conclusion.
+    expect(seen).not.toContain('No cell other than the base case is adopted');
+    expect(seen).not.toContain('restates the concluded value per share');
   });
 
   it('moves the value up with volatility — it is a call option', () => {
@@ -1687,9 +1724,19 @@ describe('Exhibit F-3 — risk-free rate sensitivity', () => {
     // The closing sentence is the one figure a reviewer takes away, and it is
     // about the rate: the volatility and term are held at the applied values.
     // Mixing in the vol axis would attribute sigma's spread to the rate.
-    const seen = plain(f3()!.html);
+    const seen = plain(f3(AGREEING_RESULTS)!.html);
     expect(seen).toContain('Holding the volatility and term at the values the conclusion adopts');
     expect(seen).toContain('No cell other than the base case is adopted');
+  });
+
+  it('carries the same caveat as F-2 when the re-strike is not the conclusion', () => {
+    // The two schedules stress one model, so they must agree about whether its
+    // base case is the conclusion — a second copy of that judgement is how they
+    // would come to say different things about the same grid.
+    const seen = plain(f3()!.html);
+    expect(seen).toContain('single-breakpoint option model');
+    expect(seen).toContain('$1.2345');
+    expect(seen).not.toContain('No cell other than the base case is adopted');
   });
 
   it('moves the conclusion far less than volatility does', () => {

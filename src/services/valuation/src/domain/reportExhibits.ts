@@ -16,7 +16,7 @@ import { CLASS_VOLATILITY_SCHEDULE, DISCOUNT_RATE_SCHEDULE } from './report.js';
 import { MULTIPLE_LABELS, multipleKeyFor, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 import { requiredReturnRows } from './requiredReturns.js';
-import { sensitivityGrid, sensitivityTables, type OpmInputs } from './sensitivity.js';
+import { opmFmvPerShareCents, sensitivityGrid, sensitivityTables, type OpmInputs } from './sensitivity.js';
 import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatility.js';
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
 import type { ProjectionRow, ProjectionYear } from '../repos/projections.js';
@@ -2244,6 +2244,64 @@ function sensitivityBasis(
   };
 }
 
+/**
+ * Whether the grid's base case is the value the report concludes.
+ *
+ * It is not, on most cap tables, and the schedules said it was. `sensitivity.ts`
+ * strikes one Black-Scholes call on the whole equity value against the whole
+ * preference stack and spreads it over common; the conclusion is allocated by
+ * `engine/waterfall.py` class by class, across a breakpoint per distinct
+ * strike, with participating preferred and the option pool taking their share
+ * of the same call. The two agree only when there is one breakpoint — a blended
+ * preference and nothing else in the stack. On the ordinary venture structure
+ * they do not: on this module's own fixture the base cell prices common at
+ * $2.8935 while Exhibit H and the summary page conclude $1.2345, and F-2 said
+ * in terms that no cell *other* than that base case was one the valuation
+ * adopts.
+ *
+ * Rather than drop the schedules — the deltas are unaffected, because a
+ * structural bias in the level cancels out of every ratio to the base, and the
+ * proportional sensitivity is what the exhibits exist to establish — the
+ * disagreement is stated where it happens, in the D-1 manner. The alternative
+ * is a second waterfall implementation on this side of the wire, which is the
+ * thing this whole layer is written not to have.
+ *
+ * The tolerance is the printed precision with room for the two implementations'
+ * own arithmetic: FMV/share prints to four decimals, and the engine's normal
+ * CDF and `sensitivity.ts`'s A&S approximation do not agree to the last bit.
+ */
+function baseMatchesConclusion(basis: OpmInputs, concluded: number | null): boolean {
+  if (concluded === null || concluded <= 0) return false;
+  const base = opmFmvPerShareCents(basis) / SENSITIVITY_SCALE;
+  return Math.abs(base - concluded) <= Math.max(0.0002, concluded * 0.001);
+}
+
+/**
+ * The sentence a schedule carries when its base case is not the conclusion.
+ *
+ * Names both figures. A caveat that said the two "may differ" would leave the
+ * reader to work out by how much from a table that does not contain the other
+ * number.
+ */
+function simplifiedModelCaveat(
+  basis: OpmInputs,
+  concluded: number,
+  currency: string,
+  schedule: string,
+): string {
+  const base = opmFmvPerShareCents(basis) / SENSITIVITY_SCALE;
+  return P(
+    `The ${schedule} grid is re-struck on a single-breakpoint option model — the whole preference ` +
+      'stack taken as one strike — rather than on the class-by-class waterfall this valuation was ' +
+      `allocated through. Its base case of <strong>${formatCurrency(base, currency, 4)}</strong> is ` +
+      'therefore not the concluded value per share of ' +
+      `<strong>${formatCurrency(concluded, currency, 4)}</strong> stated in Exhibit H, and ` +
+      '<strong>no cell in this table is a value adopted by this valuation.</strong> What the table ' +
+      'establishes is the proportional sensitivity of the allocation to the input stressed — the ' +
+      'percentage beside each cell — which a difference in the level of the model does not change.',
+  );
+}
+
 /** The step set the term axis is stressed over: ±6 months and ±1 year. */
 const TERM_STEPS = [-1, -0.5, 0, 0.5, 1];
 
@@ -2339,13 +2397,19 @@ export function sensitivityExhibit(
   const base = grid.base.fmvPerShareCents;
   const spread = base > 0 ? (high - low) / base : 0;
 
+  // See `baseMatchesConclusion`. When the simplified re-strike does not land on
+  // the conclusion, the schedule says so and stops calling its own centre "the
+  // concluded value" — which is the claim that made it contradict Exhibit H.
+  const concludedPerShare = num(results.fmv_per_share);
+  const agrees = baseMatchesConclusion(basis, concludedPerShare);
+
   return section(SCHEDULE['F-2'], [
     P(
       'The allocation prices common as a call option on total equity value, and two of its inputs ' +
         'are estimates rather than observations: the expected volatility and the expected time to a ' +
-        'liquidity event. The table below restates the concluded value per share across a range of ' +
-        'both, holding every other input — equity value, the preference stack, the risk-free rate ' +
-        'and the marketability discount — at the values the conclusion adopts.',
+        `liquidity event. The table below restates the ${agrees ? 'concluded ' : ''}value per share ` +
+        'across a range of both, holding every other input — equity value, the preference stack, the ' +
+        'risk-free rate and the marketability discount — at the values the conclusion adopts.',
     ),
     table({
       head,
@@ -2358,12 +2422,16 @@ export function sensitivityExhibit(
       ],
     }),
     P(
-      `Across the range tested the concluded value runs from <strong>${money(low)}</strong> to ` +
-        `<strong>${money(high)}</strong>, a spread of ${formatPercent(spread, 1)} of the concluded ` +
-        `${money(base)}. <strong>No cell other than the base case is adopted by this valuation.</strong> ` +
+      `Across the range tested the value runs from <strong>${money(low)}</strong> to ` +
+        `<strong>${money(high)}</strong>, a spread of ${formatPercent(spread, 1)} of the ` +
+        `${agrees ? 'concluded' : 'base-case'} ${money(base)}. ` +
+        (agrees ? '<strong>No cell other than the base case is adopted by this valuation.</strong> ' : '') +
         'The table is presented so that the sensitivity of the conclusion to its two least observable ' +
         'inputs can be judged, not to offer a range of defensible values.',
     ),
+    agrees || concludedPerShare === null
+      ? null
+      : simplifiedModelCaveat(basis, concludedPerShare, ctx.currency, 'Exhibit F-2'),
   ]);
 }
 
@@ -2494,6 +2562,11 @@ export function rfrSensitivityExhibit(
   const concluded = base.fmvPerShareCents;
   const spread = concluded > 0 ? (high - low) / concluded : 0;
 
+  // As F-2: the base of this grid is the conclusion only when the
+  // single-breakpoint re-strike reproduces it. See `baseMatchesConclusion`.
+  const concludedPerShare = num(results.fmv_per_share);
+  const agrees = baseMatchesConclusion(basis, concludedPerShare);
+
   return section(SCHEDULE['F-3'], [
     P(
       `The allocation discounts the preference stack at the risk-free rate, applied here at ` +
@@ -2501,8 +2574,8 @@ export function rfrSensitivityExhibit(
         `matched to the ${termYears.toFixed(2)}-year expected term at the valuation date. Unlike the ` +
         'volatility and the term of Exhibit F-2 the rate is observed rather than estimated, so what is ' +
         `tested below is not the rate itself but the maturity it was matched to: the tables restate the ` +
-        `concluded value per share with the rate moved ${range}, against the volatility and against the ` +
-        `term in turn.`,
+        `${agrees ? 'concluded ' : ''}value per share with the rate moved ${range}, against the ` +
+        `volatility and against the term in turn.`,
     ),
     P('<strong>Risk-free rate against expected volatility</strong>'),
     grid(tables.rfr_vol, (v) => formatPercent(v, 1), volCol),
@@ -2510,10 +2583,14 @@ export function rfrSensitivityExhibit(
     grid(tables.rfr_term, (t) => `${t.toFixed(2)} yrs`, termCol),
     P(
       `Holding the volatility and term at the values the conclusion adopts, moving the rate ${range} ` +
-        `shifts the concluded value from <strong>${money(low)}</strong> to ` +
-        `<strong>${money(high)}</strong> — a spread of ${formatPercent(spread, 2)} of the concluded ` +
-        `${money(concluded)}. <strong>No cell other than the base case is adopted by this valuation.</strong>`,
+        `shifts the value from <strong>${money(low)}</strong> to ` +
+        `<strong>${money(high)}</strong> — a spread of ${formatPercent(spread, 2)} of the ` +
+        `${agrees ? 'concluded' : 'base-case'} ${money(concluded)}.` +
+        (agrees ? ' <strong>No cell other than the base case is adopted by this valuation.</strong>' : ''),
     ),
+    agrees || concludedPerShare === null
+      ? null
+      : simplifiedModelCaveat(basis, concludedPerShare, ctx.currency, 'Exhibit F-3'),
   ]);
 }
 
