@@ -153,18 +153,40 @@ describe('Google SSO code exchange', () => {
   });
 });
 
-describe('Xero org identification stays best-effort', () => {
-  it('does not fail the connection when /connections answers with junk', async () => {
-    // Org identification is a nicety layered on top of a token exchange that
-    // already succeeded; a bad body there must not cost the analyst the
-    // connection they just authorised.
+/*
+ * This block used to be titled "Xero org identification stays best-effort", and
+ * asserted that a junk `/connections` body left the connection standing on the
+ * reasoning that org identification "is a nicety layered on top of a token
+ * exchange that already succeeded".
+ *
+ * The premise was wrong (R301, methodology M6). `fetchFinancials` and
+ * `fetchBalanceSheet` send `xero-tenant-id` only when `externalOrgId` is set,
+ * and nothing else ever fills that column in for Xero — so the connection kept
+ * by the nicety is one that reads healthy on the card and refuses every import
+ * Xero is ever asked for. The analyst does not lose "the connection they just
+ * authorised"; they lose the ability to find out why it does not work, because
+ * the failure is at connect time and the symptom is days later at import time
+ * with nothing joining the two.
+ *
+ * So the connect refuses, which is what the sibling provider has always done:
+ * QuickBooks throws on a missing realm id. What is genuinely best-effort here
+ * is `externalOrgName`, and it still is — it is read with
+ * `storableProviderText` and never gates anything.
+ */
+describe('Xero connect refuses without a tenant', () => {
+  it('fails the connection when /connections answers with junk', async () => {
     const fetchFn = vi.fn(async (url: RequestInfo | URL) =>
       String(url).includes('/connections') ? html() : json({ access_token: 'at' }),
     ) as unknown as typeof fetch;
 
-    const tokens = await accountingExchange('xero', creds, 'https://cb', 'code', fetchFn);
-    expect(tokens.accessToken).toBe('at');
-    expect(tokens.externalOrgId ?? null).toBeNull();
+    // `readJsonArray` answers an unparseable body with an empty list rather
+    // than raising — its contract, shared with the other connectors — so what
+    // this arrives at is "no organisation came back", which is the true and
+    // actionable statement whether the cause was a proxy error page or a
+    // consent screen with nothing ticked. Reconnecting is the move either way.
+    await expect(accountingExchange('xero', creds, 'https://cb', 'code', fetchFn)).rejects.toThrow(
+      /Xero did not return an organisation/,
+    );
   });
 
   it('still reads the tenant when /connections answers properly', async () => {
