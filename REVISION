@@ -6930,3 +6930,126 @@
 #            `isRetiredNow` for `archived_at`, then `integrationActorStillAuthorized`
 #            for `user_id`/`partner_id`. Two single-row reads on a path taken once
 #            per connection; measured as not worth the coupling.
+
+# R339 — Input validation & boundary (M19). Four findings, and three of them are
+#            one sentence: a blank or a null was coerced into a number, and the
+#            number was in range. `Number('')` is 0, `Number(null)` is 0, and a
+#            zero passes every guard written for "is there a figure here" while
+#            meaning something the person who left the box empty did not say.
+#
+#            **A blank PWERM exit value saved as a scenario worth zero.** The
+#            engine-inputs schema refuses a scenario carrying neither an
+#            `equity_value` nor an `enterprise_value` — there is a `.refine` on
+#            the row that says so — and requires a probability. Neither refusal
+#            could ever fire from the panel that writes them, because the request
+#            is built with `Number(s.exit_value) || 0`. A cell left blank crossed
+#            the wire as a complete, in-range scenario worth nothing and saved as
+#            a total-loss outcome carrying whatever probability sat beside it.
+#            On the probability-weighted conclusion the missing figure does not
+#            read as missing; it reads as zero, and drags the concluded value
+#            down by the row's whole weight with nothing on the page saying a
+#            number was absent. The panel's own "probabilities must total 100%"
+#            check says nothing about it either — the filled rows can sum to one
+#            on their own — so a blank probability saved as zero the same way.
+#            `scenarioProblem` now refuses blank for the two cells the schema
+#            declares required and leaves the other two alone: the schema
+#            defaults `time_to_exit_years` to 0 and takes a null `discount_rate`
+#            to mean the engagement-wide rate, so both are real answers.
+#
+#            **Every null the comparables screener published arrived as a present
+#            zero.** `fin` in routes/comparables.ts was `Number(value)` filtered
+#            through `Number.isFinite`. Three deliberate nulls, three different
+#            wrong answers. `Company.ebitda_margin` is null exactly where EBITDA
+#            is "not meaningfully positive" — its own docstring, and four rows of
+#            the shipped universe — and read as a margin of 0, so the ternary
+#            written to preserve it (`margin !== null ? revenueLtm * margin :
+#            null`) stored `ebitda_ltm: 0` for a company whose EBITDA the engine
+#            declined to state. `Company.enterprise_value` is null where the row
+#            has neither a revenue nor a market cap, which is what `?? fin(
+#            c.market_cap)` beside it is *for*: a null EV became 0, the `??`
+#            never fired, `impliedMultiples` refuses a non-positive EV, and the
+#            row landed in the peer set contributing no multiple to any median
+#            while its market cap sat unread in the payload. And `feed.market_cap`
+#            is null on an observed payload whose filings carry none — the
+#            `marketCap === null` test is the R305 guard separating "the live
+#            source is down" from "this company's figures are thin", and zero is
+#            not null, so it never fired and the row was written
+#            `figures_source: 'live'` with an enterprise value of nothing. The
+#            fix is the rule `num` in routes/projections.ts already carries,
+#            word for word: numbers and numeric strings only. This was that bug
+#            one route over, and the grep that found it — `Number(` inside a
+#            `Number.isFinite` guard — was run over every domain and route file
+#            in the service; the other twelve sites all exclude null already,
+#            two of them (`domain/volatility.ts`, `domain/comparables.ts`) only
+#            because a `<= 0` test downstream happens to catch the zero.
+#
+#            **An SMB revenue multiple struck on no revenue averaged in as a
+#            zero.** `smb_valuation` refuses a non-positive benefit stream twice
+#            — capitalization of earnings and the SDE multiple both say so out
+#            loud — and then took `annual_revenue: 0` for the third method,
+#            multiplied it, and put a $0 indication into the weighting beside the
+#            ones that ran. $200k of SDE at 3x concludes $600,000 on that method
+#            alone and $300,000 the moment a revenue multiple is left in the
+#            questionnaire with no revenue to strike it on, and nothing on the
+#            schedule distinguishes the average of two opinions from half of the
+#            only one. Reachable without a typo: the intake field's rule is
+#            `min: 0`, which is what a pre-revenue business answers.
+#            `comparables.comparable_analysis` answers the same question with
+#            `None` and says why — its peer screen is worth having without an
+#            indication. There is no such half here, and a weight naming a method
+#            that could not run is already an error in this same function, so
+#            silently not running one the analyst asked for would contradict it.
+#
+#            **The study-table validator's rules had drifted from the schema it
+#            restates.** `studyTableProblem` exists to say what the route would
+#            refuse, in the row it is wrong in, so the analyst is told here
+#            rather than by a 422 naming an index. Three of its four rules had
+#            drifted permissive — the discount ceiling was 1 where
+#            `ParamsPatchBody` writes `.max(0.99)`, the premium had no ceiling
+#            where the route writes `.max(10)`, and the period years were checked
+#            as numbers in a range where the route writes `.int()`. The boxes
+#            themselves already declared the right bounds, so only the validator
+#            behind them disagreed. The fourth is the one neither end refused:
+#            `tableForApi` drops every row whose study name is blank and this
+#            complained only when *all* of them were, so a row carrying a
+#            discount under no name was quietly left out of the request while the
+#            page went on displaying it — the concluded statistic struck over a
+#            table with one fewer observation than the one on screen, which on a
+#            median is a different row rather than a rounding difference.
+#
+#            gap: an intake field's `rules` are enforced by `validateIntake`,
+#            which the questionnaire *submit* runs and the specialty *run* does
+#            not — `POST /valuations/:id/specialty` reads `questionnaire.answers`
+#            straight out of the row. So a `min`/`max` that exists only on the
+#            form is not a constraint on what reaches the engine, and the real
+#            defence has to be the engine's own `_num` bound. Left because the
+#            same route also takes an ops-only `inputs: z.record(z.unknown())`
+#            override that bypasses the questionnaire entirely, so tightening the
+#            questionnaire path alone would close nothing. The engine-side half
+#            is the one worth doing: `ppa.deferred_revenue_haircut` is `_num`
+#            with no minimum while its form says `min: 0`, and after R335 flipped
+#            its sign a negative one now reduces net assets — reintroducing the
+#            bug R335 fixed, through an input.
+#
+#            gap: `goodwill_impairment` takes `carrying_amount` with no minimum
+#            while the two sibling functions in the same file both write
+#            `minimum=0.0` for the same-named field — and its own guard is
+#            spelled `if goodwill > max(carrying, 0.0)`, which is that file
+#            acknowledging the value can be negative. Not taken because a
+#            negative carrying amount reaches no wrong conclusion today: any
+#            positive goodwill against it raises, and zero goodwill floors the
+#            loss at zero.
+#
+#            gap: `listCalculationHistory`'s `Math.min(Math.max(opts.limit ??
+#            CALCULATION_PAGE_LIMIT, 1), CALCULATION_PAGE_LIMIT)` passes a NaN
+#            straight through both clamps to `LIMIT $2`. No caller supplies
+#            `limit`, so it is unreachable rather than wrong; noted because the
+#            shape is the one every clamp in the codebase has and only this one
+#            has no schema in front of it.
+#
+#            gap: `_pdf_text`'s budget counts characters before `extract_texts`
+#            strips the result, so a PDF whose first pages are mostly whitespace
+#            returns marginally fewer characters than the unbounded version did.
+#            The docstring's claim — that the returned prefix is the one the
+#            unbounded version produced — is true; what is not is that the *kept*
+#            20,000 are. Below the resolution of anything downstream.
