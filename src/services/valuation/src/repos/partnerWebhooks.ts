@@ -95,10 +95,39 @@ export async function deleteWebhook(pool: pg.Pool, partnerId: string, id: string
   return (rowCount ?? 0) > 0;
 }
 
-/** Enabled webhooks for a partner — what a delivery run fans out over. */
+/**
+ * Enabled webhooks for a partner — what a delivery run fans out over.
+ *
+ * `enabled` was the whole test, and it is the firm's own switch. Whether the
+ * *firm* is still on this platform was never asked (round 342, methodology M3).
+ * `partners.archived_at` is the platform's soft delete for a firm — the flag
+ * that takes its user assignments, its branding edits and its outstanding
+ * client intake links away — and every one of those was closed as somebody
+ * noticed the door. This is the door that runs by itself: three single-row
+ * callers on every transition of a partner engagement plus the retention
+ * sweep's batch, each POSTing an engagement's number, company name and state to
+ * a URL belonging to a firm the platform has withdrawn, for as long as the
+ * engagements go on moving. The firm cannot stop it either — the console it
+ * would delete the hook from is behind a partner API key, and an archived
+ * firm's key is now refused.
+ *
+ * Here rather than at the four call sites, for the reason `LIVE_LINK_SQL` in
+ * `repos/clientIntake.ts` gives about the same flag: a predicate copied into
+ * each caller is one that eventually differs between them.
+ *
+ * ONLY THE FAN-OUT. Deliveries already queued keep their retry ladder, and that
+ * is deliberate: the disclosure was made when the row was written, the ladder
+ * is what ends the row, and a claim query taught to skip them would leave
+ * `pending` rows nothing ever settles — the failure the exhaustion reaper
+ * exists to prevent. Un-archiving restores the fan-out; the events in between
+ * are not replayed, exactly as an intake link reopened after a restore does not
+ * recover the visits it refused.
+ */
 export async function enabledWebhooks(pool: pg.Pool, partnerId: string): Promise<PartnerWebhookRow[]> {
   const { rows } = await pool.query<PartnerWebhookRow>(
-    'SELECT * FROM partner_webhooks WHERE partner_id = $1 AND enabled',
+    `SELECT * FROM partner_webhooks w
+      WHERE w.partner_id = $1 AND w.enabled
+        AND EXISTS (SELECT 1 FROM partners p WHERE p.id = w.partner_id AND p.archived_at IS NULL)`,
     [partnerId],
   );
   return rows.map(openWebhookSecret);
