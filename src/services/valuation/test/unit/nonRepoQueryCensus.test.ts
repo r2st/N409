@@ -73,6 +73,10 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'scalar',
     why: 'The same `SELECT 1`, on the boot path rather than the probe — the process refuses to start against a database it cannot query.',
   },
+  'domain/integrationActor.ts:valuations': {
+    bound: 'key',
+    why: 'Whose engagement one valuation is, by primary key, so the OAuth callback can re-run the scope check `/connect` made — uncached, because the whole question is whether the answer is still current.',
+  },
   'domain/retiredEngagement.ts:valuations': {
     bound: 'key',
     why: 'Whether one engagement is withdrawn, by primary key, taken `FOR SHARE` so a retirement landing mid-transaction cannot commit between the guard and the write it guards.',
