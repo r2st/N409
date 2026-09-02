@@ -8491,3 +8491,107 @@
 #            without asking `LIVE_PARTNER_SQL`, which `acceptInvitation` asks
 #            (R348). Harmless today — the redemption refuses — but the two
 #            halves of one invitation's liveness now disagree about the firm.
+#
+# R357 — Error message quality (M19). Five findings, and three of them are one
+#            sentence: a message whose reader is real and whose remedy names
+#            somewhere that cannot do the thing.
+#
+#            **The partner-key refusal named the screen that mints personal
+#            keys.** `forbidden(…, 'partner-token')` is what a personal API
+#            token gets on a partner API route, and its remedy read "Create a
+#            partner key under Settings → API tokens". That panel is `POST
+#            /me/tokens` — it mints the exact credential that was just refused.
+#            An integrator following the sentence made a second personal token,
+#            sent it, and was refused again by the same sentence. Partner keys
+#            come from `POST /partners/:id/tokens`, which the product draws as
+#            the API tokens panel on the partner portal, and `canManageTokens`
+#            admits the firm's `partner` role there. The refusal one file over
+#            has always said this correctly ("create it from the partner console
+#            while signed in"); this one now agrees with it.
+#
+#            **And a refused firm key was told to replace itself with a personal
+#            one.** `API_TOKEN_REFUSAL_DETAIL` gave four of its five refusals
+#            the same door. `orphaned` is the one where that is unambiguously
+#            wrong: `owner_in_partner` is `t.partner_id IS NULL OR u.partner_id
+#            = t.partner_id`, so a personal token satisfies it trivially and the
+#            refusal can only fire on a partner key. It exists for the case the
+#            platform causes itself — the member who minted a firm's integration
+#            credential is moved out of the org — and it answered by naming the
+#            screen that produces a credential with no authority over that firm,
+#            whose own 403 then pointed back here. The other three can be about
+#            either kind of key and named one; all four now name both doors.
+#            `partner_retired` is left alone: also partner-only, and it already
+#            says minting anything is not the fix.
+#
+#            **A schema rejection promised named inputs and named none.** Both
+#            Python services answer a schema failure through FastAPI's
+#            `RequestValidationError` handler, whose body is `{detail: [{loc,
+#            msg, type, input}, …]}` — `detail` as an *array*. `postJson` tests
+#            `typeof parsed.detail === 'string'`, so that fell through to
+#            `title` (absent), left `opaque` true, and `toProblem` withheld the
+#            body whole. Correctly: `input` is the submitted payload verbatim.
+#            The cost was the sentence that remained — the engine's voice is
+#            "The calculation could not be run" and its remedy is "Correct the
+#            inputs *it names*", a promise attached to a message naming nothing.
+#            `compose` even documents the case ("the engine's pre-flight
+#            messages are not punctuated, pydantic's are"), which is a wording
+#            rule for a string nobody could receive. `InternalServiceError` now
+#            carries `refusedFields`: the `loc` paths and nothing else. `msg` is
+#            pydantic's prose and `input` is the value, and both stay withheld —
+#            a path is a fact about the shape of the request this service sent,
+#            not about what was in it. The upstream's own sentence still wins
+#            wherever there is one.
+#
+#            **The render refusal named a category, not the cap it broke.**
+#            `POST /render/v1/pdf` answered every schema rejection with `Invalid
+#            render request` and put the fields in an `errors` extension — the
+#            shape R180 took out of 203 route rejections in the valuation
+#            service, still standing in the service that one delegates to. A 422
+#            here never reaches an analyst (`clients/reportRender.ts` renders
+#            identical bytes in-process and answers 200), so the reader is the
+#            operator holding the `report offload failed` warn line; and the
+#            realistic 422 is not a malformed body but a report that outgrew one
+#            of `RenderBody`'s caps. The raw body was already in that log line,
+#            bounded at 500 characters — so this is the field list becoming
+#            legible and first rather than appearing at all, `detail` preceding
+#            the extensions in `toBody`.
+#
+#            **Four writes behind one wrapper answered with one word.**
+#            `describeActionFailure(err, operation)` prefers the server's own
+#            sentence and falls back to `operation` plus a description of the
+#            failure, so `operation` is the whole first half of every message
+#            shown when the server sent no `detail` — the failure the reader has
+#            least other information about. `FundingHistory.run` said "Could not
+#            save." to four writes, two of them removals, where nothing was
+#            being saved and the sentence sends the reader back to a form rather
+#            than to the row still sitting there. `TemplatesPage.run` said
+#            "Action failed." to create/activate/archive/save-draft on a table
+#            of many rows. `MonitoringTab.act` said it to starting and stopping
+#            a watch, which are opposite requests. `IntakeTab.saveSection` said
+#            "Could not save." with the section in hand.
+#
+#            gap: the engine's `/wacc`, `/projection` and `/debt` routes call
+#            `f(**request.inputs)` and answer a `TypeError` with `invalid wacc
+#            inputs: compute_wacc() got an unexpected keyword argument 'x'` —
+#            an internal function name and signature in a body that
+#            `describeForUser` would publish. Unreachable from the product
+#            (`wacc_inputs` is `.strict()` at the PATCH), which is why it is
+#            written down rather than fixed: a message no caller can receive is
+#            not an improvement, and the guard that keeps it that way is one
+#            zod modifier on another tier.
+#            gap: `assertAssignable` answers a malformed id and a missing row
+#            with the same `Unknown reviewer`, and names the field only in an
+#            `errors` extension — the half nothing renders. The collapse is
+#            deliberate and documented; the unnamed field is not, and it is
+#            outside `errorMessageQuality`'s census, which reads `src/routes`
+#            only.
+#            gap: `adminUsers` refuses a self-targeted session revoke with "Use
+#            Settings → sign out everywhere", and the control there is labelled
+#            "Sign out everywhere else". A reader searching the page for the
+#            words they were given does not find them.
+#            gap: nothing holds a remedy to naming a control that exists. R262
+#            stated the rule, R357 found two more violations of it by reading,
+#            and both were in tables of copy (`ACCESS`,
+#            `API_TOKEN_REFUSAL_DETAIL`) that a census could enumerate — but the
+#            other side of the check is the frontend's nav labels and panel
+#            headings, in a different package with no import path between them.
