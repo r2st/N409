@@ -47,10 +47,15 @@
  * worse than a metric that is absent, because only one of them is obviously not
  * an answer.
  *
- * The three Fastify services register these. The Python pair has no `/metrics`
- * endpoint at all — the same reason the readiness contract covers three
- * services rather than five — so their ceilings are visible through `systemctl
- * show` and the journal only.
+ * The three Fastify services register these. The Python pair reads the same
+ * files through `cgroup_memory.py` — a hand-kept twin of this file in each of
+ * `src/services/{ai,engine-wrapper}/app`, added in R369 once R361 had made
+ * those units scrape targets — under identical metric and label names, because
+ * the five rules in `alerts.yml`'s memory group select by name and a rule that
+ * matches three units out of five looks like it is working. Nothing derives
+ * one file from the other and `alertRulesCensus.test.ts` reads only this one,
+ * so a rename here has to be made there too; `test_cgroup_memory.py` on each
+ * side asserts the names it expects.
  */
 import { readFileSync } from 'node:fs';
 

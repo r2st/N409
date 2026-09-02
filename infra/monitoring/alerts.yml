@@ -59,7 +59,8 @@
 # The AI (:3002) and engine (:3003) services became scrape targets in R361
 # (methodology M11) and now publish `n409_build_info`, `process_uptime_seconds`
 # and the RED trio under the same names as the Node tier, so every rule in the
-# availability and http groups below covers all five units. They are *also*
+# availability and http groups below covers all five units — and, since R369
+# added `cgroup_memory.py` to both, so does every rule in the memory group. They are *also*
 # still measured from the caller — see the `upstream_*` rules below, and the
 # note on `registerUpstreamMetrics` for why the caller's view is the one that
 # decides whether a user saw a failure. The two views answer different
@@ -152,6 +153,21 @@ groups:
       # The cgroup limiter SIGKILLs a unit over MemoryMax and systemd restarts
       # it, leaving nothing in the process's own output to say why. This is the
       # warning that comes before that.
+      #
+      # Every rule in this group covers all five units as of R369 (methodology
+      # M11) and covered three before it. R337 built the instrument in
+      # `cgroupMemory.ts` and the three Fastify services registered it; R361
+      # made the AI (:3002) and engine (:3003) units scrape targets and its
+      # note above claims coverage for the availability and http groups only,
+      # which was exactly right and left this group behind. `infra/systemd`
+      # gives all five a MemoryMax and the two Python units have the tightest
+      # on the box — 256M each, against 384M for valuation and 512M for report
+      # — so the two jobs these rules could not name were the two nearest their
+      # ceilings. `cgroup_memory.py`, twinned in both Python tiers, publishes
+      # the same seven series under the same names; nothing derives one file
+      # from the other, and `alertRulesCensus.test.ts` reads the TypeScript
+      # registrations only, so `test_cgroup_memory.py` pins the names by hand
+      # on each side.
       #
       # The denominator is filtered, not divided by raw, and the `> 0` is doing
       # real work rather than being defensive (R337, methodology M11).

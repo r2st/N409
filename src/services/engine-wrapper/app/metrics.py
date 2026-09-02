@@ -60,6 +60,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from .build_info import build_info
+from .cgroup_memory import register_cgroup_memory_metrics
 
 #: The exposition format this module writes. Prometheus text, version 0.0.4.
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
@@ -493,6 +494,9 @@ def install_metrics(
     """
     environ = os.environ if env is None else env
     register_process_metrics(registry, service, started_monotonic)
+    # Silent and gauge-less off cgroup v2, which is every developer machine —
+    # see `cgroup_memory` for why an absent series beats one that reads zero.
+    register_cgroup_memory_metrics(registry)
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics_endpoint(request: Request) -> Response:  # pragma: no cover - via TestClient
