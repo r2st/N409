@@ -112,17 +112,31 @@ const post = async <T,>(path: string, body: unknown): Promise<T> => {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const problem = (await res.json().catch(() => ({}))) as { detail?: string; title?: string };
-    // The fallback is reached only when the response carried no problem body at
-    // all — a proxy's own error page, or a gateway that never reached the
-    // service. "Something went wrong" is true of that and of everything else,
-    // and the reader of this page is a prospective client filling in a
-    // questionnaire for a firm they have just engaged: the question they need
-    // answered is whether their answers survived, and whether the thing to fix
-    // is theirs. Both are knowable here and neither was said.
+    const problem = (await res.json().catch(() => ({}))) as { detail?: string };
+    /*
+     * The fallback is reached when the response carried no problem body at all
+     * — a proxy's own error page, or a gateway that never reached the service —
+     * and, since R366, when it carried one with no `detail`. "Something went
+     * wrong" is true of that and of everything else, and the reader of this
+     * page is a prospective client filling in a questionnaire for a firm they
+     * have just engaged: the question they need answered is whether their
+     * answers survived, and whether the thing to fix is theirs. Both are
+     * knowable here and neither was said.
+     *
+     * `title` used to sit between the two, and it is the one field guaranteed
+     * to say nothing about this request: RFC 9457 asks for the same reason
+     * phrase on every occurrence of a status, so it is `'Internal Server
+     * Error'` for every one of them. That is not hypothetical here.
+     * `registerProblemHandler`'s unhandled-500 arm sends exactly
+     * `{ type, title: 'Internal Server Error', status, instance }` with no
+     * detail — so the one failure this page's reader is least able to
+     * interpret was the one that reached them as two words, with the three
+     * sentences written for it sitting unused one line below. R255 removed
+     * this same read from 191 handlers in the app; this page has its own
+     * transport and was not among them.
+     */
     throw new Error(
       problem.detail ??
-        problem.title ??
         `The questionnaire service could not be reached (error ${res.status}). Your answers are ` +
           'still on this page and nothing has been lost — wait a moment and try again.',
     );

@@ -168,6 +168,59 @@ describe('a page that cannot reach the server says so', () => {
    * the old one, because what has to keep being true is that each of these
    * still names its operation.
    */
+  /**
+   * R366 — the reason phrase, read back by a page with its own transport.
+   *
+   * The assertion above bans `err instanceof ApiError ? err.message` because
+   * `err.message` is `detail ?? title ?? …` and `title` is the RFC 9457 reason
+   * phrase: the spec asks for the same string on every occurrence of a status,
+   * so it is guaranteed to say nothing about this request. `ApiError` is not
+   * the only way to reach it. The client intake questionnaire and the auditor
+   * portal are token-authenticated public pages that predate `api()` and post
+   * with their own `fetch`, and each unpacks the problem body by hand — so the
+   * ban had nothing to match on either.
+   *
+   * The intake page read `problem.detail ?? problem.title ?? <three sentences
+   * written for exactly this>`. `registerProblemHandler`'s unhandled-500 arm
+   * sends `{ type, title: 'Internal Server Error', status, instance }` with no
+   * `detail`, so the middle arm was not a rare fallback — it was the whole
+   * answer on the one failure this reader is least able to interpret, and the
+   * sentences below it were unreachable. The auditor portal, one file over,
+   * already read `detail` alone with a status-aware fallback, which is what
+   * this now requires of both.
+   *
+   * `lib/api.ts` is the single exemption and stays one: `ApiError`'s
+   * constructor has to build *some* message from any body, and
+   * `describeActionFailure` — which every page goes through — is written to
+   * ignore it unless the problem carried a `detail`.
+   */
+  it('reads no problem body’s title back to the reader', () => {
+    const findings = sources
+      .filter(({ rel }) => rel !== 'lib/api.ts')
+      .flatMap(({ rel, text }) =>
+        [...text.matchAll(/\b(problem|body|payload|err|error|res|response)[A-Za-z]*\??\.title\b/g)].map(
+          (m) => `${rel} → ${m[0]}`,
+        ),
+      );
+    expect(findings, 'pages composing a message from the RFC 9457 reason phrase').toEqual([]);
+  });
+
+  /**
+   * And the population that rule is about, so it cannot pass by the pages
+   * having stopped parsing problem bodies at all.
+   */
+  it('still has the hand-rolled transports it is auditing', () => {
+    const handRolled = sources.filter(({ text }) => /res\.json\(\)\.catch\(/.test(text));
+    expect(handRolled.map(({ rel }) => rel).sort()).toEqual([
+      'lib/api.ts',
+      'pages/AuditorPortalPage.tsx',
+      'pages/ClientIntakePage.tsx',
+    ]);
+    for (const { rel, text } of handRolled) {
+      expect(text, `${rel} no longer reads detail`).toMatch(/\.detail/);
+    }
+  });
+
   it('routes every displayed failure through a helper that can read the body', () => {
     const raw = sources.flatMap(({ rel, text }) =>
       rel === 'lib/api.ts'

@@ -85,6 +85,14 @@ const SILENT_BY_DESIGN: Record<string, string> = {
     'Marking a thread read on the way into it. The optimistic update is inside the try, so a failure leaves the row exactly as it was, and the next load restores the truth.',
   'src/pages/NotificationsPage.tsx\t/notifications/${id}/read':
     'The same fire-and-forget read mark, per row. A failed mark leaves the row unread, which is what it was; interrupting the navigation it accompanies would cost more than the stale badge.',
+  // Not a swallow: R358 issued the two reads together and this marks the
+  // second promise handled for the window in which the first one's rejection
+  // exits before it is awaited. The rejection is still delivered to the inner
+  // `await` below, which draws `setScenarioLoadError` — the census keys on the
+  // URL and cannot see that the same promise is answered twice. Red on main
+  // since R358; classified in R366.
+  'src/components/valuation/ParamsPanel.tsx\t/valuations/${valuationId}/engine-inputs':
+    'Marks the parallel engine-inputs read handled while the params read is still in flight. The real handling is the inner await beside it, which sets scenarioLoadError.',
   'src/pages/PaymentRedirectPages.tsx\t/valuations/${valuationId}/payments':
     'The post-checkout poll. A failed poll is transient by assumption and the loop keeps going; the budget running out is reported, by `setTimedOut`.',
 };
