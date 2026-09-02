@@ -86,6 +86,50 @@ describe('portfolio consolidation (feature 6)', () => {
       expect(report.unanchored_subsidiaries).toHaveLength(1);
     });
 
+    it('counts a subsidiary whose parent has not been valued yet', () => {
+      // A holding company is routinely set up and linked before it is valued.
+      // The parent is listed and carries nothing into the totals, so there is
+      // no parent figure for the subsidiary's equity to be inside.
+      const report = consolidate([
+        entity({ valuation_id: 'p', entity_type: 'parent', equity_value: null }),
+        entity({
+          valuation_id: 's',
+          company_name: 'Sub Ltd',
+          entity_type: 'subsidiary',
+          parent_valuation_id: 'p',
+          equity_value: 5_000_000,
+        }),
+      ]);
+      expect(report.total_equity_value).toBe(5_000_000);
+      expect(report.consolidated_equity_value).toBe(5_000_000);
+      expect(report.unanchored_subsidiaries).toEqual([{ valuation_id: 's', company_name: 'Sub Ltd' }]);
+    });
+
+    it('counts a subsidiary whose parent concluded something that is not equity', () => {
+      // An IFRS 2 memo's figure is a total share-based-payment expense, and it
+      // is already excluded from every total here (`non_equity_entities`). A
+      // parent contributing nothing cannot be containing the subsidiary.
+      const report = consolidate([
+        entity({
+          valuation_id: 'p',
+          entity_type: 'parent',
+          kind: 'ifrs2',
+          equity_value: 250_000,
+        }),
+        entity({
+          valuation_id: 's',
+          company_name: 'Sub Ltd',
+          entity_type: 'subsidiary',
+          parent_valuation_id: 'p',
+          equity_value: 5_000_000,
+        }),
+      ]);
+      expect(report.non_equity_entities).toHaveLength(1);
+      expect(report.total_equity_value).toBe(5_000_000);
+      expect(report.consolidated_equity_value).toBe(5_000_000);
+      expect(report.unanchored_subsidiaries).toEqual([{ valuation_id: 's', company_name: 'Sub Ltd' }]);
+    });
+
     it('applies the same rule inside each currency bucket', () => {
       // The per-currency roll-up is the figure a mixed portfolio is actually
       // read from — the scalars are null there — so a fix that only reached

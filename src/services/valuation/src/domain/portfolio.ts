@@ -47,10 +47,11 @@ export interface ConsolidatedReport {
    */
   total_equity_value: number | null;
   /**
-   * Consolidated equity, eliminating a subsidiary whose parent is rolled up
-   * here too (its value is already inside that parent's). A subsidiary whose
-   * parent is *not* in this roll-up is kept — see `unanchored_subsidiaries`.
-   * `null` when mixed.
+   * Consolidated equity, eliminating a subsidiary whose parent carries an
+   * equity value into this roll-up (its value is already inside that parent's).
+   * A subsidiary whose parent does not — absent, unvalued, or concluding a
+   * figure that is not this entity's equity — is kept, and named in
+   * `unanchored_subsidiaries`. `null` when mixed.
    */
   consolidated_equity_value: number | null;
   by_entity_type: Record<EntityType, { count: number; equity_value: number | null }>;
@@ -60,9 +61,11 @@ export interface ConsolidatedReport {
   /** True when the entities are denominated in more than one currency. */
   mixed_currency: boolean;
   /**
-   * Entities typed `subsidiary` whose parent is not in this roll-up — no
-   * `parent_valuation_id` at all, or one naming a valuation that is archived,
-   * detached, or in another organization.
+   * Entities typed `subsidiary` whose parent does not consolidate them here —
+   * no `parent_valuation_id` at all; one naming a valuation that is archived,
+   * detached, or in another organization; or one that is listed but carries no
+   * equity value into these totals (not yet valued, or valued on a kind whose
+   * figure is not this entity's equity).
    *
    * Their value is *included* in `consolidated_equity_value`, because nothing
    * here contains it. Reported rather than merely handled: the reader is
@@ -141,15 +144,40 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
   let consolidated = 0;
   let valued = 0;
   const perCurrency = new Map<string, CurrencyTotals>();
-  // The ids present in this roll-up. A subsidiary is only double-counted by a
-  // parent that is here to double-count it.
+  // The ids that actually carry an equity value into this roll-up. A subsidiary
+  // is only double-counted by a parent that is here to double-count it, and
+  // being here is not the same as being listed: the elimination is sound only
+  // against a parent whose own figure is an equity value this roll-up added.
+  //
+  // Two parents are listed and consolidate nothing, and both were eliminating
+  // their subsidiaries anyway:
+  //
+  //   - a parent with no successful run yet, so `equity_value` is null. A
+  //     holding company is routinely set up and linked before it is valued.
+  //   - a parent whose latest run concluded something that is not this entity's
+  //     equity — an IFRS 2 expense, an ASC 820 portfolio total, a gift & estate
+  //     transferred interest. Those figures are already excluded from every
+  //     total here (`non_equity_entities`), so the parent contributes nothing
+  //     for the subsidiary to be inside.
+  //
+  // Either way the subsidiary's equity left `consolidated_equity_value` and
+  // nothing replaced it: an organization holding one $5M subsidiary under an
+  // unvalued parent reported a consolidated equity of zero, with an empty
+  // `unanchored_subsidiaries` list beside it saying nothing was dropped. That
+  // is the same failure the parent-not-in-the-set case above was written to
+  // fix, one class of parent further on, and the rule this file already states
+  // — "kept, because nothing here contains it" — settles both.
   //
   // "Here" means this page of entities: `loadEntities` caps at
   // ORG_ENTITY_PAGE_LIMIT, so a parent past the cap reads as absent and its
   // subsidiary is counted. That is the safe direction — the totals already
   // cover a prefix, and the page says so above them — and it is the same answer
   // the roll-up gives for a parent that is genuinely gone.
-  const present = new Set(entities.map((e) => e.valuation_id));
+  const consolidating = new Set(
+    entities
+      .filter((e) => e.equity_value !== null && concludesEntityEquity(e.kind))
+      .map((e) => e.valuation_id),
+  );
   const unanchored: Array<{ valuation_id: string; company_name: string }> = [];
   const nonEquity: ConsolidatedReport['non_equity_entities'] = [];
 
@@ -170,7 +198,7 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
     // Decided per entity, not per value: an unvalued subsidiary is still
     // unanchored and still worth naming, and the reader who fixes the link is
     // the same reader who will later give it a number.
-    const anchored = e.parent_valuation_id !== null && present.has(e.parent_valuation_id);
+    const anchored = e.parent_valuation_id !== null && consolidating.has(e.parent_valuation_id);
     const eliminated = e.entity_type === 'subsidiary' && anchored;
     if (e.entity_type === 'subsidiary' && !anchored) {
       unanchored.push({ valuation_id: e.valuation_id, company_name: e.company_name });
