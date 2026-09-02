@@ -312,7 +312,8 @@ export async function deleteOrganization(
           }),
           // Why the membership ended, which the before/after pair cannot say:
           // this is not somebody removing one engagement from a roll-up, it is
-          // the roll-up ceasing to exist.
+          // the roll-up ceasing to exist. Beside `changes` rather than inside
+          // it — nothing moved from one value to another here.
           organization_deleted: true,
         },
       })),
@@ -443,25 +444,28 @@ const unchanged = (a: StructureRow, b: StructureRow): boolean =>
   a.parent_valuation_id === b.parent_valuation_id;
 
 /**
- * Before and after, side by side, rather than the names of the fields that
- * moved.
+ * Before and after, side by side, in the shape the trail can already read.
  *
  * `{ fields: [...] }` is a payload shape this estate has written before and it
  * cannot answer the question the trail is read for — a roll-up that changed by
  * one engagement being retyped needs to say *what it was*, because the row
- * itself now holds only the new value. Nulls are kept rather than dropped:
- * "left the organization" and "no organization named" are the same JSON once a
- * null is elided.
+ * itself now holds only the new value. So does a pair of flat
+ * `x`/`previous_x` keys, which is worse: `extractChanges` recognises
+ * `{ changes: { field: { from, to } } }`, `{ from, to }` and `{ fields }`, and
+ * anything else yields no changes at all — the change log, the evidence bundle
+ * and the audit CSV would print the label over an empty summary, which is the
+ * silence this event exists to end wearing a name.
+ *
+ * Only the columns that moved. All three are written on every one of these
+ * statements, and a membership ending is not also a statement that the entity
+ * type it had is unchanged.
  */
 function structureChange(before: StructureRow, after: StructureRow): Record<string, unknown> {
-  return {
-    organization_id: after.organization_id,
-    previous_organization_id: before.organization_id,
-    entity_type: after.entity_type,
-    previous_entity_type: before.entity_type,
-    parent_valuation_id: after.parent_valuation_id,
-    previous_parent_valuation_id: before.parent_valuation_id,
-  };
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const field of ['organization_id', 'entity_type', 'parent_valuation_id'] as const) {
+    if (before[field] !== after[field]) changes[field] = { from: before[field], to: after[field] };
+  }
+  return { changes };
 }
 
 /**

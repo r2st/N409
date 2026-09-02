@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { describeEvent } from '../../src/domain/auditTrail.js';
 
 const dbUp = await isDbAvailable();
 const actor = { actorType: 'engine' as const, actorId: 'test', source: 'test' };
@@ -431,20 +432,37 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
       const rows = await spine(sub.id, 'portfolio_membership_changed');
       expect(rows.length).toBe(3);
       expect(rows.every((r) => r.actor_id === owner.id)).toBe(true);
-      expect(rows[0]?.payload).toMatchObject({
-        organization_id: orgId,
-        previous_organization_id: null,
-        entity_type: 'subsidiary',
-        previous_entity_type: 'standalone',
+      expect(rows[0]?.payload).toEqual({
+        changes: {
+          organization_id: { from: null, to: orgId },
+          entity_type: { from: 'standalone', to: 'subsidiary' },
+        },
       });
-      expect(rows[1]?.payload).toMatchObject({
-        entity_type: 'standalone',
-        previous_entity_type: 'subsidiary',
+      expect(rows[1]?.payload).toEqual({
+        changes: { entity_type: { from: 'subsidiary', to: 'standalone' } },
       });
-      expect(rows[2]?.payload).toMatchObject({
-        organization_id: null,
-        previous_organization_id: orgId,
+      expect(rows[2]?.payload).toEqual({
+        changes: { organization_id: { from: orgId, to: null } },
       });
+
+      // And the shape is the one the trail can read: a flat `previous_*` pair
+      // would render as the label over an empty summary, which is the silence
+      // this event exists to end wearing a name.
+      const described = describeEvent({
+        id: 'x',
+        seq: '1',
+        type: 'portfolio_membership_changed',
+        actor_type: 'human',
+        actor_id: owner.id,
+        source: 'api',
+        payload: rows[0]!.payload,
+        occurred_at: new Date(),
+      });
+      // Sorted, because `jsonb` stores an object's keys by its own ordering
+      // and hands them back in it — the payload is a set of changes, not a
+      // sequence.
+      expect(described.changes.map((c) => c.field).sort()).toEqual(['entity_type', 'organization_id']);
+      expect(described.summary).toContain('Entity type: standalone → subsidiary');
     });
 
     it('says nothing when the request changes nothing', async () => {
@@ -490,16 +508,17 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
 
       const rows = await spine(child.id, 'entity_relationship_changed');
       expect(rows.length).toBe(2);
-      expect(rows[0]?.payload).toMatchObject({
-        entity_type: 'subsidiary',
-        previous_entity_type: 'standalone',
-        parent_valuation_id: parent.id,
-        previous_parent_valuation_id: null,
+      expect(rows[0]?.payload).toEqual({
+        changes: {
+          entity_type: { from: 'standalone', to: 'subsidiary' },
+          parent_valuation_id: { from: null, to: parent.id },
+        },
       });
-      expect(rows[1]?.payload).toMatchObject({
-        entity_type: 'standalone',
-        parent_valuation_id: null,
-        previous_parent_valuation_id: parent.id,
+      expect(rows[1]?.payload).toEqual({
+        changes: {
+          entity_type: { from: 'subsidiary', to: 'standalone' },
+          parent_valuation_id: { from: parent.id, to: null },
+        },
       });
     });
 
@@ -541,10 +560,10 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
         const rows = await spine(v.id, 'portfolio_membership_changed');
         const last = rows[rows.length - 1];
         expect(last?.payload).toMatchObject({
-          organization_id: null,
-          previous_organization_id: orgId,
-          entity_type: 'standalone',
-          previous_entity_type: was,
+          changes: {
+            organization_id: { from: orgId, to: null },
+            ...(was === 'standalone' ? {} : { entity_type: { from: was, to: 'standalone' } }),
+          },
           // The half the before/after pair cannot say: the roll-up ceased to
           // exist rather than this engagement being taken out of it.
           organization_deleted: true,
