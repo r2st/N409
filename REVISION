@@ -9592,3 +9592,180 @@
 #            `test_ratelimit`, `test_request_bounds`, `test_research_route`,
 #            `test_security_headers` and `test_tagging_agent`. Two rounds have
 #            now recorded both without moving them.
+#
+# R369 — Observability & monitoring (M11). Four findings, no migration, no SQL,
+#            46 new tests, at `5b20aee9..a76ae232`.
+#
+#            Three of the four are one sentence: **an instrument exists, a rule
+#            reads it, and the unit it would have to fire about is not the unit
+#            publishing it.** The estate has spent a dozen rounds building
+#            instruments and five writing thresholds over them, and the failure
+#            that survives both is neither a missing gauge nor a missing rule —
+#            it is the pairing, which nothing until now looked at across the
+#            language boundary.
+#
+#            **Five memory rules that could not name the two tightest units.**
+#            `alerts.yml`'s memory group is `MemoryNearCgroupLimit`,
+#            `MemoryCeilingMissing`, `CgroupMemoryReclaimForced`,
+#            `CgroupMemoryThrottling` and `CgroupOomKill`. Every one selects an
+#            `n409_cgroup_memory_*` series and annotates `{{ $labels.job }}`,
+#            and no `job` on the Python side of the estate published any of
+#            them. R337 built the instrument and the three Fastify services
+#            registered it; R361 made the AI (:3002) and engine (:3003) units
+#            scrape targets and claimed coverage for the availability and http
+#            groups only — which was exactly right, and left this group at
+#            three units out of five for eight rounds. `infra/systemd` gives
+#            all five a `MemoryMax` *and* a `MemoryHigh`, and the two
+#            uninstrumented units hold the tightest ceilings on a 3.8 GB box:
+#            256M each, against 384M for valuation and 512M for report. The
+#            failure `CgroupMemoryReclaimForced` was written for is, in its own
+#            words, "a report render or a workbook import allocates hard inside
+#            one request" — a spike between two fifteen-second scrapes that the
+#            instantaneous ratio beside it is structurally unable to catch —
+#            and both Python tiers do exactly that shape of work. R367 found a
+#            worksheet in the AI tier being materialised whole to read its
+#            first four hundred rows.
+#
+#            `cgroup_memory.py` is a hand-kept twin in each tier, identical to
+#            each other and a port of `cgroupMemory.ts`: the same seven series,
+#            the same names, the same `event` label values, and the same two
+#            semantics the rules depend on — an unlimited ceiling reported as
+#            `0` rather than as an absent series, because
+#            `MemoryCeilingMissing` matches `max == 0 and current > 0` and a
+#            missing series looks exactly like a unit that is down; and no
+#            gauges *at all* off cgroup v2, because a metric reading zero for a
+#            missing file is worse than one that is absent — only one of the two
+#            is obviously not an answer.
+#
+#            **A saturation gauge reading 1% while people were being refused.**
+#            The realtime hub has three ceilings — `maxPerUser: 12`,
+#            `maxPerRoom: 64`, `maxTotal: 1024` — and had one instrument.
+#            `realtime_streams_open` reports `stats().total` against the *last*
+#            of the three, so the ordinary refusal, a person's twelfth stream,
+#            happens with the only number anybody can see reading twelve out of
+#            a thousand: healthy by every available reading, at the moment
+#            somebody cannot open a valuation. No rule read even that.
+#
+#            The refusal itself left nothing. `capacityFor` computes exactly
+#            which ceiling was met, `stream.ts` discarded the value, and the
+#            route answers `problems.tooManyRequests` — one 429, no log line,
+#            no event row, in the same 4xx class as every rate-limited request
+#            on the estate, and `scimRequests.ts` states the fact that makes it
+#            invisible: there is no 4xx rule on this box at all. The case that
+#            matters is a leak: `hub.ts` argues nothing else bounds these
+#            connections, and `leave` runs from the heartbeat's failed-write
+#            teardown, so a peer that vanished without a FIN is held until the
+#            next write fails. If that teardown stops firing the count climbs
+#            monotonically and the first symptom is every user on the box
+#            refused at once, permanently.
+#
+#            `realtime_stream_refusals_total{scope}` counts all three ceilings.
+#            `room` and `total` also write a warn line, since both are one
+#            caller's behaviour denying somebody else; `user` is left to the
+#            counter for the reason `apiTokenAuth.ts` leaves `unknown`
+#            unlogged — a single caller exceeding a per-caller ceiling is the
+#            ceiling working, the caller is told, and a client in a reconnect
+#            loop must not choose how much this box writes to the journal. The
+#            rate of it is a signal even when no single one is.
+#            `realtime_stream_capacity{scope}` exports the ceilings in force
+#            through a new `hub.ceilings()`, so `RealtimeStreamsNearCapacity`
+#            divides by the number this process is running under rather than a
+#            literal 1024 — `DiskFillingUp`'s argument — and the `(… > 0)`
+#            filter is `MemoryNearCgroupLimit`'s.
+#
+#            **A misbuilt engine image only the journal knew about.** R368 made
+#            this tier say it cannot import its market-data provider and log the
+#            exception once, at construction, "instead of only on the first
+#            valuation that happens to want market data". The journal is where
+#            somebody looks after they already suspect something. The only rule
+#            over the subsystem cannot catch it in time: `MarketFeedFallingBack`
+#            is a ratio over `market_feed_answers_total`, recorded in the
+#            *valuation* tier from the caller's side and held for an hour, so it
+#            needs an hour of sustained valuation traffic — and on a quiet night
+#            the denominator is zero and the expression is NaN. Meanwhile the
+#            engine turns every market-data failure into a 200 with
+#            `source: "fallback"`, so what the box produces in the interim is
+#            correct-looking valuations on substituted figures.
+#
+#            `market_feed_provider{state}` is the same fact on the scrape,
+#            published by the unit that knows it — the distinction the
+#            `upstream_*` note already draws. A state-set rather than an encoded
+#            number, `upstream_circuit_state`'s idiom. Four states, because
+#            three are conditions nobody should be paged for and only telling
+#            them apart makes the fourth alertable: `unresolved` (the lazy
+#            client — and reading the gauge must never *construct* it, since a
+#            scrape that imported yfinance would be network work inside a
+#            collect callback), `unconfigured` (the explicit `provider=None`
+#            opt-out, told apart by `NO_PROVIDER_REASON` verbatim), `misbuilt`,
+#            `available`.
+#
+#            That rule forced the census's own documented blind spot.
+#            `alerts.yml` said `alertRulesCensus.test.ts` "reads the
+#            **TypeScript** registrations only … a rule that only the Python
+#            units would fire is therefore not covered by the census". That held
+#            while every Python instrument was a twin of a TS one and the TS
+#            registration stood in for both. `market_feed_provider` is the first
+#            that is not, so the old census read `MarketFeedProviderMisbuilt` as
+#            a rule naming a metric nothing exports — the same value it reports
+#            for a rule watching nothing. The census now scans `.py` as well:
+#            same paren balancing, per-language quote, tuple-vs-array label
+#            lists. Its own vacuity guard names three Python metrics and two
+#            label sets, because a scan that matched nothing would make every
+#            assertion in that file pass by having nothing left to ask.
+#
+#            **A module header that denied an instrument it registers.**
+#            `metrics.py` said "there is no `seriesCensus` here and no
+#            `n409_metric_collect_failures_total`". `render` has always minted
+#            the second — a gauge whose `collect` raises is dropped and counted
+#            — so the file stated the opposite of what it does about the
+#            instrument `MetricCollectFailing` fires on, in both tiers, under
+#            identical bytes. The consequence is an operator's: most
+#            page-severity rules here are gauge-backed, a throwing `collect`
+#            drops its series silently, and somebody reading this header during
+#            that incident would conclude the Python units were outside a rule
+#            that covers them. The paragraph now states both halves exactly and
+#            names the rules each decides, and two tests per tier hold it to
+#            reality — one drives a throwing gauge through the live scrape, the
+#            other asserts the absence that is still true, so the day somebody
+#            ports `seriesCensus` the paragraph is rewritten with it.
+#
+#            gap: the Python pair still publishes no `seriesCensus`, so
+#            `MetricAttributionFolded` covers three units of five. Left
+#            deliberately: the rule excludes the `http_request*` family by name,
+#            and every other instrument on those units carries a fixed handful
+#            of label values — four provider states, five kernel events, one
+#            metric name each — so nothing there can currently reach the cap on
+#            a metric that rule would look at. It becomes real the first time a
+#            Python tier registers an instrument labelled by anything a caller
+#            chooses, and the header now says so rather than denying the whole
+#            family.
+#            gap: `alertRulesCensus.test.ts` still asserts only one direction —
+#            every metric a rule names is registered. The reverse is what R345
+#            found by hand (`memory.events` exported, scraped and read by
+#            nobody) and this round found twice more. A scan of registrations
+#            against rule expressions currently names twelve: most are context
+#            to read during an incident and correctly unalerted
+#            (`nodejs_heap_*`, `process_resident_memory_bytes`,
+#            `db_pool_connections_idle`, the two swap gauges), but
+#            `report_render_duration_seconds` is a histogram nothing reads on a
+#            path R219 measured at a hundred times the DB cost, and
+#            `report_render_delegations_active` is its companion. Turning that
+#            into a census means annotating a dozen instruments with why they
+#            are context — the header already argues that requiring an alert per
+#            metric produces the noise it exists against — and it is the right
+#            next ratchet.
+#            gap: nothing on the box scrapes any of this. `DEPLOYMENT.md` has
+#            said so since the file was written and this round did not change
+#            it: every threshold added here is the written answer to "how would
+#            we know?", held to the code by a census, and inert until a
+#            collector runs on the host. Four rounds of M11 have now widened
+#            coverage against a scraper that does not exist, which is the right
+#            order — the instruments and thresholds are the part that rots — but
+#            it is the one item on this page that no code change closes.
+#            gap: `format:check` is red on main again — the same **18 files**
+#            R367 and R368 counted, none of them touched by this round, all in
+#            web-frontend. The AI service's suite still has 29 failing tests,
+#            pre-existing at `5b20aee9` and untouched here: `test_ratelimit`,
+#            `test_request_bounds`, `test_research_route`,
+#            `test_security_headers` and `test_tagging_agent`. Three rounds have
+#            now recorded both without moving them.
