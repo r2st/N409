@@ -45,6 +45,7 @@ import {
 } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { CONNECTOR_PANELS, notConnected } from '../domain/connectorRefusal.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 import {
   logConnectorSyncFailure,
@@ -740,7 +741,11 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
 
       const connection = await findConnection(deps.pool, valuation.id, provider);
       if (!connection || connection.status === 'revoked') {
-        throw problems.unprocessable(`${CAP_TABLE_PROVIDER_LABELS[provider]} is not connected`);
+        throw notConnected(
+          CAP_TABLE_PROVIDER_LABELS[provider],
+          CONNECTOR_PANELS.capTable,
+          connection?.status,
+        );
       }
 
       let outcome;
@@ -813,7 +818,11 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       if (!parsed.success) throw invalidBody('Invalid frequency', parsed.error);
       const connection = await findConnection(deps.pool, valuation.id, provider);
       if (!connection || connection.status === 'revoked') {
-        throw problems.unprocessable(`${CAP_TABLE_PROVIDER_LABELS[provider]} is not connected`);
+        throw notConnected(
+          CAP_TABLE_PROVIDER_LABELS[provider],
+          CONNECTOR_PANELS.capTable,
+          connection?.status,
+        );
       }
       await setSyncFrequency(deps.pool, connection.id, parsed.data.frequency, {
         actorType: 'human',

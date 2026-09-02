@@ -39,6 +39,7 @@ import { describeConnectorFailure, IntegrationError } from '../clients/deadline.
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
+import { CONNECTOR_PANELS, notConnected } from '../domain/connectorRefusal.js';
 import {
   recordIntegrationCallbackOutcome,
   type IntegrationCallbackOutcome,
@@ -329,7 +330,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       }
       const connection = await findConnection(deps.pool, valuation.id, provider);
       if (!connection || connection.status === 'revoked') {
-        throw problems.unprocessable(`${PROVIDER_LABELS[provider]} is not connected`);
+        throw notConnected(PROVIDER_LABELS[provider], CONNECTOR_PANELS.accounting, connection?.status);
       }
 
       let financials;

@@ -45,6 +45,7 @@ import type { EventActor } from '../events/record.js';
 import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { integrationActorStillAuthorized } from '../domain/integrationActor.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { CONNECTOR_PANELS, notConnected } from '../domain/connectorRefusal.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 import {
   logConnectorSyncFailure,
@@ -735,7 +736,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     refuseIfRetired(valuation, 'accepting integration changes');
     const connection = await findConnection(deps.pool, valuation.id, provider);
     if (!connection || connection.status === 'revoked') {
-      throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);
+      throw notConnected(HRIS_PROVIDER_LABELS[provider], CONNECTOR_PANELS.hris, connection?.status);
     }
     try {
       return await syncHrisConnection(
@@ -792,7 +793,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       if (!parsed.success) throw invalidBody('Invalid frequency', parsed.error);
       const connection = await findConnection(deps.pool, valuation.id, provider);
       if (!connection || connection.status === 'revoked') {
-        throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);
+        throw notConnected(HRIS_PROVIDER_LABELS[provider], CONNECTOR_PANELS.hris, connection?.status);
       }
       await setSyncFrequency(deps.pool, connection.id, parsed.data.frequency, {
         actorType: 'human',

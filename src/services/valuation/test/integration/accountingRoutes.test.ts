@@ -377,7 +377,12 @@ describe.skipIf(!dbUp)('accounting routes', () => {
         headers: authHeader(client.token),
       });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/is not connected/i);
+      const body = res.json();
+      expect(body.detail).toMatch(/is not connected/i);
+      // R350: the remedy names the panel the connect control is actually on.
+      expect(body.detail).toContain('Documents → Accounting');
+      expect(body.connection_status).toBe('absent');
+
     });
 
     it('pulls the P&L and writes revenue onto the valuation params', async () => {
@@ -593,7 +598,19 @@ describe.skipIf(!dbUp)('accounting routes', () => {
         headers: authHeader(client.token),
       });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/is not connected/i);
+      const body = res.json();
+      /*
+       * The other half of the same predicate (R350). `revoked` is written by
+       * nothing but an explicit disconnect, so this is a lost race with a
+       * colleague or with the reader's own earlier click — and "is not
+       * connected" sends them looking for a connect button while describing a
+       * state somebody chose. Reconnecting is a fresh authorisation, because
+       * the disconnect blanked the tokens.
+       */
+      expect(body.detail).toMatch(/was disconnected/i);
+      expect(body.detail).not.toMatch(/is not connected/i);
+      expect(body.detail).toMatch(/fresh authorisation/i);
+      expect(body.connection_status).toBe('revoked');
     });
 
     it('404s a disconnect for a valuation the caller cannot read', async () => {
