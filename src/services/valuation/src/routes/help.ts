@@ -179,8 +179,10 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     if (!isUlid(id)) throw problems.notFound();
     const existing = await findArticleById(deps.pool, id);
     if (!existing) throw problems.notFound();
-    await deleteArticle(deps.pool, id);
-    await audit(principal.id, 'help_article_deleted', existing);
+    // Once per removal — see `deleteOnceCensus.test.ts`. The cache is cleared
+    // either way: the row is gone whichever request took it.
+    const removed = await deleteArticle(deps.pool, id);
+    if (removed) await audit(principal.id, 'help_article_deleted', existing);
     cache.clear();
     return reply.status(204).send();
   });

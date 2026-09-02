@@ -836,6 +836,34 @@ describe.skipIf(!dbUp)('engagement tags', () => {
       expect((await getTags(id)).json().tags).toEqual([]);
     });
 
+    it('records one removal however two simultaneous presses interleave', async () => {
+      // `findValuationTag` is a statement earlier and on another connection, so
+      // whether the second press sees the row is a matter of timing: it either
+      // 404s on the read or reaches a DELETE that takes nothing. Both are fine
+      // answers — the caller asked for the tag to be gone and it is — and the
+      // one thing that must hold under either interleaving is the trail, since
+      // `valuation_tag_removed` is what an audit of this table reads to date a
+      // classification's withdrawal and two of them describe two removals of a
+      // tag that was removed once.
+      //
+      // Which interleaving a run gets is not this test's to decide, so it
+      // asserts what is true of both. `deleteOnceCensus.test.ts` is what holds
+      // the rule at the call site, where it can be checked deterministically.
+      const id = await newEngagement('Twice Removed Co');
+      await addTag(id, { slug: 'saas' });
+      const pressed = await Promise.all([removeTag(id, 'saas'), removeTag(id, 'saas')]);
+      expect(pressed.map((r) => r.statusCode).sort()).toEqual(
+        pressed.some((r) => r.statusCode === 404) ? [204, 404] : [204, 204],
+      );
+      expect((await getTags(id)).json().tags).toEqual([]);
+
+      const { rows } = await ctx.pool.query<{ n: string }>(
+        `SELECT count(*) AS n FROM admin_events WHERE subject_id = $1 AND type = 'valuation_tag_removed'`,
+        [id],
+      );
+      expect(Number(rows[0]!.n)).toBe(1);
+    });
+
     it('refuses to delete an AI-sourced tag, and says what to do instead', async () => {
       // The agent's output is evidence of what the model proposed on this
       // engagement. A list an operator can prune to the flattering half is not

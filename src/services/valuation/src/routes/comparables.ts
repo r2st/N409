@@ -418,7 +418,10 @@ export function registerComparableRoutes(
           'A screened comparable is excluded with a reason, not deleted — the set has to show what was considered',
         );
       }
-      await deleteComparableItem(deps.pool, valuation.id, itemId);
+      // Once per removal, off a read taken on another connection — the shape
+      // `deleteOnceCensus.test.ts` holds. A second press told the engagement's
+      // trail the peer set had lost a comparable it no longer had.
+      if (!(await deleteComparableItem(deps.pool, valuation.id, itemId))) return reply.status(204).send();
       await audit(valuation, principal, 'comparable_deleted', {
         item_id: current.id,
         ticker: current.ticker,

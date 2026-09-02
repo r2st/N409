@@ -406,7 +406,8 @@ export function registerCommunicationRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const existing = await findAutoEmailById(deps.pool, id);
     if (!existing) throw problems.notFound();
-    await deleteAutoEmail(deps.pool, id);
+    // Once per removal — see `deleteOnceCensus.test.ts`.
+    if (!(await deleteAutoEmail(deps.pool, id))) return reply.status(204).send();
     await auditAutoEmail(principal.id, 'auto_email_deleted', existing);
     return reply.status(204).send();
   });

@@ -236,7 +236,14 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
       );
     }
 
-    await deleteValuationTag(deps.pool, id, existing.slug);
+    // Once per removal. `findValuationTag` is a statement earlier and on
+    // another connection, so a double-clicked control reaches the DELETE twice
+    // and only the first one takes the row — see the roster in
+    // `deleteOnceCensus.test.ts`. The second press wrote a second
+    // `valuation_tag_removed` for a tag that was removed once, and the trail is
+    // what an audit of this table reads to date a classification's withdrawal.
+    // 204 either way: the caller asked for the tag to be gone and it is.
+    if (!(await deleteValuationTag(deps.pool, id, existing.slug))) return reply.code(204).send();
     await recordAdminEvent(deps.pool, {
       type: 'valuation_tag_removed',
       actor: { actorType: 'human', actorId: principal.id },
