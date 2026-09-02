@@ -98,6 +98,18 @@ export function refuseIfRetired(valuation: Pick<ValuationRow, 'archived_at'>, do
  * the request, and a 200 over a version nobody saved would be the same
  * discarded failure this codebase keeps finding. A vanished engagement is a
  * 404 for the reason it always is — the id no longer names anything.
+ *
+ * The bare 404 stays bare, and R366 checked why before improving it. The R198
+ * rule says a 404 raised below the routes is always "the thing you are
+ * holding has gone" and deserves that sentence — which is right about the
+ * shape and wrong about this branch, because the branch cannot be taken. A
+ * valuation row is never deleted: retention declares `valuation` archive-only
+ * and there is no endpoint that removes one, and `DELETE FROM valuations` is
+ * refused by the database itself, since the cascade reaches
+ * `valuation_events` and migration 0001's `valuation_events_immutable`
+ * trigger raises on every DELETE with no session flag to disable it (see
+ * `piiInventory.test.ts`). So `!live` is a null the schema does not permit,
+ * and a sentence written for it is a sentence nobody receives.
  */
 export async function refuseIfRetiredNow(pool: pg.Pool, valuationId: string, doing: string): Promise<void> {
   const live = await findValuationById(pool, valuationId);
