@@ -81,24 +81,39 @@ export const CLIENT_BODY_KEYS: ReadonlySet<string> = new Set(['content_base64', 
  *
  * Both of this function's promises are about the write: the bounds keep the
  * payload small, and the `null` for a non-finite number keeps a trace of a run
- * that overflowed rather than failing the insert that records it. An unpaired
- * surrogate breaks the second one. `JSON.stringify` emits it as the literal
- * escape `\ud800`, Postgres's JSON parser rejects an unpaired escape, and the
- * whole `network_items` row is lost — on the failure path, where the trace is
- * the reason anyone is looking.
+ * that overflowed rather than failing the insert that records it. Two
+ * characters break the second one, and `domain/nulBytes.ts` — which refuses
+ * both at the request door — is the long-form account of why:
  *
- * It arrives two ways. `MAX_STRING` used to cut with `String.slice`, which
- * counts UTF-16 units, so an emoji straddling character 2,000 of an upstream
- * body was halved by this function itself; `sliceChars` ends that. What is left
- * is a half-character already in the payload, and here — unlike at the request
- * boundary, where a name is refused rather than edited — replacing it is right:
- * this is a diagnostic copy of something already sent, and `U+FFFD` in a log
- * beats no log.
+ *   * **An unpaired surrogate.** `JSON.stringify` emits it as the literal
+ *     escape `\ud800`, Postgres's JSON parser rejects an unpaired escape, and
+ *     the whole `network_items` row is lost.
+ *   * **`U+0000`.** `JSON.stringify` emits `\u0000`, and `jsonb` has no
+ *     representation for it — the parser refuses that escape too, with
+ *     `unsupported Unicode escape sequence`. Same lost row, same silence.
+ *
+ * The surrogate arrives two ways. `MAX_STRING` used to cut with `String.slice`,
+ * which counts UTF-16 units, so an emoji straddling character 2,000 of an
+ * upstream body was halved by this function itself; `sliceChars` ends that.
+ * What is left is a half-character already in the payload, and here — unlike at
+ * the request boundary, where a name is refused rather than edited — replacing
+ * it is right: this is a diagnostic copy of something already sent, and
+ * `U+FFFD` in a log beats no log.
+ *
+ * The NUL only ever arrives that second way, and only from the side of the wire
+ * the request hook does not cover. `boundedJson` runs over the *response* of
+ * every engine and AI call as well as the request: a model that emits
+ * `\u0000` inside a JSON string, or a connector pull that carries one through
+ * from a client's own spreadsheet, is a payload no schema on this service ever
+ * saw. Refusing it is not on the table — the call already happened — so it is
+ * replaced, for the same reason and with the same character as the surrogate.
  */
 function storable(value: string): string {
-  // Fast path: almost nothing has a surrogate, and most that do are emoji.
-  if (!/[\uD800-\uDFFF]/.test(value)) return value;
-  return value.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+  // Fast path: almost nothing carries either character.
+  if (!/[\uD800-\uDFFF\u0000]/.test(value)) return value;
+  return value
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD')
+    .replace(/\u0000/g, '\uFFFD');
 }
 
 /** The marker left wherever something was dropped. Never a bare truncation. */
@@ -168,12 +183,16 @@ export function boundedJson(value: unknown, depth = 0, seen: Set<object> = new S
     const out: Record<string, unknown> = {};
     for (const key of keys.slice(0, MAX_ITEMS)) {
       const raw = (obj as Record<string, unknown>)[key];
-      // The size, not the material. Only for a string: a `text` field holding
-      // an object is something else entirely, and reporting its length would be
-      // a claim about a value this rule was not written for.
-      out[key] =
+      // A key is as unstorable as a value — `findUnstorableText` searches both
+      // for exactly this reason — and an upstream that names a field with half
+      // an emoji in it loses the row just as surely as one that puts it in the
+      // field. The membership test and the marker keep the *sent* spelling, so
+      // `content_base64\u0000` is still recognised as the client body it is;
+      // only what lands in the column is repaired.
+      const safeKey = storable(key);
+      out[safeKey] =
         CLIENT_BODY_KEYS.has(key) && typeof raw === 'string'
-          ? truncated(`${key}, ${raw.length} characters`)
+          ? truncated(`${safeKey}, ${raw.length} characters`)
           : boundedJson(raw, depth + 1, seen);
     }
     if (keys.length > MAX_ITEMS) out.__truncated__ = `${keys.length - MAX_ITEMS} more keys`;

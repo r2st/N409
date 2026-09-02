@@ -138,6 +138,54 @@ describe('a string the JSONB insert can hold', () => {
     const value = `${GRIN} 𠮷野家 𝄞 🇬🇧`;
     expect(boundedJson({ value })).toEqual({ value });
   });
+
+  /**
+   * R346, methodology M6: the other half of the same promise.
+   *
+   * `U+0000` fails a `jsonb` insert exactly as an unpaired surrogate does —
+   * `JSON.stringify` emits `\u0000`, and Postgres's JSON parser has no text
+   * representation for that escape. `domain/nulBytes.ts` refuses both at the
+   * request door, but this function's material is the *response* of an engine
+   * or AI call, which never went through that door.
+   *
+   * And a key is as unstorable as a value: `findUnstorableText` searches both,
+   * and this walk was rebuilding the object with the upstream's spelling of
+   * every key intact.
+   */
+  it('replaces a NUL in a value rather than losing the row', () => {
+    const out = boundedJson({ detail: 'parse failed at\u0000 offset 12' }) as { detail: string };
+    expect(out.detail).toBe('parse failed at\uFFFD offset 12');
+    expect(JSON.stringify(out)).not.toContain('\\u0000');
+  });
+
+  it('replaces a NUL in a key rather than losing the row', () => {
+    const out = boundedJson({ ['col\u0000umn']: 1 }) as Record<string, unknown>;
+    expect(Object.keys(out)).toEqual(['col\uFFFDumn']);
+    expect(JSON.stringify(out)).not.toContain('\\u0000');
+  });
+
+  it('replaces a half-character in a key rather than losing the row', () => {
+    const out = boundedJson({ ['field\uD800']: { ['\uDC00nested']: 'ok' } }) as Record<string, unknown>;
+    expect(JSON.stringify(out).includes('\\ud')).toBe(false);
+    expect(out).toEqual({ 'field\uFFFD': { '\uFFFDnested': 'ok' } });
+  });
+
+  it('keeps the client-body rule keyed on the spelling that was sent', () => {
+    // The marker still fires for a key an upstream spelled with an unstorable
+    // character in it, and the marker itself is storable.
+    const out = boundedJson({ text: 'Ada Lovelace\u0000' }) as Record<string, unknown>;
+    expect(out.text).toEqual({ __truncated__: 'text, 13 characters' });
+  });
+
+  it('emits nothing an unpaired-escape parser would reject, key or value', () => {
+    const hostile = {
+      ['\uD800key']: 'value\uDFFF',
+      nested: [{ ['a\u0000b']: 'c\u0000d' }],
+    };
+    const json = JSON.stringify(boundedJson(hostile));
+    expect(/\\u0000/.test(json)).toBe(false);
+    expect(/\\ud[89ab][0-9a-f]{2}/i.test(json)).toBe(false);
+  });
 });
 
 describe('a diagnostic row is not a second copy of the client documents', () => {
