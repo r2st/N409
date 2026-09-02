@@ -5,6 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import {
   createDecision,
+  isDecisionAlreadyRevised,
   DECISION_CATEGORIES,
   findDecisionById,
   DECISION_PAGE_LIMIT,
@@ -74,6 +75,25 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: { pool: pg.Po
       },
       { actorType: 'human', actorId: principal.id, source: 'decision-log' },
     );
+    /*
+     * A decision is revised once. See `DecisionAlreadyRevised`: the browser's
+     * "Supersedes" select already omits revised entries, and a select is a
+     * snapshot — the second of two operators on the same engagement, or a tab
+     * left open while a colleague revises the row it is listing, submits a
+     * target that stopped being revisable after the page was drawn.
+     *
+     * 409 rather than 422, because nothing about the request is malformed: it
+     * was correct when it was composed and the world moved. The revision that
+     * got there first is named, since the operator's next step is to read it
+     * and decide whether they still disagree — and the entry they wrote is not
+     * lost, it is one they can record against that one instead.
+     */
+    if (isDecisionAlreadyRevised(decision)) {
+      throw problems.conflict(
+        'That decision has already been revised by a later entry — reload the decision log and ' +
+          `revise the current one instead (revision ${decision.supersededBy}).`,
+      );
+    }
     return reply.status(201).send({ decision });
   });
 
