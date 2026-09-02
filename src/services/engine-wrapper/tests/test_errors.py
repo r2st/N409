@@ -360,3 +360,84 @@ class TestADegradedRunIsLoggedThoughItAnswers422:
             assert boom_client.get("/ordinary-422").status_code == 422
         events = {getattr(r, "event", None) for r in caplog.records if r.levelno >= logging.WARNING}
         assert events == {"http_access"}
+
+
+class TestARefusalCanAlwaysBeSerialised:
+    """A body pydantic refused is answered with the refusal, not with a 500.
+
+    ``1e999`` and ``NaN`` are ordinary JSON tokens — every parser in use here
+    accepts them, and both become a Python float that ``json.dumps`` will not
+    encode. Pydantic refused them correctly, naming the field in ``loc``; the
+    422 handler then echoed the offending value back under ``input`` and died
+    inside ``JSONResponse``. What the caller got was ``Internal Server Error``
+    with no field name, what the log got was an unhandled-exception traceback,
+    and what the metrics got was this service counted as broken by a request
+    that was merely wrong.
+
+    Swept over the route table rather than listed: the reach is every endpoint
+    of this service, on any field whose declared type refuses a float, so a
+    model added next year is in the sweep the day it is written.
+    """
+
+    @staticmethod
+    def _models() -> list[tuple[str, type]]:
+        from pydantic import BaseModel
+
+        found: list[tuple[str, type]] = []
+        for route in app.routes:
+            if "POST" not in getattr(route, "methods", set()):
+                continue
+            for name, annotation in getattr(getattr(route, "endpoint", None), "__annotations__", {}).items():
+                if name == "return":
+                    continue
+                if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                    found.append((route.path, annotation))
+        return found
+
+    def test_the_sweep_reaches_the_endpoints_it_is_about(self) -> None:
+        # A route scan that quietly stopped matching would pass the sweep below
+        # by having nothing to send.
+        paths = {path for path, _ in self._models()}
+        assert "/engine/v1/compute" in paths
+        assert "/engine/v1/sensitivity" in paths
+        assert "/engine/v1/market-feed" in paths
+        assert len(paths) > 20
+
+    @pytest.mark.parametrize("token", ["1e999", "-1e999", "NaN"])
+    def test_no_field_of_any_request_model_answers_5xx(self, token: str) -> None:
+        offenders: list[str] = []
+        for path, model in self._models():
+            for field in model.model_fields:
+                body = f'{{"{field}": {token}}}'
+                res = client.post(path, content=body, headers={"content-type": "application/json"})
+                if res.status_code >= 500:
+                    offenders.append(f"{path} {field}={token} -> {res.status_code}")
+        assert offenders == []
+
+    def test_the_refusal_still_names_the_field_and_renders_the_value(self) -> None:
+        res = client.post(
+            "/engine/v1/sensitivity",
+            content='{"params": {}, "inputs": {}, "steps": 1e999}',
+            headers={"content-type": "application/json"},
+        )
+        assert res.status_code == 422
+        (issue,) = res.json()["detail"]
+        assert issue["loc"] == ["body", "steps"]
+        # Rendered rather than dropped: an operator reading the body can tell
+        # an overflowed number from a missing one.
+        assert issue["input"] == "inf"
+
+    def test_a_non_finite_float_nested_past_the_scrub_depth_is_still_encodable(self) -> None:
+        """The depth cap used to hand the container back untouched.
+
+        ``input`` echoes the caller's own payload, so its depth is the caller's
+        choice; past ``_SCRUB_DEPTH`` the walk returned the value as-is, which
+        put the un-encodable float straight into ``json.dumps`` again.
+        """
+        res = client.post(
+            "/engine/v1/market-feed",
+            content='{"kind": "prices", "metrics": [{"deep": {"deeper": 1e999}}]}',
+            headers={"content-type": "application/json"},
+        )
+        assert res.status_code == 422
+        assert "inf" in json.dumps(res.json()["detail"])

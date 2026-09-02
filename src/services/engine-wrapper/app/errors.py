@@ -37,6 +37,7 @@ rate is set by whoever is making the mistakes.
 from __future__ import annotations
 
 import logging
+from math import isfinite
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -83,11 +84,30 @@ def _scrubbed(value: object, depth: int = 0) -> object:
     thing no caller needs in order to act on the failure. The pass reaches
     strings wherever they sit, because a 422 ``detail`` is pydantic's error list
     and its entries carry an ``input`` field echoing the offending payload.
+
+    That ``input`` field is also why this pass has to make the value *JSON*-safe
+    and not only disclosure-safe. ``1e999`` and ``NaN`` are accepted by every
+    JSON parser in use here and become Python ``inf``/``nan``, which
+    ``json.dumps`` refuses — so a field pydantic had already refused, correctly,
+    with the field named in ``loc``, was echoed back into the response body and
+    killed the encoder. The 422 became an ``Internal Server Error`` with the
+    field name lost, a traceback in the log and the failure counted as this
+    service breaking rather than as the request being wrong. Every endpoint of
+    both Python services was reachable this way, on any field whose declared
+    type refuses a float: a string, an int, an enum, a list element.
     """
     if isinstance(value, str):
         return redact(value)
-    if depth >= _SCRUB_DEPTH:
-        return value
+    if isinstance(value, float) and not isfinite(value):
+        return repr(value)
+    if isinstance(value, (list, dict)) and depth >= _SCRUB_DEPTH:
+        # Rendered rather than returned, so the walk is total: past the cap a
+        # container was handed back untouched, and `json.dumps` cannot encode
+        # every container — the one that reaches here is the caller's own
+        # payload, echoed by pydantic's `input`, and it may hold anything.
+        # `redact` is applied to the rendering for the same reason it is applied
+        # to a string: the scrub must not have a depth past which it stops.
+        return redact(str(value))
     if isinstance(value, list):
         return [_scrubbed(item, depth + 1) for item in value]
     if isinstance(value, dict):

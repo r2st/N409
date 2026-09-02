@@ -262,3 +262,62 @@ class TestOutboundScrub:
         """A scrub that mangled the ordinary case would be paid for on every
         error in the tier."""
         assert boom_client.get("/unavailable").json()["detail"] == "openrouter: retries exhausted"
+
+
+class TestARefusalCanAlwaysBeSerialised:
+    """A body pydantic refused is answered with the refusal, not with a 500.
+
+    The twin of the sweep in the engine's ``test_errors.py``; the bug was in
+    ``_scrubbed``, which both services carry a copy of. ``1e999`` and ``NaN``
+    are ordinary JSON tokens that every parser in use here accepts and that
+    become a Python float ``json.dumps`` will not encode. Pydantic refused them
+    correctly and named the field; the 422 handler then echoed the value back
+    under ``input`` and died inside ``JSONResponse``, so the caller got
+    ``Internal Server Error`` with no field name and the log got a traceback
+    for a request that was merely wrong.
+    """
+
+    @staticmethod
+    def _models() -> list[tuple[str, type]]:
+        from pydantic import BaseModel
+
+        found: list[tuple[str, type]] = []
+        for route in app.routes:
+            if "POST" not in getattr(route, "methods", set()):
+                continue
+            for name, annotation in getattr(getattr(route, "endpoint", None), "__annotations__", {}).items():
+                if name == "return":
+                    continue
+                if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                    found.append((route.path.replace("{pipeline}", "draft_section"), annotation))
+        return found
+
+    def test_the_sweep_reaches_the_endpoints_it_is_about(self) -> None:
+        paths = {path for path, _ in self._models()}
+        assert "/ai/v1/research" in paths
+        assert "/ai/v1/anonymize" in paths
+        assert len(paths) >= 4
+
+    @pytest.mark.parametrize("token", ["1e999", "-1e999", "NaN"])
+    def test_no_field_of_any_request_model_answers_5xx(self, token: str) -> None:
+        offenders: list[str] = []
+        for path, model in self._models():
+            for field in model.model_fields:
+                res = client.post(
+                    path,
+                    content=f'{{"{field}": {token}}}',
+                    headers={"content-type": "application/json"},
+                )
+                if res.status_code >= 500:
+                    offenders.append(f"{path} {field}={token} -> {res.status_code}")
+        assert offenders == []
+
+    def test_the_refusal_still_names_the_field_and_renders_the_value(self) -> None:
+        res = client.post(
+            "/ai/v1/anonymize",
+            content='{"text": 1e999}',
+            headers={"content-type": "application/json"},
+        )
+        assert res.status_code == 422
+        issue = next(i for i in res.json()["detail"] if i["loc"] == ["body", "text"])
+        assert issue["input"] == "inf"
