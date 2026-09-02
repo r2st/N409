@@ -25,7 +25,17 @@ function poolWith(args: {
 }
 
 const SIGNED_AT = new Date('2026-08-15T00:00:00Z');
-const SIGNED = [{ signed_at: SIGNED_AT }];
+const SIGNED = [{ role: 'main', signed_at: SIGNED_AT }];
+/** The concurring reviewer signed at the same instant the analyst did. */
+const SIGNED_BOTH = [
+  { role: 'main', signed_at: SIGNED_AT },
+  { role: 'second', signed_at: SIGNED_AT },
+];
+/** The analyst re-signed after the change; the concurring reviewer did not. */
+const SIGNED_MAIN_LATER = [
+  { role: 'main', signed_at: new Date('2026-08-17T00:00:00Z') },
+  { role: 'second', signed_at: SIGNED_AT },
+];
 /** The body the signature is about: written before it was signed. */
 const WRITTEN_BEFORE = [{ created_at: new Date('2026-08-14T00:00:00Z') }];
 /** The body written after — rule 4's case. */
@@ -195,6 +205,82 @@ describe('publish gate (signature + QA)', () => {
         'published',
       ),
     ).rejects.toMatchObject({ status: 409, detail: expect.stringContaining('recalculated since it was signed') });
+  });
+
+  /*
+   * R380: the certification page prints a dated line per signatory, and rules 4
+   * and 5 read `main` alone. So the sequence rule 4 exists to stop stayed open
+   * one row over — the analyst re-signs after the edit, the concurring reviewer
+   * does not, and the deliverable goes out with their line dated before the
+   * body it certifies.
+   */
+  it('blocks publish when only the second signature predates the body', async () => {
+    await expect(
+      assertPublishGate(
+        poolWith({
+          signatures: SIGNED_MAIN_LATER,
+          calculations: CALC,
+          reports: REPORT_V4,
+          qaReviews: [{ status: 'pass', report_version: 4 }],
+          reportVersions: WRITTEN_AFTER,
+        }),
+        'v1',
+        'published',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      detail: expect.stringContaining('second signature was given'),
+    });
+  });
+
+  it('blocks publish when only the second signature predates the calculation', async () => {
+    await expect(
+      assertPublishGate(
+        poolWith({
+          signatures: SIGNED_MAIN_LATER,
+          calculations: RECALCULATED,
+          reports: REPORT_V4,
+          qaReviews: [{ status: 'pass', report_version: 4 }],
+        }),
+        'v1',
+        'published',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      detail: expect.stringContaining('second signature was given'),
+    });
+  });
+
+  it('names both signatories when both predate the change', async () => {
+    await expect(
+      assertPublishGate(
+        poolWith({
+          signatures: SIGNED_BOTH,
+          calculations: RECALCULATED,
+          reports: REPORT_V4,
+          qaReviews: [{ status: 'pass', report_version: 4 }],
+        }),
+        'v1',
+        'published',
+      ),
+    ).rejects.toMatchObject({ status: 409, detail: expect.stringContaining('both signatures on file') });
+  });
+
+  it('allows publish when both signatories signed after the change', async () => {
+    // The optional row is held to currency, not to existence: a second
+    // signature given after the edit is as good as the analyst's.
+    await expect(
+      assertPublishGate(
+        poolWith({
+          signatures: SIGNED_BOTH,
+          calculations: CALC,
+          reports: REPORT_V4,
+          qaReviews: [{ status: 'pass', report_version: 4 }],
+        }),
+        'v1',
+        'published',
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it('asks about the QA review before it asks about the re-signing', async () => {

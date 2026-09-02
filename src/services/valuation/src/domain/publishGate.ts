@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { problems } from '@n409/shared';
 import type { Queryable } from '../db/pool.js';
 import type { ValuationState } from './valuation.js';
-import { mainSignedAt } from '../repos/signatures.js';
+import { signedAtByRole, type SignatureRole, type SignedAtByRole } from '../repos/signatures.js';
 import { lockPublishGate } from '../repos/publishLock.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { latestQaReviewForCalculation } from '../repos/qaReviews.js';
@@ -60,6 +60,10 @@ import { findReportByValuation, versionWrittenAt } from '../repos/reports.js';
  *    newest calculation, so re-running the engine restates the concluded value
  *    without writing a report version — the only thing rule 4 can see.
  *
+ *    Rules 4 and 5 are asked of **every** signatory on file, not only `main`
+ *    (R380, methodology M3) — the certification page prints a dated line per
+ *    role. See {@link staleSignatureRefusal}.
+ *
  * Runs on the pool or on a transaction's client. Both readings matter and they
  * are not the same reading — see {@link assertPublishGateForWrite}.
  */
@@ -69,8 +73,8 @@ export async function assertPublishGate(
   to: ValuationState,
 ): Promise<void> {
   if (to !== 'published') return;
-  const signedAt = await mainSignedAt(db, valuationId);
-  if (signedAt === null) {
+  const signedAt = await signedAtByRole(db, valuationId);
+  if (signedAt.main === null) {
     throw problems.conflict('A main signature is required before publishing — sign the valuation first');
   }
 
@@ -152,11 +156,11 @@ export async function assertPublishGate(
    * both serve `equity_value` / `fmv_per_share` off that same latest run to
    * readers outside the firm.
    */
-  if (calculation && calculation.created_at.getTime() > signedAt.getTime()) {
-    throw problems.conflict(
-      'The valuation has been recalculated since it was signed — the signature on file certifies an ' +
-        'earlier conclusion. Re-sign the valuation before publishing.',
-    );
+  if (calculation) {
+    const stale = staleSince(signedAt, calculation.created_at);
+    if (stale.length > 0) {
+      throw staleSignatureRefusal(stale, 'The valuation has been recalculated', 'an earlier conclusion');
+    }
   }
 
   /*
@@ -174,12 +178,68 @@ export async function assertPublishGate(
    */
   if (!report) return;
   const writtenAt = await versionWrittenAt(db, report.id, report.current_version);
-  if (writtenAt !== null && writtenAt.getTime() > signedAt.getTime()) {
-    throw problems.conflict(
-      'The report body has been edited since it was signed — the signature on file certifies an ' +
-        'earlier draft. Re-sign the valuation before publishing.',
+  if (writtenAt === null) return;
+  const stale = staleSince(signedAt, writtenAt);
+  if (stale.length > 0) {
+    throw staleSignatureRefusal(stale, 'The report body has been edited', 'an earlier draft');
+  }
+}
+
+/** The signatories whose attestation predates `at`. `main` first, as the page prints them. */
+function staleSince(signedAt: SignedAtByRole, at: Date): SignatureRole[] {
+  const roles: SignatureRole[] = ['main', 'second'];
+  return roles.filter((role) => {
+    const when = signedAt[role];
+    return when !== null && at.getTime() > when.getTime();
+  });
+}
+
+/**
+ * The refusal for rules 4 and 5, naming whose signature has gone stale.
+ *
+ * BOTH SIGNATORIES ARE ON THE PAGE, AND ONLY ONE WAS ON THE GATE (round 380,
+ * methodology M3). R304 and R372 established the rule these two checks apply —
+ * an attestation is about the artifact it was given against — and both read
+ * `main` alone, because `mainSignedAt` was the only reader this module had.
+ *
+ * `valuation_signatures` holds a row per role and the deliverable prints every
+ * one of them: `domain/reportSignatures.ts` builds the certification table with
+ * a "Date signed" column and labels the second row **Concurring reviewer**,
+ * whose own comment says the label exists so an auditor does not read two
+ * signatures as two independent appraisals. It is a firm quality-control
+ * attestation on a USPAP SR 10-3 certification page, under a date.
+ *
+ * So the sequence rule 4 was written to stop was still open one row over: both
+ * sign, the analyst corrects a chapter, re-runs QA (rules 2 and 3 pass, being
+ * keyed to the new version) and re-signs — which satisfies rule 4 as it stood —
+ * and publishes. The concurring reviewer's line goes out dated before the body
+ * it certifies, and nothing in the product minded.
+ *
+ * The second signature is optional (rule 1 asks only for `main`), so it is
+ * held to currency rather than to existence, and the remedy has the two arms
+ * that follows from: have them re-sign, or remove the row. Both are controls
+ * that already exist on the Signatures panel, named here as that panel labels
+ * them.
+ */
+function staleSignatureRefusal(stale: readonly SignatureRole[], change: string, certifies: string): Error {
+  if (stale.length === 1 && stale[0] === 'second') {
+    return problems.conflict(
+      `${change} since the second signature was given — that signature on file certifies ${certifies}, ` +
+        'and it is printed on the report’s certification page under the date it was given. Have the ' +
+        'second signatory re-sign, or remove their signature on the Signatures panel, before publishing.',
     );
   }
+  if (stale.length > 1) {
+    return problems.conflict(
+      `${change} since it was signed — both signatures on file certify ${certifies}. Re-sign the ` +
+        'valuation, and have the second signatory re-sign or remove their signature on the ' +
+        'Signatures panel, before publishing.',
+    );
+  }
+  return problems.conflict(
+    `${change} since it was signed — the signature on file certifies ${certifies}. ` +
+      'Re-sign the valuation before publishing.',
+  );
 }
 
 /**

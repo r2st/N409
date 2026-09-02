@@ -122,20 +122,37 @@ export async function deleteSignature(
   });
 }
 
+/** When each role signed, `null` for a role with no row. */
+export type SignedAtByRole = Record<SignatureRole, Date | null>;
+
 /**
- * When the analyst signed, or null if nobody has.
+ * When each signatory signed, or null for one who has not.
  *
  * The instant rather than the fact, because the publish gate asks two questions
- * of this row and only one of them is answerable by its existence: whether the
- * engagement is signed at all, and whether it was signed against the body it is
- * about to publish. See `assertPublishGate`.
+ * of a row and only one of them is answerable by its existence: whether the
+ * engagement is signed at all, and whether it was signed against the body and
+ * the conclusion it is about to publish. See `assertPublishGate`.
+ *
+ * Both roles in one read, and not only `main`, because the deliverable prints
+ * both. `domain/reportSignatures.ts` resolves `{{signatures}}` into a
+ * certification table with a "Date signed" column per signatory, so the
+ * concurring reviewer's attestation is on the page under a date exactly as the
+ * analyst's is — and a currency rule that reads one row cannot be about a page
+ * that shows two.
  */
-export async function mainSignedAt(db: Queryable, valuationId: string): Promise<Date | null> {
-  const { rows } = await db.query<{ signed_at: Date }>(
-    "SELECT signed_at FROM valuation_signatures WHERE valuation_id = $1 AND role = 'main'",
+export async function signedAtByRole(db: Queryable, valuationId: string): Promise<SignedAtByRole> {
+  const { rows } = await db.query<{ role: SignatureRole; signed_at: Date }>(
+    'SELECT role, signed_at FROM valuation_signatures WHERE valuation_id = $1',
     [valuationId],
   );
-  return rows[0]?.signed_at ?? null;
+  const signed: SignedAtByRole = { main: null, second: null };
+  for (const row of rows) signed[row.role] = row.signed_at;
+  return signed;
+}
+
+/** When the analyst signed, or null if nobody has. */
+export async function mainSignedAt(db: Queryable, valuationId: string): Promise<Date | null> {
+  return (await signedAtByRole(db, valuationId)).main;
 }
 
 /** Signature gate: publish requires a 'main' signature (remaining-gaps §3 #3). */
