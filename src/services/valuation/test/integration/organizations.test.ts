@@ -255,6 +255,124 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
     ]);
   });
 
+  /*
+   * The pair the route above refuses, reached through the other door (R380).
+   *
+   * `POST /organizations/:id/entities` takes an `entity_type` and nothing else,
+   * so it wrote the word "standalone" over an engagement that still carried a
+   * `parent_valuation_id`. Elimination is keyed on the type, so the roll-up
+   * counted the subsidiary on top of the parent that already contains it — and
+   * `unanchored_subsidiaries`, the list whose whole job is to name a subsidiary
+   * the totals did not eliminate, is keyed on the type as well and said
+   * nothing. The tree drew the child inside the parent throughout.
+   */
+  it('assigning an entity as standalone clears the parent link it contradicts', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/organizations',
+      headers: authHeader(owner.token),
+      payload: { name: 'Restyled Group', entity_type: 'holding_company' },
+    });
+    const orgId = created.json().organization.id;
+    const parent = await seedValuation(owner, 'Restyled Parent', 10_000_000);
+    const sub = await seedValuation(owner, 'Restyled Sub', 4_000_000);
+    for (const [v, type] of [
+      [parent, 'parent'],
+      [sub, 'subsidiary'],
+    ] as const) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: v.id, entity_type: type },
+      });
+    }
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${sub.id}/entity`,
+      headers: authHeader(owner.token),
+      payload: { entity_type: 'subsidiary', parent_valuation_id: parent.id },
+    });
+
+    const restyled = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/organizations/${orgId}/entities`,
+      headers: authHeader(owner.token),
+      payload: { valuation_id: sub.id, entity_type: 'standalone' },
+    });
+    expect(restyled.statusCode).toBe(204);
+
+    const { rows } = await ctx.pool.query<{ entity_type: string; parent_valuation_id: string | null }>(
+      'SELECT entity_type, parent_valuation_id FROM valuations WHERE id = $1',
+      [sub.id],
+    );
+    expect(rows[0]?.entity_type).toBe('standalone');
+    expect(rows[0]?.parent_valuation_id).toBeNull();
+
+    const after = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      })
+    ).json();
+    // 14M either way — but the tree no longer claims the 4M sits inside the
+    // 10M, which is the statement that made the same total wrong before.
+    expect(after.consolidated.consolidated_equity_value).toBe(14_000_000);
+    expect(after.tree.childrenOf[parent.id]).toBeUndefined();
+    expect(after.consolidated.unanchored_subsidiaries).toEqual([]);
+  });
+
+  /*
+   * The one-engagement form of the removal `deleteOrganization` performs in
+   * bulk, held to the same rule (R380): the type and the inter-company link
+   * describe a membership, and this is the request that ends one.
+   */
+  it('removing one engagement from an organization returns it to standalone', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/organizations',
+      headers: authHeader(owner.token),
+      payload: { name: 'Departing Sub Group', entity_type: 'holding_company' },
+    });
+    const orgId = created.json().organization.id;
+    const parent = await seedValuation(owner, 'Remaining Parent', 9_000_000);
+    const sub = await seedValuation(owner, 'Departing Sub', 2_000_000);
+    for (const [v, type] of [
+      [parent, 'parent'],
+      [sub, 'subsidiary'],
+    ] as const) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: v.id, entity_type: type },
+      });
+    }
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${sub.id}/entity`,
+      headers: authHeader(owner.token),
+      payload: { entity_type: 'subsidiary', parent_valuation_id: parent.id },
+    });
+
+    const removed = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/v1/organizations/${orgId}/entities/${sub.id}`,
+      headers: authHeader(owner.token),
+    });
+    expect(removed.statusCode).toBe(204);
+
+    const { rows } = await ctx.pool.query<{
+      organization_id: string | null;
+      entity_type: string;
+      parent_valuation_id: string | null;
+    }>('SELECT organization_id, entity_type, parent_valuation_id FROM valuations WHERE id = $1', [sub.id]);
+    expect(rows[0]?.organization_id).toBeNull();
+    expect(rows[0]?.entity_type).toBe('standalone');
+    expect(rows[0]?.parent_valuation_id).toBeNull();
+  });
+
   it('refuses a standalone entity with a parent', async () => {
     const parent = await seedValuation(owner, 'Contradiction Parent', 1_000_000);
     const child = await seedValuation(owner, 'Contradiction Child', 1_000_000);

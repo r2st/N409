@@ -297,14 +297,66 @@ export async function deleteOrganization(pool: pg.Pool, id: string): Promise<Del
   }
 }
 
-/** Assign a valuation to an organization (or detach with orgId = null). */
+/**
+ * Assign a valuation to an organization (or detach with orgId = null).
+ *
+ * THE TYPE AND THE PARENT LINK ARE ONE FACT, AND THIS DOOR WROTE HALF OF IT
+ * (round 380, methodology M3).
+ *
+ * `entity_type` and `parent_valuation_id` describe a single relationship, and
+ * the other two doors onto it both say so. `PATCH /valuations/:id/entity`
+ * refuses the pair `standalone` + a parent outright — "A standalone entity has
+ * no parent" — on the grounds that `consolidate` reads the type, so the link
+ * would be "stored, shown in the tree, and counted as if it were not there".
+ * `deleteOrganization` states the other half: a member returned to `standalone`
+ * has its `parent_valuation_id` cleared with it, "because the type described a
+ * membership and the membership is what is being removed".
+ *
+ * This statement wrote `entity_type` alone and left the link where it was, so
+ * both halves were reachable through it:
+ *
+ *   - `POST /organizations/:id/entities` with `entity_type: 'standalone'` on an
+ *     engagement that already has a parent — the exact state the sibling route
+ *     refuses, and one press of a `<select>` away: `OrgAssignmentCard` offers
+ *     "Standalone" in its Entity role picker and knows nothing about the link.
+ *     The roll-up then counts the entity in full (elimination is keyed on
+ *     `subsidiary`) while the tree draws it inside its parent, and
+ *     `unanchored_subsidiaries` — the list that exists to name a subsidiary the
+ *     totals did *not* eliminate — says nothing, because it is keyed on the
+ *     type too. A holding company's consolidated equity therefore carries the
+ *     subsidiary twice, silently, in the figure domain/portfolio.ts calls the
+ *     one an auditor relies on.
+ *   - `DELETE /organizations/:id/entities/:valuationId` — the one-engagement
+ *     form of the removal `deleteOrganization` performs in bulk — cleared the
+ *     membership and left the engagement typed `subsidiary` with a parent
+ *     inside the organization it had just left. That is the same "state the
+ *     product has no reading of" the bulk door was fixed not to create.
+ *
+ * So the rule is applied where every door passes rather than at each of them:
+ * ending a membership ends the type and the link, and writing `standalone`
+ * clears the link, because that is what the word means.
+ */
 export async function assignValuationToOrg(
   pool: pg.Pool,
   valuationId: string,
   orgId: string | null,
   entityType?: EntityType,
 ): Promise<void> {
-  if (entityType) {
+  if (orgId === null) {
+    await pool.query(
+      `UPDATE valuations
+          SET organization_id = NULL, entity_type = 'standalone', parent_valuation_id = NULL
+        WHERE id = $1`,
+      [valuationId],
+    );
+  } else if (entityType === 'standalone') {
+    await pool.query(
+      `UPDATE valuations
+          SET organization_id = $2, entity_type = 'standalone', parent_valuation_id = NULL
+        WHERE id = $1`,
+      [valuationId, orgId],
+    );
+  } else if (entityType) {
     await pool.query('UPDATE valuations SET organization_id = $2, entity_type = $3 WHERE id = $1', [
       valuationId,
       orgId,
