@@ -491,7 +491,9 @@ describe('describeEvent', () => {
     // The value-keyed form is an allow-list. An undeclared reason is silent
     // rather than rendered raw: the notes are sentences written for a reader,
     // not a payload field echoed back.
-    const enriched = describeEvent(event({ type: 'valuation_updated', payload: { reason: 'something_else' } }));
+    const enriched = describeEvent(
+      event({ type: 'valuation_updated', payload: { reason: 'something_else' } }),
+    );
     expect(enriched.note).toBeNull();
   });
 
@@ -510,11 +512,24 @@ describe('describeEvent', () => {
     expect(enriched.summary).toBe('Value: 0.2 \u2192 0.25');
   });
 
+  it('says which way a pipeline toggle went', () => {
+    // Not a circumstance — a value that moved, and therefore a change list.
+    // `{ enabled: false }` reached the trail as a bare label, on the one row
+    // where the direction is the entire content of the event.
+    const enriched = describeEvent({
+      ...event({ type: 'auto_pipeline_toggled' }),
+      payload: { changes: { auto_pipeline: { from: true, to: false } } },
+    });
+    expect(enriched.summary).toBe('Auto pipeline: yes \u2192 no');
+  });
+
   it('does not resolve a payload value up the prototype chain', () => {
     // The payload is `jsonb` read back off the spine. `reason: 'constructor'`
     // indexes a value-keyed map at a key every object has, and `toString` on
     // the type-keyed one above it.
-    expect(describeEvent(event({ type: 'valuation_updated', payload: { reason: 'constructor' } })).note).toBeNull();
+    expect(
+      describeEvent(event({ type: 'valuation_updated', payload: { reason: 'constructor' } })).note,
+    ).toBeNull();
     expect(describeEvent(event({ type: 'toString', payload: { reason: 'account_closed' } })).note).toBeNull();
   });
 });

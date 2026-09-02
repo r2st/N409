@@ -875,7 +875,8 @@ export function extractChanges(type: string, payload: Record<string, unknown>): 
  *     `error` suffix meant "nothing reads it", which is where it stayed.
  */
 const RELEASED_BY_CLOSURE = 'Released automatically when the account holding this work was closed.';
-const REAPED = 'Abandoned by the stale-work sweep after passing its deadline; no worker reported this ending.';
+const REAPED =
+  'Abandoned by the stale-work sweep after passing its deadline; no worker reported this ending.';
 
 export const EVENT_NOTES: Record<string, Record<string, string | Record<string, string>>> = {
   portfolio_membership_changed: {

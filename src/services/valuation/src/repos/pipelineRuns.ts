@@ -205,7 +205,13 @@ export async function setValuationAutoPipeline(
         valuationId: valuation.id,
         type: 'auto_pipeline_toggled',
         actor,
-        payload: { enabled },
+        // A change list rather than `{ enabled }` (round 389, methodology M4).
+        // `extractChanges` reads four payload shapes and a bare boolean is none
+        // of them, so every toggle in the trail rendered as "Automated pipeline
+        // toggled" and nothing else — the one row where which way it went is
+        // the entire content of the event. It is a value that moved, so it is
+        // written the way a value that moved is written here.
+        payload: { changes: { auto_pipeline: { from: valuation.auto_pipeline, to: enabled } } },
       });
       return { auto_pipeline: enabled };
     }),

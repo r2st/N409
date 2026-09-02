@@ -245,13 +245,16 @@ describe.skipIf(!dbUp)('improvement 2 — auto-pipeline on upload', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().pipeline_run).toBeNull();
 
-    // The toggle is audited.
+    // The toggle is audited, and says which way it went: a change list, so
+    // `extractChanges` renders it (round 389). A bare `{ enabled }` reached the
+    // trail as a bare label.
     const { rows } = await pool.query(
-      `SELECT payload FROM valuation_events WHERE valuation_id = $1 AND type = 'auto_pipeline_toggled'`,
+      `SELECT type, payload FROM valuation_events WHERE valuation_id = $1 AND type = 'auto_pipeline_toggled'`,
       [valuationId],
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].payload).toMatchObject({ enabled: false });
+    // `auditTrail.test.ts` pins what this shape renders as.
+    expect(rows[0].payload).toMatchObject({ changes: { auto_pipeline: { from: true, to: false } } });
   });
 
   it('is disabled globally with AUTO_PIPELINE=off (uploads skip, manual trigger 422s)', async () => {
