@@ -694,6 +694,17 @@ class TestVerifyProvider:
         status = verify_provider(client=stub(lambda r: httpx.Response(200, text="<html></html>")))
         assert status.ok
 
+    def test_a_wikipedia_refusal_is_not_zero_results(self, monkeypatch):
+        """The rule above reads "did not raise" as "answered", which is right
+        for every backend that reports a refusal with a status. MediaWiki does
+        not: a `readonly` reply is a 200, so a backend that had refused every
+        call for a week answered `valid (0 results)` here."""
+        monkeypatch.setenv("RESEARCH_PROVIDER", "wikipedia")
+        body = {"error": {"code": "readonly", "info": "…"}}
+        status = verify_provider(client=stub(lambda r: httpx.Response(200, json=body)))
+        assert status.state == "unreachable"
+        assert "readonly" in status.detail
+
 
 # ── Wikipedia ────────────────────────────────────────────────────────────────
 
@@ -767,6 +778,34 @@ class TestWikipedia:
     def test_a_non_200_is_a_search_error(self):
         with pytest.raises(SearchError, match="wikipedia HTTP 500"):
             search("q", client=stub(lambda r: httpx.Response(500, text="boom")))
+
+    @pytest.mark.parametrize("code", ["readonly", "ratelimited", "invalidparammix"])
+    def test_a_refusal_wearing_a_200_is_a_search_error(self, code):
+        """MediaWiki reports its own failures in the body and answers 200 while
+        doing it, so the status check cannot see them. Without this the refusal
+        arrives as a body with no `query` key and reads as "answered, nothing
+        found" — the same 2xx-that-is-not-results that `is_challenge` exists to
+        catch on DuckDuckGo's arm."""
+        body = {"error": {"code": code, "info": "…"}}
+        with pytest.raises(SearchError, match=f"wikipedia refused: {code}"):
+            search("q", client=stub(lambda r: httpx.Response(200, json=body)))
+
+    def test_an_unnamed_refusal_still_raises(self):
+        for body in ({"error": {}}, {"error": {"code": "  "}}, {"error": {"code": 7}}):
+            with pytest.raises(SearchError, match="wikipedia refused: unspecified"):
+                search("q", client=stub(lambda r, b=body: httpx.Response(200, json=b)))
+
+    def test_a_non_object_error_key_is_not_a_refusal(self):
+        """Every level of this body is publisher-controlled; only the documented
+        shape may end a search."""
+        body = {"error": "nope", **WIKI_JSON}
+        assert len(search("q", client=stub(lambda r: httpx.Response(200, json=body)))) == 2
+
+    def test_warnings_beside_an_answer_do_not_discard_it(self):
+        """`warnings` is MediaWiki noting a deprecated parameter next to results
+        it did return. Raising on one would throw away usable hits over a note."""
+        body = {"warnings": {"main": {"warnings": "deprecated"}}, **WIKI_JSON}
+        assert len(search("q", client=stub(lambda r: httpx.Response(200, json=body)))) == 2
 
     def test_max_results_caps_the_page(self, monkeypatch):
         monkeypatch.setenv("RESEARCH_MAX_RESULTS", "1")
@@ -844,6 +883,22 @@ class TestSearchChain:
         provider, hits = search_with_provider("q", client=stub(handler))
         assert (provider, hits) == ("duckduckgo", [])
         assert calls["n"] == 1
+
+    def test_a_refusal_at_the_terminator_is_reported_not_answered(self, monkeypatch):
+        """The keyless chain ends at Wikipedia, and an empty result ends the
+        walk — so a refusal read as "nothing found" is a research run that
+        reports no sources, with nothing behind it to fall through to and no
+        error anywhere saying why."""
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "duckduckgo" in request.url.host:
+                return httpx.Response(202, text=CHALLENGE_HTML)
+            return httpx.Response(200, json={"error": {"code": "readonly"}})
+
+        with pytest.raises(SearchError) as caught:
+            search_with_provider("q", client=stub(handler))
+        assert "wikipedia refused: readonly" in str(caught.value)
 
     def test_wikipedia_is_dropped_from_a_chain_carrying_an_allowlist(self):
         """It cannot honour `site:`, and a citation from outside an allowlist is

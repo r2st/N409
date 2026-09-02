@@ -771,6 +771,41 @@ def _wikipedia_url(title: str) -> str:
     return WIKIPEDIA_ARTICLE_BASE + urllib.parse.quote(title.replace(" ", "_"), safe="/:()")
 
 
+def _raise_mediawiki_error(body: dict) -> None:
+    """A MediaWiki refusal wears a 200, so the status check above cannot see it.
+
+    The Action API reports most of its own failures in the body — `{"error":
+    {"code": ..., "info": ...}}` — and answers HTTP 200 while doing it. Every
+    other backend here signals a refusal with a status, so the status check is
+    the whole of their guard; this one needs the second look, for the same
+    reason `is_challenge` exists on DuckDuckGo's arm. Without it a `readonly`,
+    a `ratelimited` or a mistyped parameter arrives as a body with no `query`
+    key, falls through to the `return []` below, and reads as "the provider
+    answered and the public record is thin here".
+
+    That reading is worse here than anywhere else in this module. Wikipedia is
+    the chain's terminator (`CHAIN_ORDER`), and an empty result *ends* the walk
+    rather than continuing it (`search_with_provider`) — so the one backend
+    with nothing behind it is the one whose failure was being reported as an
+    answer. It also stood in front of /ready: `verify_provider` calls the
+    configured backend and reads anything that did not raise as `valid`, so a
+    Wikipedia that had refused every call for a week answered "valid (0
+    results)".
+
+    Only `error` is read. `warnings` is MediaWiki telling us about a deprecated
+    parameter or a truncated result set beside an answer it did give, and
+    raising on one would discard usable hits over a note.
+    """
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return
+    code = error.get("code")
+    code = code.strip() if isinstance(code, str) and code.strip() else "unspecified"
+    # `info` is MediaWiki's prose and can carry the query back; the code is the
+    # part that names what went wrong and is safe to put in a log line.
+    raise SearchError(f"wikipedia refused: {code}")
+
+
 def _search_wikipedia(
     query: str,
     *,
@@ -807,7 +842,9 @@ def _search_wikipedia(
     )
     if resp.status_code != 200:
         raise SearchError(f"wikipedia HTTP {resp.status_code}")
-    rows = _json_object(resp, "wikipedia").get("query", {})
+    body = _json_object(resp, "wikipedia")
+    _raise_mediawiki_error(body)
+    rows = body.get("query", {})
     rows = rows.get("search") if isinstance(rows, dict) else None
     if not isinstance(rows, list):
         return []
