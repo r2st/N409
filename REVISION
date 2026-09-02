@@ -9451,3 +9451,144 @@
 #            reading it, which is the state a gate is worth least in. The
 #            29 failing tests in the AI service's suite are likewise
 #            pre-existing at `9e0fbbb4` and untouched here.
+# R368 — Silent failure / integration point stress (M5). Three fixes, no
+#            migration, no SQL, 17 new tests, at `eeabe047..6829f6d9`.
+#
+#            All three are the same sentence: **a fallback that states a cause
+#            it does not know.** Not a swallow — every one of these already
+#            logged, or already answered, or already had a census pointed at
+#            it. What each did was answer a question it had not asked, with a
+#            confidence the code it sat in could not support.
+#
+#            **A broken market-data install reported as a missing one.**
+#            `default_provider()` was `try: YFinanceProvider() / except
+#            Exception: return None`, and `_cached` answered the resulting
+#            absence with a fixed string: *"no market-data provider available
+#            (yfinance not installed)"*. That sentence goes three places —
+#            R305's `warning` line, the `warning` field of every fallback
+#            payload, and, through a second hardcoded copy in
+#            `market_universe`, `universe.warnings` on a comparables screen —
+#            so it is what an operator and an analyst both see. The `catch`
+#            admits four causes: the package absent, which is the sentence; one
+#            of *its* imports absent, which raises `ImportError` naming pandas
+#            or numpy; the package unimportable, which after an in-place
+#            upgrade is a `ValueError` out of a C extension complaining about
+#            binary incompatibility; and anything else an import executes. In
+#            three of the four the sentence is false and sends whoever has to
+#            fix it looking for a package that is sitting right there — and the
+#            exception that would have said which was discarded before anything
+#            could read it. `resolve_default_provider()` returns the provider
+#            *and* the reason there is not one, quoting the exception in both
+#            arms, and logs it at construction rather than at the first
+#            fallback: `default_client()` holds one client for the life of the
+#            process, so a misbuilt image now says so at startup instead of on
+#            whichever valuation first wants market data. The two vacuity
+#            guards are the ones that matter — a live provider must carry an
+#            empty reason, and `MarketFeedClient(provider=None)`, the explicit
+#            opt-out the whole test tree runs on, must neither quote an
+#            exception nor log.
+#
+#            **Seven tunables the boot-time config check had never heard of.**
+#            `config_check` exists in both Python tiers and its argument is
+#            exactly M5's: a helper that falls back on an unusable value tells
+#            nobody *when* (it validates on its first call, which may be hours
+#            in, or never) and nobody *which way* the fallback points
+#            (`OPENROUTER_TOKEN_BUDGET` mistyped reads as **unlimited**, which
+#            is that module's own opening example). Both are equally true of a
+#            variable that is not in `SPECS` at all, with the addition that
+#            nothing will ever notice — the roster is a hand-written tuple, so
+#            it is a list of the settings somebody remembered.
+#
+#            It had drifted in both tiers. The engine was missing
+#            `MARKET_FEED_FETCH_TIMEOUT_S` and
+#            `MARKET_FEED_MULTIPLES_BUDGET_S` — the two ceilings that decide
+#            how long one request may hold a threadpool slot against a hung
+#            upstream, added R314 and R331. The AI tier was missing five: the
+#            Bedrock and Sonar per-call ceilings, read through
+#            `env_int`/`env_float`, which fall back in silence and are the
+#            engine's `_seconds` without its log line; and
+#            `MAX_RESPONSE_BYTES`, the bound on how much of a far end's answer
+#            this process holds in memory. That last one is the best-behaved
+#            reader in either tier — it announces an unparseable value and
+#            announces the disabled state — and it announces on the first
+#            outbound call.
+#
+#            `test_config_census.py`, one per tier, derives the population from
+#            the source: every variable the service reads is specced, or
+#            declared with the reason it is not a tunable. Credentials keep the
+#            module's own exemption, which has a test already — a complaint
+#            quotes the offending value. The scan is
+#            `test_secret_env_census.py`'s, which resolves module-level string
+#            constants because `market_feed` names its ceilings through
+#            `FETCH_TIMEOUT_ENV` and `TokenLedger("…_TOKEN_BUDGET")` names its
+#            variable as a constructor argument rather than through
+#            `os.environ` at all. One addition it needed: the engine service
+#            holds forty ticker symbols as bare uppercase literals, so a name
+#            counts when the call is a direct environment read *or* when it
+#            looks like a variable — an underscore in it — and is a call's
+#            first argument. `PORT` is the only name the underscore rule would
+#            miss and it is read directly, so it is in; `DDOG`, `CRM`, `NOW`
+#            and `CAT` are asserted out by name, because a population widened
+#            until it passes is a list nobody keeps accurate.
+#
+#            **A preflight directory it could not read looked like an empty
+#            one.** `preflight`'s listing was `catch { return [] }`, and only in
+#            the default — an injected `readDir` was never wrapped, so the
+#            swallow was on exactly the path production takes and no other.
+#            Every guard in the checker that iterates a directory therefore had
+#            two ways to find nothing and could not tell them apart. Both
+#            callers exist to prevent that: the sweep for unguarded units is
+#            there because `KNOWN_UNITS` is hardcoded and, in its own words, "a
+#            check whose scope is a hardcoded list silently narrows to nothing
+#            the moment reality grows past it"; `unitResourceFaults` iterates
+#            the installer's directories for the same reason and returns before
+#            the estate-ceiling sum when it collected no ceilings. Hand either
+#            a path that is not there and both find nothing, raise nothing, and
+#            `preflight-cli` prints `memory ceilings checked in <that
+#            directory>`. `--install-dir` is where it bites: `deploy.sh` names
+#            `infra/backup` beside `infra/systemd`, and `install-units.sh`,
+#            reading the same two paths one step later, already gets this right
+#            — `[[ -d "$abs" ]] || die`. The checker that runs first said the
+#            estate was clean. The fault names the directory and the errno,
+#            because ENOENT (the wrong path) and EACCES (the right path, not
+#            readable by the deploy user) have different fixes; and the guard has
+#            its own vacuity guard, because an install directory that lists
+#            empty is a legitimate deployment and must not be confused with one
+#            that would not open.
+#
+#            gap: `silentCatchCensus` would not have found the third finding.
+#            It reads `.catch(` with an inline handler, in the valuation
+#            service only, and the preflight swallow was a synchronous
+#            `catch { return [] }`. Nine of that shape remain in that service —
+#            `clients/deadline.ts`, `db/migrate.ts`, `domain/externalUrl.ts`,
+#            `preflight.ts` itself and five more — most of them parsers where
+#            `false` is the answer and not a report. `readJsonArray` is the one
+#            worth a look: an empty Xero `/connections` list and a body that
+#            would not parse are the same value to every caller, which is the
+#            census's own opening sentence about `.catch(() => null)` in a
+#            different keyword. Widening the matcher to `} catch` is a day's
+#            work of annotating parsers and it is the right next ratchet.
+#            gap: neither Python tier has a census of its own swallows. The
+#            AI service alone has seventeen `except …: pass` / `return None`
+#            sites and the engine ten, and the first finding here was one of
+#            them. The idiom is not `.catch(`, so the Node census cannot be
+#            pointed at it; the shape that would work is the marker comment
+#            `silentCatchCensus` already uses, read by an `ast` walk over
+#            `ExceptHandler` bodies. It is the same test twice, which is what
+#            the twin `config_check` files argue for doing anyway.
+#            gap: `TokenLedger.cap()` still answers an unusable ceiling with
+#            `0`, and `0` is how this code spells *unlimited*. Boot now catches
+#            it in all three providers, which is the fix that matters — but the
+#            method re-reads `os.environ` on every `check()`, so the guard and
+#            the reader are in different modules and only one of them knows
+#            which way the fallback points. A `max(0, int(raw))` that logged,
+#            once, would make the reader say it too; not done here because it
+#            is a third place to change the same decision and the census is
+#            what stops it drifting.
+#            gap: `format:check` is red on main again — the same **18 files**
+#            R367 counted, none of them touched by this round, all in
+#            web-frontend. And the AI service's suite still has 29 failing
+#            tests, pre-existing at `eeabe047` and untouched here: they are in
+#            `test_ratelimit`, `test_request_bounds`, `test_research_route`,
+#            `test_security_headers` and `test_tagging_agent`. Two rounds have
+#            now recorded both without moving them.
