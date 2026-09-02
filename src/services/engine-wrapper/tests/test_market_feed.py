@@ -174,6 +174,31 @@ def test_the_callers_own_figures_still_ride_the_fallback():
     assert out["prices"] == [{"date": "x"}]
 
 
+def test_the_callers_figures_cannot_relabel_themselves_as_observed():
+    """`fallback` carries estimates, not this module's verdict on itself.
+
+    It was spread over the payload rather than under it, so a caller sending
+    `{"source": "yfinance"}` got a 200 saying its own numbers had been observed
+    at the provider, with the warning that says otherwise erased. Every reader
+    of that label believes it: R382 made `source` what
+    `market_feed_answers_total` classifies on, so the series an alert on a dead
+    market feed is written against would have counted this as a live answer,
+    and the three Node routes would have put the numbers into a valuation as
+    live comparable data.
+    """
+    c = MarketFeedClient(provider=EmptyPricesProvider())
+    out = c.get_historical_prices(
+        "NOTREAL",
+        "2026-01-01",
+        "2026-02-01",
+        fallback={"source": "yfinance", "warning": None, "prices": [{"date": "x"}]},
+    )
+    assert out["source"] == "fallback"
+    assert out["warning"] and "NOTREAL" in out["warning"]
+    # The figures themselves still ride out — that is what `fallback` is for.
+    assert out["prices"] == [{"date": "x"}]
+
+
 def test_a_financials_answer_with_missing_fields_is_still_an_observation():
     """Only the price series is asked this question. A provider that carries
     EBITDA for one issuer and not the next is ordinary, and calling that a

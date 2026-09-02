@@ -473,11 +473,28 @@ class MarketFeedClient:
                 "detail": reason,
             },
         )
-        payload: dict = {"source": "fallback", "warning": reason}
+        # The caller's figures go in first and this tier's two labels go in
+        # last, because they are answers to a question the caller is not being
+        # asked. `fallback` is the estimates to ride out when the provider
+        # cannot be reached — `{"beta": 1.3}`, `{"prices": [...]}` — and it was
+        # spread over `source` and `warning` rather than under them, so a
+        # fallback carrying `{"source": "yfinance"}` came back as a 200 saying
+        # these figures were observed at the provider, with the warning that
+        # says otherwise erased.
+        #
+        # Every reader of that label reads it as observed. R382 made `source`
+        # the thing `market_feed_answers_total` classifies on, so the series an
+        # alert on a dead market feed is written against would count it as a
+        # live answer; the three Node routes put the numbers into a valuation
+        # as live comparable data. A caller cannot be the authority on whether
+        # this module reached Yahoo.
+        payload: dict = {}
         if isinstance(fallback, Mapping):
             payload.update(dict(fallback))
         elif fallback is not None:
             payload["estimated"] = fallback
+        payload["source"] = "fallback"
+        payload["warning"] = reason
         return payload
 
     def _store(self, key: tuple, result) -> None:
