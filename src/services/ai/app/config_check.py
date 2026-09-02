@@ -181,13 +181,28 @@ SPECS: tuple[EnvSpec, ...] = (
         false_tokens=frozenset({"0", "false", "no"}),
     ),
     # ── Bedrock: the other completion provider, billed to the operator's own
-    # AWS account. Only the ceiling is specced here, for the reason this module
-    # exists: an unparseable value reads as unlimited, so the one variable whose
-    # whole purpose is to bound spend removes the bound when it is mistyped.
+    # AWS account. The lifetime ceiling is here for the reason this module
+    # exists — an unparseable value reads as unlimited, so the one variable
+    # whose whole purpose is to bound spend removes the bound when it is
+    # mistyped — and the per-call pair joined it in R368, when
+    # `test_config_census.py` made the roster answer for every tunable this
+    # service reads rather than for the ones somebody remembered.
     EnvSpec(
         name="BEDROCK_TOKEN_BUDGET",
         effect="is the process-lifetime token ceiling for Bedrock, and an unusable value reads as unlimited",
         kind="int",
+        minimum=0,
+    ),
+    EnvSpec(
+        name="BEDROCK_MAX_TOKENS",
+        effect="caps the output tokens asked of Bedrock per call",
+        kind="int",
+        minimum=1,
+    ),
+    EnvSpec(
+        name="BEDROCK_CALL_BUDGET_S",
+        effect="is the wall-clock ceiling for one Bedrock call (0 disables it)",
+        kind="float",
         minimum=0,
     ),
     # ── Perplexity: the research primary, billed per call to the key's own
@@ -197,6 +212,18 @@ SPECS: tuple[EnvSpec, ...] = (
         name="PERPLEXITY_TOKEN_BUDGET",
         effect="is the process-lifetime token ceiling for Sonar, and an unusable value reads as unlimited",
         kind="int",
+        minimum=0,
+    ),
+    EnvSpec(
+        name="PERPLEXITY_MAX_TOKENS",
+        effect="caps the output tokens asked of Sonar per call",
+        kind="int",
+        minimum=1,
+    ),
+    EnvSpec(
+        name="PERPLEXITY_CALL_BUDGET_S",
+        effect="is the wall-clock ceiling for one Sonar call (0 disables it)",
+        kind="float",
         minimum=0,
     ),
     # ── Research: which index answers, and how long it may take ──────────────
@@ -232,6 +259,19 @@ SPECS: tuple[EnvSpec, ...] = (
         minimum=0,
     ),
     # ── Anonymisation: the gate between client data and a third-party model ──
+    # ── The ceiling on a response body this process will buffer ─────────────
+    #
+    # `http_client.max_response_bytes` announces a value it cannot parse, and
+    # announces the disabled state too, which is more than any other helper
+    # here does — but it announces on the first outbound call, and this module
+    # is about the boot. Zero is a supported way to turn the ceiling off, so the
+    # floor is 0 and the effect says which way that points.
+    EnvSpec(
+        name="MAX_RESPONSE_BYTES",
+        effect="caps the response body an outbound call will buffer (0 turns the ceiling off)",
+        kind="int",
+        minimum=0,
+    ),
     EnvSpec(
         name="ANONYMIZE_ENFORCE",
         effect="decides whether identifiers must be stripped before a model sees them",
