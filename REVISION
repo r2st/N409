@@ -7993,3 +7993,100 @@
 #            settlement write itself failed is drawn as a category or as a dash.
 #            The reaper is what settles those rows, which is why this is
 #            recorded beside its gap rather than on its own.
+#
+# R351 — Performance & resource management (M8). Three findings, no migration,
+#            no new index, 13 new tests. The twelfth performance round, and the
+#            method that produced all three was the asymmetry lens R283 named:
+#            find two callers asking the same question of the same table and ask
+#            why they are written differently. Not one of the three is visible
+#            to a scaling ratio, a plan guard, or an assertion over a response.
+#
+#            **R338's fix was the exception and the shape was the rule.** Every
+#            paged console on this service answers a screen with two statements
+#            — how many rows match, and which rows this page shows — carrying
+#            two parameter lists precisely because neither reads anything the
+#            other produces. R338 measured the activity log and the firm client
+#            roster, fixed those two, and stopped. Five more still awaited the
+#            count before issuing the page, so each screen cost the *sum* of two
+#            round trips rather than the slower of them: the job monitor, the
+#            shared inbox, the admin user console, the ops task queue and the
+#            reviewer queue. In all five the deferred half is the one with no
+#            ceiling on it. A page stops at `perPage` rows out of an index; the
+#            count beside it reads everything that matches — the whole five-way
+#            job union with no LIMIT to stop it, the inbox's three-table join
+#            over the reader's entire scope, every account in the directory,
+#            every task the queue can see with R342's archived-engagement EXISTS
+#            asked about each one. And `AdminJobsPage` polls its screen every
+#            fifteen seconds, so that round trip was paid four times a minute
+#            per operator watching it. Four of the five build the page's
+#            placeholders by pushing onto the array the count is already
+#            holding, so the count now takes a copy; sharing it is a run-time
+#            bind error, which is why the guard asserts parameter lengths beside
+#            the overlap.
+#
+#            **A file download went through the screen's reader.** `GET
+#            /valuations/export` has three formats. CSV and XLSX go through
+#            `exportValuations` — seventeen named columns under a LIMIT, no
+#            count. The PDF went through `listValuations`, which runs a
+#            `count(*)` over the whole filtered book alongside the page (rightly,
+#            and in parallel, because a screen prints a total) and selects `*`.
+#            This caller destructured `items` and dropped the total on the
+#            floor, and read forty-odd columns of ten thousand engagements out
+#            of the table, and through the driver's parser, to print the nine
+#            that fit a printable table. Unifying the arms is also a
+#            correctness change: three formats of one export were being
+#            answered by two different statements over the same filters, so the
+#            PDF and the CSV of a single click could disagree about which
+#            engagements are in the book.
+#
+#            **An account closure wrote its spine one round trip at a time.**
+#            `releaseAssignedWork` runs inside the closing transaction. Its two
+#            `UPDATE … RETURNING` statements are set-based and lock every
+#            engagement and task they touch — `assigned_reviewer_id` is in
+#            `OPS_PATCH_FIELDS`, so each also bumps `version` — and those locks
+#            are held to the COMMIT. The spine was then written one `INSERT …
+#            RETURNING *` per released row, awaited one at a time, with all of
+#            them held. A reviewer holding three hundred live engagements was
+#            three hundred round trips of an open write transaction with three
+#            hundred engagements locked inside it. `recordEvents` writes the
+#            batch through `unnest` — one prepared-statement shape whatever the
+#            size, and no RETURNING, because a batch writer has no reader.
+#            `setUserActive` is the door an IdP drives, and a resync deactivates
+#            a department at a time.
+#
+#            **Two guards worth reusing, both asserted over statements rather
+#            than over answers.** The overlap tests hold the first statement open
+#            on a pool that never settles and check the second is already in
+#            flight — a wall-clock comparison passes on a sequential
+#            implementation whenever the machine is quick. The export guard reads
+#            what the request issued, because the PDF looked right either way
+#            (R322's lesson); it asserts that no read of `valuations` during any
+#            of the three formats counts or opens with a bare star, and that all
+#            three issue the same statement. The release guard asserts a
+#            *difference* — four times the work released must not move the
+#            statement count — rather than a ceiling that would go stale.
+#
+#            gap: `listUsers` still runs its `count(*)` for the user-directory
+#            export, which discards the total. It is concurrent with the page
+#            now, so it costs no latency, only a whole-table count on the box per
+#            export; the valuations half had a narrow reader already to switch
+#            to, and this one would need either a new reader duplicating the
+#            page-then-join CTE or a flag on the existing one.
+#            gap: the engine's `_assert_finite_results` sweep was measured and
+#            left. cProfile reports it as **41% of a 200-class compute**, which
+#            is wrong: it is call-heavy, and the profiler charges per call.
+#            Timed without the profiler it is 1.94 ms of a 16.5 ms compute.
+#            Answering the leaves in the loop that already holds them (rather
+#            than recursing into each scalar) takes it to 1.09 ms — a real 44%
+#            of the sweep and 5% of the request, which is a micro-optimisation
+#            and was not committed. **The lesson is about the instrument:** on
+#            this codebase a cProfile ranking is a ranking of call counts, not of
+#            time, and a round that trusts it will optimise the wrong function.
+#            gap: R154's AppLayout badge-poll churn on navigation, still open
+#            across R330 (which bounded it with `BADGE_MIN_REFETCH_MS`) and R338
+#            (which stopped the clock in a hidden tab). The remaining request
+#            volume is a deliberate UX trade.
+#            gap: `listCalculations` still ships `inputs` to the Calculations tab
+#            and to `qa.ts`, neither of which reads it — R322's open item, a
+#            twentieth of the bytes `results` costs and a third column list to
+#            keep in step.
