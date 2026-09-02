@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { problems, retryPhrase } from '@n409/shared';
+import { forbidden } from '../../src/domain/accessProblem.js';
 import { problemCalls } from './errorBodyDisclosure.test.js';
 
 /**
@@ -206,6 +207,28 @@ describe('error messages name what failed, why, and what to do', () => {
     for (const remedy of remedies) {
       expect(remedy.length, `remedy too short to be actionable: "${remedy}"`).toBeGreaterThan(30);
     }
+  });
+
+  /**
+   * A remedy has to name a control that does the thing it is named for.
+   *
+   * `partner-token` is the 403 a *personal* key gets on a partner API route,
+   * and its remedy pointed at Settings → API tokens — which is the panel that
+   * mints personal keys. An integrator who followed it made a second personal
+   * token, sent it, and was refused by this same sentence. Partner keys are
+   * minted from `POST /partners/:id/tokens`, which the product draws as the
+   * API tokens panel on the partner portal.
+   *
+   * The negative assertion is the one with teeth: it is the exact prior
+   * wording, so this fails again if anybody re-attaches "a partner key" to
+   * "Settings".
+   */
+  it('sends a refused personal key to a screen that can mint a partner one', () => {
+    const detail = forbidden('This partner API endpoint', 'partner-token').detail ?? '';
+    expect(detail).toMatch(/partner portal/i);
+    expect(detail, 'Settings → API tokens mints personal keys, not partner ones').not.toMatch(
+      /partner key.{0,40}Settings/i,
+    );
   });
 
   /**

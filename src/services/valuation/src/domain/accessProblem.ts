@@ -94,10 +94,23 @@ const ACCESS: Readonly<Record<AccessKind, AccessCopy>> = {
       'The rest of your patch was not applied either — send it again without that field. If it ' +
       'needs to change, say so on the engagement and your analyst will make the change.',
   },
+  /*
+   * The remedy has to name the screen that mints the *other* kind of key.
+   *
+   * It named Settings → API tokens, which is the personal-token panel — the
+   * one that mints exactly the credential this refusal is about. An integrator
+   * following it created a second personal token, sent it, and was refused
+   * again by this same sentence: advice that returns the reader to the door
+   * that just closed. Partner keys come from `POST /partners/:id/tokens`,
+   * which the product exposes as the "API tokens" panel on the partner portal
+   * (`/partner`, nav "Partner portal"), and `canManageTokens` admits the firm's
+   * own `partner` role there — an ordinary member's Settings page cannot mint
+   * one however many times they try.
+   */
   'partner-token': {
     because: 'it is reachable only with a partner API key',
     remedy:
-      'This key is a personal token. Create a partner key under Settings → API tokens for the partner whose data you are reading.',
+      'This key is a personal token, and Settings → API tokens only mints more of those. A partner key is minted in the API tokens panel of the partner portal by someone holding the partner role for that firm.',
   },
 };
 
