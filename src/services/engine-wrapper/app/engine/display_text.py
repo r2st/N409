@@ -50,6 +50,10 @@ BIDI_CONTROLS = frozenset(
 # TS twin's bound.
 MAX_QUOTED_CHARS = 80
 
+# What a refusal calls a name with nothing visible left in it. The TS twin's
+# literal, and `test_display_text.py` reads that file to keep them one policy.
+UNNAMED = "(unnamed)"
+
 
 def is_acted_on_control(ch: str) -> bool:
     """A character a display *acts on* rather than draws.
@@ -96,8 +100,18 @@ def quote_for_message(value: str, max_chars: int = MAX_QUOTED_CHARS) -> str:
         if len(cleaned) > max_chars:
             over = True
             break
-    if over:
-        return "".join(cleaned[:max_chars]) + "…"
-    if not cleaned:
-        return "(unnamed)"
-    return "".join(cleaned)
+    # `.strip()`, not `if not cleaned`. The check was written for a name that
+    # scrubbed away entirely — an empty string, or one made only of reordering
+    # controls — and a name of three spaces survives it, so the refusal read
+    # `input '   ' is not accepted`: quotes wrapped around nothing a reader can
+    # see, which is the situation the marker exists for. A cap table imported
+    # from a spreadsheet is where blank-but-present cells come from.
+    #
+    # Asked of the fragment the sentence *keeps*, before the ellipsis is
+    # appended: a name of two hundred spaces is bounded to eighty of them, and
+    # "eighty spaces followed by …" is the same unreadable quote with a mark on
+    # the end of it.
+    kept = "".join(cleaned[:max_chars]) if over else "".join(cleaned)
+    if not kept.strip():
+        return UNNAMED
+    return kept + "…" if over else kept

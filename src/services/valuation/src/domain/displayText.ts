@@ -57,6 +57,14 @@ export function isActedOnControl(ch: string): boolean {
 const MAX_QUOTED_CHARS = 80;
 
 /**
+ * What a refusal calls a name with nothing visible left in it.
+ *
+ * The Python twin's literal too — `test_display_text.py` reads this file, so
+ * the two runtimes stay one policy.
+ */
+const UNNAMED = '(unnamed)';
+
+/**
  * Prepare a string that came out of a file for a sentence a person reads.
  *
  * The uploaded-file readers name what they refused — the ZIP entry, the cell
@@ -101,7 +109,20 @@ export function quoteForMessage(value: string, max: number = MAX_QUOTED_CHARS): 
     // Compared in code units because the threshold below it always was: the
     // cut is astral-safe and the length test is not, and making them agree
     // would move a boundary rather than move work off one.
-    if (cleaned.length > max) return `${sliceChars(cleaned, max)}…`;
+    if (cleaned.length > max) {
+      // Asked of the fragment the sentence keeps, before the ellipsis: eighty
+      // spaces followed by `…` is the same unreadable quote with a mark on it.
+      const head = sliceChars(cleaned, max);
+      return head.trim() === '' ? UNNAMED : `${head}…`;
+    }
   }
-  return cleaned || '(unnamed)';
+  /*
+   * `trim()`, not `cleaned || …`. The marker was written for a name that
+   * scrubs away entirely — an empty string, or one made only of reordering
+   * controls — and a name of three spaces is truthy, so the refusal read
+   * `class '   ' …`: quotes around nothing a reader can see, which is the
+   * situation the marker exists for. An imported spreadsheet is where
+   * blank-but-present cells come from. The Python twin holds the same rule.
+   */
+  return cleaned.trim() === '' ? UNNAMED : cleaned;
 }

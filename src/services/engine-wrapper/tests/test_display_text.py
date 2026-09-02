@@ -88,6 +88,39 @@ def test_a_name_that_scrubs_away_entirely_still_names_something():
     assert quote_for_message("‪‬") == "(unnamed)"
 
 
+@pytest.mark.parametrize(
+    "raw",
+    ["   ", "\u00a0\u00a0", "\u200e  \u200f", " " * 200, " " * 80 + "zz"],
+)
+def test_a_name_with_nothing_visible_in_it_names_something_too(raw):
+    """Round 387, methodology M19.
+
+    The marker was written for a name that scrubs away *entirely* — an empty
+    string, or one made only of reordering controls — and the check was
+    ``if not cleaned``, which a name of three spaces passes. So a blank cell
+    from an imported cap table produced ``share class '   '``: quotes wrapped
+    around nothing a reader can see, which is the situation the marker exists
+    for.
+
+    The last two cases are why the question is asked of the fragment the
+    sentence *keeps* rather than of the input: bounded to eighty characters,
+    both are eighty spaces, and "eighty spaces followed by …" is the same
+    unreadable quote with a mark on the end of it. A visible character inside
+    the bound survives — see the ``z`` case below.
+    """
+    assert quote_for_message(raw) == "(unnamed)"
+
+
+def test_a_control_that_became_a_question_mark_is_still_something_to_show():
+    """The discriminator: `?` is visible, so it is not blanked away."""
+    assert quote_for_message("\t\n") == "??"
+
+
+def test_a_visible_character_inside_the_bound_survives_the_padding():
+    """The other discriminator: the blank check is not "starts with spaces"."""
+    assert quote_for_message(" " * 79 + "zz") == " " * 79 + "z…"
+
+
 @pytest.mark.skipif(not TWIN.exists(), reason="TypeScript tier not present in this tree")
 def test_the_two_tiers_strike_the_same_bidi_controls():
     """One policy, two runtimes.
