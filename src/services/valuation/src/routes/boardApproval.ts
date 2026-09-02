@@ -369,8 +369,28 @@ export function registerBoardApprovalRoutes(
 
       // Re-mint the token so the emailed link is always fresh (previous links
       // die), and with it the deadline the new link carries.
+      //
+      // THE RE-MINT CAN LAND ON NOTHING (R390, methodology M5). `member` came
+      // from `findSignoffById`, a statement earlier and on another connection,
+      // and `deleteBoardMember` is a live door in that window — the same window
+      // it reasons about itself when it refuses to write a second removal for a
+      // double-clicked button. `UPDATE … WHERE id = $1` against the row it took
+      // is not an error: it wrote nothing, raised nothing, and the route went
+      // on to email a director who is no longer on the sign-off list a link
+      // whose token hashes to a row that does not exist, then answered
+      // `sent: true`. The recipient reads a message about a resolution they
+      // have been taken off, follows the only link in it, and is told it is
+      // invalid; the operator is told the send worked.
+      //
+      // Refused here rather than reported afterwards, because this is the first
+      // write and nothing has happened yet: no link was revoked (there is no
+      // row to hold one) and no message has been queued. The same 404 the
+      // lookup above would have given had the removal been one statement
+      // earlier.
       const { token, hash } = mintSignoffToken();
-      await remintSignoffToken(deps.pool, member.id, hash);
+      if (!(await remintSignoffToken(deps.pool, member.id, hash))) {
+        throw problems.notFound('That board member is no longer on the sign-off list');
+      }
       const link = `${baseUrl}/board-sign#token=${token}`;
 
       /*
@@ -438,14 +458,28 @@ export function registerBoardApprovalRoutes(
         );
         throw err;
       }
-      await markMemberSent(deps.pool, member.id).catch((err: unknown) => {
+      const stamped = await markMemberSent(deps.pool, member.id).catch((err: unknown) => {
         logUnretried(
           app.log,
           err,
           { valuationId: valuation.id, memberId: member.id },
           'board sign-off link was sent but not stamped; the list still reads “not sent” and a re-send would revoke it',
         );
+        return true; // Reported already; do not report it a second time below.
       });
+      if (!stamped) {
+        // The other way the stamp does not land, and the one no exception
+        // describes: the row went between the enqueue and this statement. The
+        // message has left, so this is not a refusal — but the director is
+        // holding a link `board_signoffs`' cascade has already killed, and the
+        // one place that can say so is here.
+        logUnretried(
+          app.log,
+          new Error('board member removed between sending the link and stamping it'),
+          { valuationId: valuation.id, memberId: member.id },
+          'board sign-off link was sent to a member who was removed in the same moment; the link they received is already dead',
+        );
+      }
       return { sent: true };
     },
   );

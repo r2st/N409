@@ -403,16 +403,34 @@ export async function findSignoffByTokenHash(
  * and pushing the deadline out without rotating would extend the life of a
  * token that has already been in an inbox.
  */
-export async function remintSignoffToken(pool: pg.Pool, signoffId: string, tokenHash: string): Promise<void> {
-  await pool.query('UPDATE board_signoffs SET token_sha256 = $2, token_expires_at = $3 WHERE id = $1', [
-    signoffId,
-    tokenHash,
-    boardSignoffTokenExpiry(),
-  ]);
+export async function remintSignoffToken(
+  pool: pg.Pool,
+  signoffId: string,
+  tokenHash: string,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    'UPDATE board_signoffs SET token_sha256 = $2, token_expires_at = $3 WHERE id = $1',
+    [signoffId, tokenHash, boardSignoffTokenExpiry()],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
-export async function markMemberSent(pool: pg.Pool, signoffId: string): Promise<void> {
-  await pool.query('UPDATE board_signoffs SET sent_at = now() WHERE id = $1', [signoffId]);
+/**
+ * Both of these say whether they landed, and both callers act on it (R390,
+ * methodology M5).
+ *
+ * `WHERE id = $1` against a row somebody removed is not an error and raises
+ * nothing — it is the third outcome an `UPDATE` has and the one no exception
+ * describes. The send route reaches both of these through `findSignoffById`, a
+ * statement earlier and on another connection, and `deleteBoardMember` is a
+ * live door in exactly that window: the same one it reasons about itself when
+ * it refuses to write twice for a double-clicked remove.
+ */
+export async function markMemberSent(pool: pg.Pool, signoffId: string): Promise<boolean> {
+  const { rowCount } = await pool.query('UPDATE board_signoffs SET sent_at = now() WHERE id = $1', [
+    signoffId,
+  ]);
+  return (rowCount ?? 0) > 0;
 }
 
 /**
