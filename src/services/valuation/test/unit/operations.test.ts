@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { parseEmailSubjectRef, stateGroupOf, STATE_GROUPS } from '../../src/domain/operations.js';
-import { canManageTokens, canPostComment, visibleCommentKinds } from '../../src/auth/operations.js';
+import {
+  canEditComment,
+  canManageTokens,
+  canPostComment,
+  visibleCommentKinds,
+} from '../../src/auth/operations.js';
 import { VALUATION_STATES } from '../../src/domain/valuation.js';
 import type { Principal } from '../../src/auth/rbac.js';
 
@@ -80,5 +85,26 @@ describe('token policy', () => {
   it('a suspended firm administrator mints nothing', () => {
     const suspended = { ...partner, roles: [...partner.roles, 'ignored' as const] };
     expect(canManageTokens(suspended, 'P1')).toBe(false);
+  });
+});
+
+describe('a suspension subtracts from every predicate in this file', () => {
+  const suspendedClient: Principal = { ...client, roles: [...client.roles, 'ignored'] };
+  const suspendedOps: Principal = { ...ops, roles: [...ops.roles, 'ignored'] };
+
+  it('refuses a suspended author their own comment', () => {
+    // `ignored` is additive: the row keeps `valuation_user`, and the own-record
+    // arm compares an id rather than asking what the principal may do.
+    expect(canEditComment(client, { author_id: client.id })).toBe(true);
+    expect(canEditComment(suspendedClient, { author_id: suspendedClient.id })).toBe(false);
+  });
+
+  it('refuses a suspended moderator everyone else’s', () => {
+    expect(canEditComment(ops, { author_id: client.id })).toBe(true);
+    expect(canEditComment(suspendedOps, { author_id: client.id })).toBe(false);
+  });
+
+  it('still refuses an unattributed comment to a live client', () => {
+    expect(canEditComment(client, { author_id: null })).toBe(false);
   });
 });
