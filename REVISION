@@ -8267,3 +8267,71 @@
 #            a sweep returning a *level* (a backlog depth, a duration) would
 #            accumulate into a counter whose rate means nothing, and nothing
 #            holds the shape.
+#
+# R354 — Security fence audit (M6). Two findings, no migration, 8 new tests, and
+#            both are the same shape: a fence this platform enforces at one
+#            door, on one route, absent from the door beside it. The lens was
+#            the estate's own written rules — `auth/reauth.ts` names the six
+#            actions that need a password and `routes/auth.ts` challenges a
+#            second factor — read as rosters and checked for who was missing.
+#
+#            **Both SSO doors signed a 2FA account in without its second
+#            factor.** `POST /auth/login` answers a 2FA-enabled account with a
+#            challenge, and `/auth/mfa/verify` is the only thing that turns one
+#            into a session. The Google callback and the SAML ACS issued the
+#            session outright. `upsertGoogleUser` matches on the *address*: an
+#            account created here with a password, which then enrolled TOTP
+#            here, is linked the first time that address arrives from Google —
+#            `password_digest` and `totp_secret` untouched, `sso_provider`
+#            stamped on the way past — so the factor its owner enrolled, and
+#            which `require_mfa` will not let them remove and `/mfa/disable`
+#            will not take off without their password, was skipped in full by
+#            the button beside the password box. Whoever holds the Google
+#            identity for that address held the account. Nothing said so: the
+#            bypass arrives on the spine as an ordinary `user_login`, and every
+#            outcome of both routes is a 302 that `http_requests_total` counts
+#            beside every other redirect. Challenged rather than refused, with
+#            the password door's own trusted-device exemption, and handed over
+#            in the fragment these redirects already use — `#mfa=` beside
+#            `#token=` — so the second-factor screen that exists collects the
+#            code rather than a second copy of it. `mfa_challenged` joins
+#            `SsoOutcome` and is out of both halves of `SsoRefusingSignIns`, for
+#            the reason `SignInsFailing` keeps it out of the password ratio.
+#
+#            **Enrolling a second factor was the takeover move with no password
+#            prompt.** `reauth.ts` says these prompts exist for "a stolen token,
+#            a walk-up on an unlocked laptop, an XSS-borrowed cookie" — where
+#            the attacker already has the session and the password is all that
+#            is left — and lists six actions behind one. Enrolment was not among
+#            them while *removal* was, and `routes/mfa.ts` calls enrolment one
+#            of the three actions that decide whether an account can be taken
+#            over. It is the completing move rather than a step: a borrowed
+#            cookie stages its own authenticator, confirms it with a code only
+#            it can produce, and the account is now protected by the attacker —
+#            the owner meets a challenge they cannot answer, `/disable` is
+#            refused outright while `require_mfa` is on, and the backup codes
+#            that would rescue them were shown once, to somebody else. Gated on
+#            `/setup`, where the damage begins: refused there nothing is staged,
+#            so a `/confirm` has nothing to attest to. The budget is the shared
+#            one, which is what stops a seventh prompt widening it.
+#
+#            gap: SAML and Google are challenged on `totp_enabled` alone, so a
+#            firm that has moved wholly to an IdP which already performs MFA
+#            sees a second prompt for the few accounts that predate it. The
+#            honest fix is a per-tenant "the IdP is authoritative for factors"
+#            setting rather than a hard-coded exemption, and that is a settings
+#            change rather than a fence.
+#            gap: `upsertGoogleUser` links an existing password account to a
+#            Google identity — flipping `sso_provider` and `verified` — and
+#            writes no `admin_events` row and sends no mail. The linkage is the
+#            precondition for the finding above and it is invisible on the trail
+#            afterwards; `identityAuditCensus` does not cover it because the
+#            write is in a repo rather than at a route.
+#            gap: the SAML ACS hands its challenge to `/auth/google/complete`,
+#            a path named for the other flow. Cosmetic, and renaming it is a
+#            redirect target three places agree on.
+#            gap: `POST /auth/login` writes `user_login_failed` for every
+#            password refusal, and the SSO doors write one only for
+#            `closed_account`. A challenge that is issued and never redeemed —
+#            which is what a phished password looks like from here — leaves no
+#            row on any of the three doors, only a counter.
