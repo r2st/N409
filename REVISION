@@ -10338,8 +10338,11 @@
 #            `_corpus` stopped at the first document that did not fit, because a
 #            corpus is filled in order. Everything between those two numbers was
 #            decoded, parsed, redacted and dropped. Redaction is `re` holding
-#            the GIL: on a ten-document upload against the smallest budget, 52.8
-#            of 26.2 ms was spent on text no model was ever going to see.
+#            the GIL: on a ten-document upload against the smallest budget the
+#            load was 52.8 ms and half of it went on text no model was ever
+#            going to see — 26.2 ms after, and 51.8 -> 43.3 ms at the 30 000
+#            budget, unchanged at 45 000, which is what a budget that really
+#            does want everything should look like.
 #            `iter_extracted` is the extractor one document at a time and
 #            `_load_corpus` walks it, redacting and pricing each block as it
 #            arrives, so the pipeline's budget is what stops the parse. Verified
