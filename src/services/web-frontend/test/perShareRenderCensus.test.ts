@@ -180,6 +180,60 @@ describe('every rendered per-share FMV goes through formatPerShare', () => {
     expect(exported.filter((name) => !MONEY_FORMATTERS.includes(name))).toEqual([]);
   });
 
+  /**
+   * The other conclusions quoted per unit.
+   *
+   * The token above spells one figure — the 409A's concluded FMV per share —
+   * under its four names, and every surface that prints it is now pinned. It
+   * is not the only per-unit conclusion the platform states. ASC 718 measures
+   * a fair value **per option**, **per ESPP share** (with the purchase
+   * discount, the call and the put that add to it) and **per RSU/TSR unit**;
+   * each is `round4` on the server and each is quoted at four by the exhibit
+   * that carries it. None of them contains the letters `fmv_per_share`, so the
+   * whole family was outside the census, and the ASC 718 tab rendered all six
+   * through `formatMoney` — four decimals under $100, none at or above it.
+   *
+   * Same rule, second spelling: a per-unit conclusion may only reach
+   * `formatPerShare`.
+   */
+  const PER_UNIT_TOKEN =
+    /\b(fairValuePerOption|fairValuePerUnit|fair_value_per_share|purchaseDiscount|callComponent|putComponent)\b/;
+
+  function appliedTo(text: string, name: string, token: RegExp): boolean {
+    const flat = text.replace(/\s+/g, ' ');
+    for (const m of flat.matchAll(new RegExp(`\\b${name}\\(([^()]*)\\)`, 'g'))) {
+      if (token.test(m[1] ?? '')) return true;
+    }
+    return false;
+  }
+
+  it('is looking at a tree that states per-unit fair values', () => {
+    const holders = FILES.filter(({ text }) => PER_UNIT_TOKEN.test(text)).map(({ file }) => file);
+    // Vacuous otherwise: a renamed field would empty the census and pass it.
+    expect(holders).toContain('pages/valuation/Asc718Tab.tsx');
+  });
+
+  it('hands a per-unit fair value to no other money formatter', () => {
+    const offenders: string[] = [];
+    for (const { file, text } of FILES) {
+      if (file === 'lib/format.ts') continue;
+      for (const fn of MONEY_FORMATTERS) {
+        if (fn === 'formatPerShare') continue;
+        if (appliedTo(text, fn, PER_UNIT_TOKEN)) offenders.push(`${file} → ${fn}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('would catch a per-unit fair value sent to the magnitude formatter', () => {
+    expect(appliedTo('formatMoney(g.fairValuePerOption, currency)', 'formatMoney', PER_UNIT_TOKEN)).toBe(
+      true,
+    );
+    expect(
+      appliedTo('formatMoney(g.totalCompensationCost, currency)', 'formatMoney', PER_UNIT_TOKEN),
+    ).toBe(false);
+  });
+
   it('would catch the pattern it is looking for', () => {
     const broken = 'const x = formatMoney(calc.fmv_per_share, currency);';
     expect(appliedToPerShare(broken, 'formatMoney')).toBe(true);

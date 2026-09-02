@@ -1,13 +1,32 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, describeActionFailure } from '../../lib/api';
-import { formatNumber } from '../../lib/format';
+import { formatNumber, formatPerShare } from '../../lib/format';
 /**
  * `lib/pipeline`'s `formatMoney`, which takes the currency's own units —
- * `lib/format` exports one of the same name that takes minor units and divides
- * by 100. Every figure on this tab comes out of `domain/asc718.ts`, where a
- * fair value per option is Black-Scholes over a strike and an underlying in
- * major units. The dividing one was rendering a $4.31 grant-date fair value as
- * $0.04 and a $431,000 compensation cost as $4,310.
+ * `lib/format` exports `formatCents`, which takes minor units and divides by
+ * 100. Every figure on this tab comes out of `domain/asc718.ts`, where a fair
+ * value per option is Black-Scholes over a strike and an underlying in major
+ * units. The dividing one was rendering a $4.31 grant-date fair value as $0.04
+ * and a $431,000 compensation cost as $4,310.
+ *
+ * It is kept for the *totals* only. `formatMoney` chooses its digits by
+ * magnitude — four below $100, **zero** at or above it — which is right for a
+ * compensation cost and wrong for every per-unit figure on this tab. Each one
+ * of those is `round4` on the server (`asc718.ts` rounds `fairValuePerOption`
+ * to four places, `asc718Public.ts` rounds every ESPP component and every
+ * RSU/TSR `fairValuePerUnit` the same way) and each is printed at four by the
+ * exhibit that quotes it (`sampleEngagements.ts`: `money(g.fairValuePerOption,
+ * 4)`). At a $124.5678 grant-date fair value — an ordinary figure for a late
+ * round — the table read `$125` beside an exhibit reading `$124.5678`, and the
+ * ESPP components read `$3` and `$0` where the discount, call and put are
+ * struck to a hundredth of a cent and have to add to the FV/share on the same
+ * row. Below $100 the same formatter drops trailing zeros, so a $2.5000 fair
+ * value printed `$2.50` and a $2.5013 one printed `$2.5013`: two figures at the
+ * same precision rendered as if one of them were less exact.
+ *
+ * So the per-unit cells take {@link formatPerShare}, which is that contract
+ * stated once — four decimals, always, in the engagement's own currency — and
+ * `clientServerParity.test.ts` is where the pair is pinned.
  */
 import { formatMoney } from '../../lib/pipeline';
 import { useAuth } from '../../lib/auth';
@@ -766,7 +785,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
       {result.market && (
         <div className="rounded-md border border-paper-200 bg-surface p-3 text-sm">
           <span className="font-semibold">{result.market.ticker}</span> — underlying{' '}
-          {result.market.underlying != null ? formatMoney(result.market.underlying, currency) : '—'},
+          {result.market.underlying != null ? formatPerShare(result.market.underlying, currency) : '—'},
           historical vol{' '}
           {result.market.volatility != null ? `${(result.market.volatility * 100).toFixed(1)}%` : '—'}{' '}
           <span className="text-ink-400">
@@ -795,7 +814,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
                 {result.options.grants.map((g, i) => (
                   <tr key={i} className="border-b border-paper-200 last:border-0">
                     <td className="py-1.5 pr-3">{g.label ?? `Grant ${i + 1}`}</td>
-                    <td className="py-1.5 pr-3">{formatMoney(g.fairValuePerOption, currency)}</td>
+                    <td className="py-1.5 pr-3">{formatPerShare(g.fairValuePerOption, currency)}</td>
                     <td className="py-1.5 pr-3">{formatNumber(g.expectedToVestOptions)}</td>
                     <td className="py-1.5 font-semibold">{formatMoney(g.totalCompensationCost, currency)}</td>
                   </tr>
@@ -857,15 +876,15 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
                 {result.espp.map((e, i) => (
                   <tr key={i} className="border-b border-paper-200 last:border-0">
                     <td className="py-1.5 pr-3">{e.label ?? `ESPP ${i + 1}`}</td>
-                    <td className="py-1.5 pr-3">{formatMoney(e.fair_value_per_share, currency)}</td>
+                    <td className="py-1.5 pr-3">{formatPerShare(e.fair_value_per_share, currency)}</td>
                     <td className="py-1.5 pr-3 text-ink-500">
-                      {formatMoney(e.components.purchaseDiscount, currency)}
+                      {formatPerShare(e.components.purchaseDiscount, currency)}
                     </td>
                     <td className="py-1.5 pr-3 text-ink-500">
-                      {formatMoney(e.components.callComponent, currency)}
+                      {formatPerShare(e.components.callComponent, currency)}
                     </td>
                     <td className="py-1.5 pr-3 text-ink-500">
-                      {formatMoney(e.components.putComponent, currency)}
+                      {formatPerShare(e.components.putComponent, currency)}
                     </td>
                     <td className="py-1.5 font-semibold">{formatMoney(e.total_fair_value, currency)}</td>
                   </tr>
@@ -901,7 +920,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
                     </td>
                     <td className="py-1.5 pr-3">{formatNumber(r.units)}</td>
                     <td className="py-1.5 pr-3">
-                      {r.fairValuePerUnit != null ? formatMoney(r.fairValuePerUnit, currency) : '—'}
+                      {r.fairValuePerUnit != null ? formatPerShare(r.fairValuePerUnit, currency) : '—'}
                     </td>
                     <td className="py-1.5 font-semibold">
                       {r.totalFairValue != null ? formatMoney(r.totalFairValue, currency) : '—'}
@@ -940,7 +959,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
                   <tr key={i} className="border-b border-paper-200 last:border-0">
                     <td className="py-1.5 pr-3">{t.label ?? `TSR ${i + 1}`}</td>
                     <td className="py-1.5 pr-3">{formatNumber(t.target_units)}</td>
-                    <td className="py-1.5 pr-3">{formatMoney(t.fairValuePerUnit, currency)}</td>
+                    <td className="py-1.5 pr-3">{formatPerShare(t.fairValuePerUnit, currency)}</td>
                     <td className="py-1.5 pr-3 text-ink-500">{t.expectedPercentile.toFixed(0)}</td>
                     <td className="py-1.5 pr-3 text-ink-500">{(t.expectedPayoutRatio * 100).toFixed(0)}%</td>
                     <td className="py-1.5 font-semibold">{formatMoney(t.totalFairValue, currency)}</td>

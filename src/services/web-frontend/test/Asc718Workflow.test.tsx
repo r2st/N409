@@ -973,7 +973,7 @@ describe('Asc718Tab — results', () => {
 
     expect(screen.getByRole('heading', { name: /Options — total cost \$246,000/ })).toBeInTheDocument();
     const row = screen.getByText('2026 pool').closest('tr')!;
-    expect(within(row).getByText('$4.50')).toBeInTheDocument();
+    expect(within(row).getByText('$4.5000')).toBeInTheDocument();
     expect(within(row).getByText('44,000')).toBeInTheDocument();
     // An unlabelled grant is numbered rather than left blank.
     expect(screen.getByText('Grant 2')).toBeInTheDocument();
@@ -1044,11 +1044,67 @@ describe('Asc718Tab — results', () => {
     });
 
     const row = screen.getByText('ESPP 1').closest('tr')!;
-    expect(within(row).getByText('$9.00')).toBeInTheDocument();
-    expect(within(row).getByText('$4.50')).toBeInTheDocument();
-    expect(within(row).getByText('$3.50')).toBeInTheDocument();
-    expect(within(row).getByText('$1.00')).toBeInTheDocument();
+    // The FV/share and its three components are all per-share conclusions the
+    // server rounds to four places, and the row is read as arithmetic: the
+    // discount, the call and the put have to add to the FV/share beside them.
+    expect(within(row).getByText('$9.0000')).toBeInTheDocument();
+    expect(within(row).getByText('$4.5000')).toBeInTheDocument();
+    expect(within(row).getByText('$3.5000')).toBeInTheDocument();
+    expect(within(row).getByText('$1.0000')).toBeInTheDocument();
+    // The offering total is an aggregate and keeps whole units.
     expect(within(row).getByText('$450,000')).toBeInTheDocument();
+  });
+
+  /**
+   * A per-unit fair value at three figures, which is where `formatMoney` stops
+   * printing decimals altogether.
+   *
+   * Every per-unit figure on this tab is `round4` on the server — `asc718.ts`
+   * rounds `fairValuePerOption`, `asc718Public.ts` rounds each ESPP component
+   * and each RSU/TSR `fairValuePerUnit` — and the ASC 718 exhibit quotes them
+   * at four (`sampleEngagements.ts`). The tab formatted them by magnitude:
+   * four decimals under $100 and **none** at or above it. A $124.5678
+   * grant-date fair value, ordinary after a late round, read `$125` on the
+   * screen the analyst reads the result from, against `$124.5678` in the
+   * exhibit generated from the same run — and the ESPP components collapsed to
+   * whole dollars that no longer added to the FV/share on their own row.
+   */
+  it('states a three-figure per-unit fair value at the precision it was measured to', async () => {
+    await runWith({
+      market: { ticker: 'ACME', underlying: 124.5678, volatility: 0.4, source: 'stooq', as_of: '2026-06-30' },
+      options: {
+        totalCompensationCost: 1_245_678,
+        grants: [
+          {
+            label: 'Post-Series-D pool',
+            fairValuePerOption: 124.5678,
+            totalCompensationCost: 1_245_678,
+            expectedToVestOptions: 10_000,
+          },
+        ],
+        expenseByCalendarYear: [],
+      },
+      espp: [
+        {
+          label: 'Q3 offering',
+          fair_value_per_share: 124.5678,
+          total_fair_value: 1_245_678,
+          components: { purchaseDiscount: 100.4321, callComponent: 20.1234, putComponent: 4.0123 },
+        },
+      ],
+    });
+
+    const grant = screen.getByText('Post-Series-D pool').closest('tr')!;
+    expect(within(grant).getByText('$124.5678')).toBeInTheDocument();
+    // The underlying the model was run on is a per-share price too.
+    expect(screen.getByText('ACME').closest('div')!.textContent).toContain('underlying $124.5678');
+
+    const offering = screen.getByText('Q3 offering').closest('tr')!;
+    expect(within(offering).getByText('$100.4321')).toBeInTheDocument();
+    expect(within(offering).getByText('$20.1234')).toBeInTheDocument();
+    expect(within(offering).getByText('$4.0123')).toBeInTheDocument();
+    // The aggregates are unchanged — widening those pads figures nobody reads.
+    expect(within(offering).getByText('$1,245,678')).toBeInTheDocument();
   });
 
   it('shows each RSU condition with the ratio that belongs to it', async () => {
@@ -1105,7 +1161,7 @@ describe('Asc718Tab — results', () => {
 
     const row = screen.getByText('TSR 1').closest('tr')!;
     expect(within(row).getByText('10,000')).toBeInTheDocument();
-    expect(within(row).getByText('$32.00')).toBeInTheDocument();
+    expect(within(row).getByText('$32.0000')).toBeInTheDocument();
     expect(within(row).getByText('62')).toBeInTheDocument();
     expect(within(row).getByText('115%')).toBeInTheDocument();
 
