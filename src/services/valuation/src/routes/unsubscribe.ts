@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { MARKETING_PREFERENCE_KEY } from '../domain/communications.js';
 import { verifyUnsubscribeToken } from '../domain/unsubscribeToken.js';
 import { upsertPreference } from '../repos/notificationPreferences.js';
+import { logFailure, logUnretried } from '@n409/shared';
 
 /**
  * One-click unsubscribe (RFC 8058), the endpoint behind `List-Unsubscribe`.
@@ -92,7 +93,23 @@ export function registerUnsubscribeRoutes(
 
     scope.post('/api/v1/unsubscribe', async (req, reply) => {
       const ok = await apply(req.query).catch((err: unknown) => {
-        app.log.warn({ err }, 'one-click unsubscribe failed');
+        /*
+         * `logUnretried`, not `warn` (R352, methodology M5).
+         *
+         * The 200 below is deliberate and stays — but it is also the end of
+         * this request's life. Gmail and Yahoo issue the one-click POST once
+         * and read the 2xx as the unsubscribe having been honoured; there is
+         * no redelivery, the recipient is not told, and nothing here queues a
+         * second attempt. So a pool that was busy for one second leaves a
+         * person who asked to stop hearing from us still on the list, with a
+         * `warn` — the level that in this estate means "a retry is coming" —
+         * as the only trace, and the next thing that happens is a spam report
+         * against the sending domain.
+         *
+         * `alert: true` and a classified `failure_reason`, which is what the
+         * rest of the post-commit population gets for exactly this shape.
+         */
+        logUnretried(app.log, err, {}, 'a one-click unsubscribe was not applied and will not be retried');
         return false;
       });
       // 200 either way. A provider that gets a non-2xx may conclude the sender
@@ -106,7 +123,12 @@ export function registerUnsubscribeRoutes(
     try {
       ok = await apply(req.query);
     } catch (err) {
-      app.log.warn({ err }, 'unsubscribe failed');
+      // `logFailure`, not a bare `warn`: unlike the POST above this one *is*
+      // retriable — the page below asks the reader to try again — so the level
+      // is the error's own answer to "is a retry coming", and a permanent
+      // cause still alerts rather than sitting at `warn` beside the transient
+      // ones. The reader is a person who is being told nothing worked.
+      logFailure(req.log, err, {}, 'unsubscribe failed');
       return html(
         reply,
         500,
