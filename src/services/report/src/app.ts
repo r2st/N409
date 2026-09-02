@@ -17,6 +17,7 @@ import {
   registerProblemHandler,
   registerRequestDrain,
   requestIdFromHeaders,
+  validationDetail,
 } from '@n409/shared';
 import { CHART_SERIES_LIMITS, configureReportPdfLogging, renderReportPdf, verifyFontAssets } from './pdf.js';
 
@@ -267,7 +268,30 @@ export function buildApp(): FastifyInstance {
   app.post('/render/v1/pdf', async (req, reply) => {
     const parsed = RenderBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid render request', { errors: parsed.error.issues });
+      /*
+       * The field names go in `detail`, not only in the extension.
+       *
+       * This is the shape R180 took out of the valuation service's 203 route
+       * rejections, still standing in the one service that service delegates
+       * to. The audience is different and the argument is the same. A 422 here
+       * never reaches an analyst — `clients/reportRender.ts` renders the same
+       * bytes in-process and answers 200 — so the *only* reader is the
+       * operator holding the `report offload failed; rendering in-process`
+       * warn line, whose `detail` is this string. `Invalid render request`
+       * tells them the offload has gone permanently local for that engagement
+       * and nothing about which of `RenderBody`'s caps the payload outgrew:
+       * `sections` at 100, a section's `html` at 200,000 characters, one of
+       * the four `CHART_SERIES_LIMITS`. Those are exactly the questions a
+       * report-scale change has to answer, and the answer was a category noun.
+       *
+       * The `errors` extension is unchanged — a machine reading `path` should
+       * not have to parse prose — and `validationDetail` is the same renderer
+       * the valuation service's `invalidBody` uses, so both sides of the wire
+       * say `sections: Array must contain at most 100 element(s)` the same way.
+       */
+      throw problems.unprocessable(validationDetail('Invalid render request', parsed.error.issues), {
+        errors: parsed.error.issues,
+      });
     const { branding, ...rest } = parsed.data;
     const pdf = await renderReportPdf({
       ...rest,

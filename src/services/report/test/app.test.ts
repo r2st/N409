@@ -57,6 +57,67 @@ describe('report service', () => {
     expect(res.headers['content-type']).toContain('application/problem+json');
   });
 
+  /*
+   * The refusal names the field, in `detail`.
+   *
+   * Nobody using the product ever sees a 422 from this service: the caller
+   * falls back to rendering the same bytes in its own process and answers 200
+   * (`clients/reportRender.ts`). The reader is the operator holding the warn
+   * line that fallback writes, whose `detail` is this string — and until R357
+   * it was `Invalid render request`, which does not say which of `RenderBody`'s
+   * caps the payload outgrew. "Is the offload still happening" is the only
+   * question a report-scale change has to answer, and this is the sentence
+   * that answers it.
+   */
+  it('names the offending field in the 422 detail, not only in the extension', async () => {
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/render/v1/pdf',
+      payload: { title: '', company_name: 'Acme', sections: [] },
+    });
+    expect(res.statusCode).toBe(422);
+    const body = res.json();
+    expect(body.detail).toContain('Invalid render request');
+    expect(body.detail).toMatch(/title/);
+    // The extension is unchanged — a machine reading `path` should not have to
+    // parse the prose that was added beside it.
+    expect(Array.isArray(body.errors)).toBe(true);
+    expect(body.errors.some((issue: { path: unknown[] }) => issue.path[0] === 'title')).toBe(true);
+  });
+
+  it('names the cap a too-large payload outgrew', async () => {
+    // The realistic 422 on this wire is not a malformed body but a report that
+    // grew past a cap: `sections` at 100. An operator reading `Invalid render
+    // request` cannot tell that from a drifted schema field.
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/render/v1/pdf',
+      payload: {
+        title: 'Valuation Report',
+        company_name: 'Acme',
+        sections: Array.from({ length: 101 }, (_, i) => ({ heading: `S${i}`, html: '<p>x</p>' })),
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toMatch(/^Invalid render request — sections: /);
+  });
+
+  it('counts the issues it did not name rather than printing all of them', async () => {
+    // Bounded at three named fields plus a count — `validationDetail`'s rule,
+    // asserted here because this service is the one that can produce a long
+    // issue list from a single bad body.
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/render/v1/pdf',
+      payload: { title: 42, company_name: 42, sections: 42, include_toc: 'yes', watermark: 42 },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toMatch(/\(and \d+ more problems?\)$/);
+  });
+
   it('accepts the contents-page and confidentiality options', async () => {
     const app = buildApp();
     const res = await app.inject({
