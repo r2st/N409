@@ -148,7 +148,8 @@ function mockApi(
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
 
     if (path.includes('/users/export')) {
-      if (opts.exportStatus) return jsonResponse({ status: opts.exportStatus, detail: 'No' }, 500);
+      if (opts.exportStatus)
+        return jsonResponse({ status: opts.exportStatus, detail: 'The export timed out.' }, 500);
       return new Response('email\n', {
         status: 200,
         headers: {
@@ -382,7 +383,15 @@ describe('AdminUsersPage — the console', () => {
     await screen.findByText('ada@acme.com');
     await userEvent.click(screen.getByRole('button', { name: '↓ Export CSV' }));
 
-    await screen.findByText('Could not export CSV.');
+    /*
+     * The server's own sentence, which is what `describeActionFailure`
+     * publishes when the problem carries one — the fallback is for the failure
+     * that arrives without words. This asserted 'Could not export CSV.', a
+     * string the page has not contained for some time, against a fixture whose
+     * only detail was 'No'; it has been failing on main, on the one branch it
+     * exists to cover.
+     */
+    await screen.findByText('The export timed out.');
   });
 
   /**
@@ -423,18 +432,32 @@ describe('AdminUsersPage — the console', () => {
 
   // ── The editor ────────────────────────────────────────────────────────────
 
-  it('invites a user without asking for a password', async () => {
+  /**
+   * This asserted that the invite form asked for no password at all, which was
+   * true of the invitee's — it is the invitee who sets that — and was read as
+   * covering the administrator's own. R362 made both create and invite
+   * credential-level actions on the server: the account either one produces
+   * outlives every way of taking the caller's access back, so the caller
+   * confirms it is them. The invitee still has no password here, which is the
+   * half this test was written for and is asserted below unchanged.
+   */
+  it('invites a user without asking for the invitee’s password, but confirms the admin’s own', async () => {
     const calls = mockApi();
     renderPage();
     await screen.findByText('ada@acme.com');
 
     await userEvent.click(screen.getByRole('button', { name: '+ Invite user' }));
     expect(screen.getByText(/lets them set their own password/)).toBeInTheDocument();
-    // An invite has no password and no name — the invitee supplies both.
-    expect(screen.queryByLabelText(/Password/)).not.toBeInTheDocument();
+    // An invite has no password for the invitee and no name — they supply both.
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('First name')).not.toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('Email'), '  newcomer@acme.com  ');
+    // Nothing is sent until the administrator confirms — the button is dead, so
+    // an unfilled prompt cannot become a round trip that comes back 422.
+    expect(screen.getByRole('button', { name: 'Send invitation' })).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2-hunter2');
     await userEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     await waitFor(() => expect(calls.some((c) => c.path.endsWith('/users/invite'))).toBe(true));
@@ -442,6 +465,7 @@ describe('AdminUsersPage — the console', () => {
       email: 'newcomer@acme.com',
       partner_id: null,
       roles: ['valuation_user'],
+      current_password: 'hunter2-hunter2',
     });
   });
 
@@ -452,7 +476,11 @@ describe('AdminUsersPage — the console', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New user with password' }));
     await userEvent.type(screen.getByLabelText('Email'), 'direct@acme.com');
-    await userEvent.type(screen.getByLabelText(/Password/), 'a-long-enough-one-1');
+    // Two password boxes now, and they are different secrets: the new
+    // account's, and the caller's own (R362). Exact labels, so a test that
+    // matched /Password/ cannot silently type one into the other.
+    await userEvent.type(screen.getByLabelText('Password'), 'a-long-enough-one-1');
+    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2-hunter2');
     await userEvent.type(screen.getByLabelText('First name'), '  Dee  ');
     await userEvent.click(screen.getByRole('button', { name: 'Create user' }));
 
@@ -462,6 +490,7 @@ describe('AdminUsersPage — the console', () => {
     expect(calls.find((c) => c.path.endsWith('/users') && c.method === 'POST')?.body).toMatchObject({
       email: 'direct@acme.com',
       password: 'a-long-enough-one-1',
+      current_password: 'hunter2-hunter2',
       first_name: 'Dee',
     });
   });
@@ -473,7 +502,8 @@ describe('AdminUsersPage — the console', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New user with password' }));
     await userEvent.type(screen.getByLabelText('Email'), 'direct@acme.com');
-    await userEvent.type(screen.getByLabelText(/Password/), 'a-long-enough-one-1');
+    await userEvent.type(screen.getByLabelText('Password'), 'a-long-enough-one-1');
+    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2-hunter2');
     await userEvent.click(screen.getByRole('button', { name: 'Create user' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));

@@ -6,7 +6,7 @@ import { useClearOnChange } from '../lib/useClearOnChange';
 import { email as emailRule, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
 import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { useAuth } from '../lib/auth';
-import { canManageUsers } from '../lib/rbac';
+import { canManageUsers, hasPassword } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
 import type { AdminUser, Invitation, Partner } from '../lib/types';
 import {
@@ -146,6 +146,16 @@ type EditorState = {
   last_name: string;
   partner_id: string;
   roles: Set<string>;
+  /**
+   * The administrator's *own* password, not the new account's.
+   *
+   * Creating an account and inviting one are credential-level actions: the
+   * account they produce has its own password and outlives every way of taking
+   * the caller's access away, so the server re-authenticates both (R362). Same
+   * prompt, same wording and same skip-for-an-SSO-account as the SCIM and SAML
+   * mints on the SSO settings page.
+   */
+  current_password: string;
 };
 
 const emptyEditor = (mode: 'invite' | 'create'): EditorState => ({
@@ -156,6 +166,7 @@ const emptyEditor = (mode: 'invite' | 'create'): EditorState => ({
   last_name: '',
   partner_id: '',
   roles: new Set(['valuation_user']),
+  current_password: '',
 });
 
 /** What the rules read while the editor is closed. */
@@ -310,6 +321,15 @@ export function AdminUsersPage() {
   // The API enforces this too — the redirect just keeps the nav honest.
   if (!canManageUsers(user)) return <Navigate to="/dashboard" replace />;
 
+  /*
+   * Whether this administrator has a password to confirm with.
+   *
+   * The server skips the prompt for an account with no digest — an SSO-only
+   * administrator has nothing to type — so asking would be a box nobody can
+   * fill. Same read as the SSO settings page's two prompts.
+   */
+  const needsReauth = hasPassword(user);
+
   const setFilter = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
@@ -329,6 +349,7 @@ export function AdminUsersPage() {
       last_name: u.last_name ?? '',
       partner_id: u.partner_id ?? '',
       roles: new Set(u.roles),
+      current_password: '',
     });
   };
 
@@ -337,6 +358,17 @@ export function AdminUsersPage() {
     // Mirrors the API rule: partner/member roles are scoped to an organisation.
     if (!editor.partner_id && ['partner', 'member'].some((r) => editor.roles.has(r))) {
       setEditorError('Partner and member roles require a partner organisation — pick one below.');
+      return;
+    }
+    // Checked here as well as by the server, for the reason every other
+    // client-side copy of a server rule exists: a round trip to be told a
+    // required box is empty is a worse answer than the box saying so.
+    if (editor.mode !== 'edit' && hasPassword(user) && !editor.current_password) {
+      setEditorError(
+        editor.mode === 'invite'
+          ? 'Your current password is required to invite someone.'
+          : 'Your current password is required to create an account.',
+      );
       return;
     }
     setBusy(true);
@@ -349,6 +381,7 @@ export function AdminUsersPage() {
             email: editor.email.trim(),
             partner_id: editor.partner_id || null,
             roles: [...editor.roles],
+            current_password: editor.current_password,
           },
         });
         loadInvitations();
@@ -362,6 +395,7 @@ export function AdminUsersPage() {
             last_name: editor.last_name.trim() || undefined,
             partner_id: editor.partner_id || null,
             roles: [...editor.roles],
+            current_password: editor.current_password,
           },
         });
       } else {
@@ -411,6 +445,7 @@ export function AdminUsersPage() {
         last_name: u.last_name ?? '',
         partner_id: u.partner_id ?? '',
         roles: new Set(['valuation_user']),
+        current_password: '',
       });
     } catch (err) {
       setError(describeActionFailure(err, 'Could not restore the user.'));
@@ -544,7 +579,9 @@ export function AdminUsersPage() {
                 .then(({ truncated }) => {
                   if (truncated) setExportNote(EXPORT_CAPPED);
                 })
-                .catch((err: unknown) => setError(describeActionFailure(err, 'The user export was not produced.')));
+                .catch((err: unknown) =>
+                  setError(describeActionFailure(err, 'The user export was not produced.')),
+                );
             }}
           >
             ↓ Export CSV
@@ -666,6 +703,20 @@ export function AdminUsersPage() {
                   />
                 </Field>
               )}
+              {editor.mode !== 'edit' && needsReauth && (
+                <Field
+                  label="Your current password"
+                  hint="Creating an account is a credential-level action, so it is confirmed."
+                >
+                  <TextInput
+                    aria-label="Your current password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={editor.current_password}
+                    onChange={(e) => setEditor({ ...editor, current_password: e.target.value })}
+                  />
+                </Field>
+              )}
               {editor.mode !== 'invite' && (
                 <>
                   <Field label="First name">
@@ -767,7 +818,10 @@ export function AdminUsersPage() {
               )}
             </fieldset>
             <div className="flex gap-2">
-              <Button type="submit" disabled={busy}>
+              <Button
+                type="submit"
+                disabled={busy || (editor.mode !== 'edit' && needsReauth && !editor.current_password)}
+              >
                 {busy
                   ? 'Saving…'
                   : editor.mode === 'invite'
