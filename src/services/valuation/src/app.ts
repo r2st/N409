@@ -166,6 +166,7 @@ import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.j
 import { registerSsoMetrics } from './observability/ssoOutcomes.js';
 import { registerScimMetrics } from './observability/scimRequests.js';
 import { registerIntegrationCallbackMetrics } from './observability/integrationCallbacks.js';
+import { registerApiTokenAuthMetrics } from './observability/apiTokenAuth.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -849,6 +850,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // secret or a redirect URI that no longer matches refuses every connection
   // attempt with every instrument on this box reading green.
   registerIntegrationCallbackMetrics(metricsRegistry);
+  // And the last machine door, which is the one the estate itself calls "the
+  // door with no person behind it to notice". A refused API key is one 401 with
+  // no log line and no event row, so a firm's integration stops dead: it cannot
+  // see why — for two of the five refusals the console it would look in is
+  // behind the same key — and this side could not see that it had happened.
+  // Three of those five are conditions this platform caused, by archiving a
+  // firm, moving the member who minted the key, or closing their account.
+  registerApiTokenAuthMetrics(metricsRegistry);
   // Whether we are still dialling the engine, the AI service and the report
   // unit at all. The breaker's own view was reachable only from the ops
   // incident endpoint, which is a page somebody visits once they already

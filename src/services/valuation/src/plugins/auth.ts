@@ -6,6 +6,7 @@ import { SESSION_COOKIE } from '../auth/cookies.js';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findAuthPrincipal } from '../repos/users.js';
 import { API_TOKEN_REFUSAL_DETAIL, resolveApiTokenWithReason, TOKEN_SCHEME } from '../repos/apiTokens.js';
+import { recordApiTokenAuth, refuseApiToken } from '../observability/apiTokenAuth.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import { costOfRequest } from '../domain/requestCost.js';
 import type { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './rateLimit.js';
@@ -200,8 +201,23 @@ export function registerAuth(
       // itself, where a firm's integration stops because the member who minted
       // its key was moved out of the org. That reads as a typo, and the fix for
       // it is nothing like the fix for a typo. See `ApiTokenRefusal`.
-      const { token: resolved, refusal } = await resolveApiTokenWithReason(deps.pool, bearer);
-      if (!resolved) throw problems.unauthorized(API_TOKEN_REFUSAL_DETAIL[refusal ?? 'unknown']);
+      const { token: resolved, refused } = await resolveApiTokenWithReason(deps.pool, bearer);
+      if (!resolved) {
+        // And the half nobody on either side of the wire could see (R345,
+        // methodology M11). One 401, no log line, no row: an integration
+        // stopped dead, the firm could not find out why — for `orphaned` and
+        // `partner_retired` the console it would look in is behind the same
+        // key — and this side had nothing saying it had happened. See
+        // `observability/apiTokenAuth.ts` for why a counter rather than an
+        // event, and why `unknown` is counted but not logged.
+        const refusal = refused?.refusal ?? 'unknown';
+        refuseApiToken(req.log, refusal, {
+          tokenId: refused?.tokenId ?? null,
+          partnerId: refused?.partnerId ?? null,
+        });
+        throw problems.unauthorized(API_TOKEN_REFUSAL_DETAIL[refusal]);
+      }
+      recordApiTokenAuth('accepted');
       sub = resolved.userId;
       req.apiToken = { tokenId: resolved.tokenId, partnerId: resolved.partnerId };
     } else {

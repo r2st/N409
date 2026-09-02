@@ -293,6 +293,21 @@ export type ApiTokenRefusal =
    */
   | 'partner_retired';
 
+/**
+ * A refusal, and the row it is about.
+ *
+ * `unknown` is the one refusal that can arrive with no row — no live token has
+ * that digest, so there is nothing to name. Every other branch has one, and the
+ * log line in `observability/apiTokenAuth.ts` is the reason it is carried out:
+ * `partner_retired` is remedied by un-archiving one partner, and a counter
+ * labelled by outcome cannot say which.
+ */
+export interface RefusedApiToken {
+  refusal: ApiTokenRefusal;
+  tokenId: string | null;
+  partnerId: string | null;
+}
+
 export interface ResolvedApiToken {
   tokenId: string;
   userId: string;
@@ -311,7 +326,18 @@ export interface ResolvedApiToken {
 export async function resolveApiTokenWithReason(
   pool: pg.Pool,
   secret: string,
-): Promise<{ token: ResolvedApiToken | null; refusal: ApiTokenRefusal | null }> {
+): Promise<{
+  token: ResolvedApiToken | null;
+  refusal: ApiTokenRefusal | null;
+  /**
+   * The refusal with the row it is about, for the log line the counter cannot
+   * carry (R345, methodology M11). `observability/apiTokenAuth.ts` labels only
+   * by outcome — a label per firm is a series per firm — so which key and which
+   * partner has to travel here. Null on success, and both fields are null for
+   * `unknown`, where there is no row to name.
+   */
+  refused: RefusedApiToken | null;
+}> {
   const digest = hashToken(secret);
   const { rows } = await pool.query<{ id: string; created_by: string; partner_id: string | null }>(
     `UPDATE api_tokens t SET last_used_at = now()
@@ -334,9 +360,14 @@ export async function resolveApiTokenWithReason(
   );
   const row = rows[0];
   if (row) {
-    return { token: { tokenId: row.id, userId: row.created_by, partnerId: row.partner_id }, refusal: null };
+    return {
+      token: { tokenId: row.id, userId: row.created_by, partnerId: row.partner_id },
+      refusal: null,
+      refused: null,
+    };
   }
-  return { token: null, refusal: await refusalFor(pool, digest) };
+  const refused = await refusalFor(pool, digest);
+  return { token: null, refusal: refused.refusal, refused };
 }
 
 /**
@@ -352,14 +383,18 @@ export async function resolveApiTokenWithReason(
  * the one whose remedy comes first: re-minting the key under a current member
  * of an archived firm produces another key this same clause refuses.
  */
-async function refusalFor(pool: pg.Pool, digest: string): Promise<ApiTokenRefusal> {
+async function refusalFor(pool: pg.Pool, digest: string): Promise<RefusedApiToken> {
   const { rows } = await pool.query<{
+    id: string;
+    partner_id: string | null;
     revoked: boolean;
     owner_present: boolean;
     partner_live: boolean;
     owner_in_partner: boolean;
   }>(
-    `SELECT t.revoked_at IS NOT NULL AS revoked,
+    `SELECT t.id,
+            t.partner_id,
+            t.revoked_at IS NOT NULL AS revoked,
             (u.id IS NOT NULL AND u.deleted_at IS NULL) AS owner_present,
             (t.partner_id IS NULL OR (p.id IS NOT NULL AND p.archived_at IS NULL)) AS partner_live,
             (t.partner_id IS NULL OR u.partner_id = t.partner_id) AS owner_in_partner
@@ -370,15 +405,22 @@ async function refusalFor(pool: pg.Pool, digest: string): Promise<ApiTokenRefusa
     [digest],
   );
   const row = rows[0];
-  if (!row) return 'unknown';
-  if (row.revoked) return 'revoked';
-  if (!row.owner_present) return 'no_owner';
-  if (!row.partner_live) return 'partner_retired';
-  if (!row.owner_in_partner) return 'orphaned';
+  if (!row) return { refusal: 'unknown', tokenId: null, partnerId: null };
+  const named = (refusal: ApiTokenRefusal): RefusedApiToken => ({
+    refusal,
+    tokenId: row.id,
+    partnerId: row.partner_id,
+  });
+  if (row.revoked) return named('revoked');
+  if (!row.owner_present) return named('no_owner');
+  if (!row.partner_live) return named('partner_retired');
+  if (!row.owner_in_partner) return named('orphaned');
   // Every condition the UPDATE tests now reads as satisfied, so the row was
   // changed between the two statements. Nothing here is a fact any more; say
-  // the least specific true thing rather than a stale one.
-  return 'unknown';
+  // the least specific true thing rather than a stale one — and name the row
+  // anyway, because there is one and the operator reading the line has as much
+  // right to it here as in any other branch.
+  return named('unknown');
 }
 
 /**

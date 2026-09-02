@@ -795,6 +795,43 @@ groups:
         annotations:
           summary: 'the directory connector is being throttled; the tail of its resync is not being applied'
 
+  - name: n409-api-keys
+    rules:
+      # The door with no person behind it to notice, which is this estate's own
+      # phrase for it (`ApiTokenRefusal.partner_retired`).
+      #
+      # A refused API key is one `problems.unauthorized(...)` — no log line, no
+      # event row, and a 4xx counted beside every mistyped password on the box.
+      # So a partner's integration stops dead and neither side can see it: the
+      # firm's console is behind the same key, and for two of the five refusals
+      # that console is refused too.
+      #
+      # Three of the five are conditions this platform caused. An administrator
+      # archived the firm, moved the member who minted the key out of it, or
+      # closed their account — each a deliberate act about a person or an
+      # organisation, with a consequence nobody was looking at: a running
+      # integration that reads cap tables, creates engagements and uploads
+      # documents simply stops. The remedy for all three is on this side, which
+      # is exactly why the silence mattered.
+      #
+      # `> 0` on the increase rather than a ratio. A ratio needs a denominator
+      # from the same firm and the counter is deliberately unlabelled by partner
+      # — one series per firm is the cardinality this file will not take — but
+      # more than that, one of these is already wrong. There is no healthy rate
+      # of "the organisation this key acts for has been archived".
+      #
+      # `revoked` and `unknown` are excluded and that is the whole judgement
+      # here: revoking a key is a deliberate act by somebody who knows they did
+      # it, and `unknown` is the internet finding a bearer endpoint. Neither may
+      # wake anybody. `ApiTokenAuthOutcome` holds the pair of lists together.
+      - alert: PartnerIntegrationLockedOut
+        expr: increase(api_token_auth_total{outcome=~"partner_retired|orphaned|no_owner"}[30m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'an integration is being refused for something this platform did ({{ $labels.outcome }})'
+          runbook: 'journalctl -u n409-valuation --grep=api-token for the token_id and partner_id; then un-archive the partner, restore the membership, or have the firm mint a key under a current user'
+
   - name: n409-browser
     rules:
       # A release that blanks a route for every user leaves the access log full
