@@ -7851,3 +7851,145 @@
 #            disagree about what revocation means.
 #            gap: `engagements.current_stage` and `valuations.state` are still
 #            two parallel lifecycles that never speak — R342's gap, unchanged.
+#
+# R350 — Error message quality (M19). Six findings, and every one of them is the
+#            same gap read at a different scale: a refusal written carefully at
+#            one door and answered with a category noun at the door beside it.
+#            R180 swept the routes and R198 the layers below them, so what is
+#            left is not un-swept code — it is the places where two answers to
+#            the same question live one function, one file or one route apart
+#            and disagree about how much the reader is owed.
+#
+#            **Fifteen write handlers threw away the refusal the server had
+#            written.** All of them `} catch { setError('…') }` — no binding, so
+#            the problem body could not be reached even in principle. R255 moved
+#            191 handlers onto `describeActionFailure` by matching the idiom
+#            `err instanceof ApiError ? err.message`, and a catch with no
+#            parameter matches neither that nor its replacement, so
+#            `errorMessageCensus` read a clean tree over the fourteen sites that
+#            had never had an `err` to begin with. A bare catch is not a milder
+#            version of that shape but the complete one: `err.message` at least
+#            renders `detail` when there is one and these render it never, and
+#            what each substituted was a retry suggestion for a refusal that
+#            will be made again identically — "Could not post — try again." over
+#            `refuseIfRetired`'s sentence about a closed engagement, "Could not
+#            revoke the token." over a `forbidden()` naming whose access this
+#            needs. That is the `bufferUpload` defect, advice pointing away from
+#            the only thing that would help. Most were one handler away from the
+#            fix: `SavedViews` used the helper for save and update and not
+#            delete, `PartnerDetailPage` for create-token and not revoke, whose
+#            identical operation string on `AdminApiTokensPage` already went
+#            through it. `useDownload` is the same failure with a written-down
+#            rationale — one constant for every status, justified by the gateway
+#            case where a caller genuinely cannot act on a 502 differently from
+#            a 503 — and the two paths behind it send written bodies, including
+#            `report.pdf`'s "No report yet" on an engagement whose deliverable
+#            does not exist. The new census arm is scoped to handlers whose try
+#            block carried a non-GET method: a failed load has a defensible
+#            constant, a failed write does not.
+#
+#            **Three of the four engagement stage refusals named no stage.**
+#            `refuseTransition` answers `reopen_required` with a paragraph
+#            naming the consequence and the exact field to send, and the other
+#            three arms with a category noun apiece. Each is missing something
+#            different and all of it is known at the throw site: `unknown_stage`
+#            is the only answer to a typo, because `AdvanceBody` types `stage`
+#            as `z.string()` on purpose so the transition table stays the one
+#            place a stage is decided, and it named neither what was sent nor
+#            what would have been accepted while `ai.ts` next door answers its
+#            twin `Unknown pipeline "…"`; `same_stage` is a lost race on the
+#            pipeline board, so the withheld fact is where the engagement is
+#            *now*; `already_final` reaches an implicit advance on finished work
+#            and the way out is the reopen the caller has not asked for.
+#            `assertAssignableAnalyst` had the same split inside one function —
+#            "Invalid analyst id" and "Unknown analyst" beside a full sentence
+#            about the overdue sweep.
+#
+#            **The partner API's upload refusals named neither the file nor a
+#            remedy.** "content_base64 is not valid base64", "Uploaded file is
+#            empty", "File exceeds the 25 MB limit", against a paragraph apiece
+#            on the session upload route. That is the wrong way round: the
+#            session route's reader is looking at the file they just picked and
+#            this route's is a script partway through a batch whose whole record
+#            of the failure is one line in its own log. The size refusal can
+#            also say what its streaming twin cannot — `bufferUpload` states
+#            outright that the refused size is unknowable because busboy cut the
+#            stream at the cap, and here the body is decoded and in hand.
+#
+#            **The 403 a client is likeliest to see was a list of column
+#            names.** `PATCH /valuations/:id` answered `Not allowed to update:
+#            state, due_date` — no reason, no remedy, no `required_access`,
+#            which are the three things `accessProblem` exists to put on every
+#            403. It escaped R180's sweep by already having a string. Two
+#            audiences reach it: `patchableFields` returns the empty set for a
+#            reader who does not own the engagement, which is `own-record`, and
+#            the owner asking for a field their analyst owns, who must never be
+#            told to ask for an operations role — they are not staff, the role
+#            will not be granted, and the sentence reads as the product being
+#            misconfigured. Hence `ops-managed-field` as a kind of its own.
+#
+#            **"Xero is not connected" was the whole answer to two situations.**
+#            Five handlers across accounting, HRIS and cap table share one
+#            guard, `!connection || status === 'revoked'`, and one four-word
+#            sentence — in the handler directly above one of them sits a full
+#            paragraph about an importer that has not shipped. `revoked` is
+#            terminal and written by nothing but an explicit disconnect, so it
+#            is a lost race with a colleague or with the reader's own earlier
+#            click, and "is not connected" sends them hunting for a connect
+#            button while describing a state somebody chose — without saying the
+#            disconnect blanked the credentials, so reconnecting is a fresh
+#            authorisation rather than a retry. Neither arm said where the
+#            connect control is, which is the half R262 kept finding missing.
+#
+#            **Every SCIM error carried prose and no classifier.** `scimError`
+#            built `{schemas, status, detail}` and nothing else, so RFC 7644's
+#            own machine-readable half — `scimType` — was absent from every
+#            error under `/scim/v2`, and `detail` is the one field the spec does
+#            not ask to be stable. The consequential omission is the 409 on
+#            `POST /Users`: a connector reading `scimType: "uniqueness"` treats
+#            an address that already has an account as something to reconcile
+#            and carries on, and a bare 409 as an unclassified failure filed for
+#            a human — which on a first import of a directory into a platform
+#            whose people already had logins is the whole import. Omitted rather
+#            than nulled where the spec defines none: a null on a 401 asserts
+#            the field was considered and found not to apply.
+#
+#            Two guards were failing on main before this round and are fixed
+#            here rather than counted as findings. `engagementStateMachine`
+#            asserted the analyst-assignment string R333 moved to the schema
+#            when it put `ulidField()` on `AssignBody` — the same shape R347
+#            found on the fund-link assertion. And `swallowedFailureCensus` went
+#            blind in both directions at once when `AppLayout` hoisted its three
+#            nav-badge polls into `useBadgePoll(path)`: the census keys a
+#            swallow by the nearest *path literal*, the refactor moved the URL a
+#            level up, and the one remaining site keyed as `(none)` — which
+#            would then have hidden any future swallow in that file behind the
+#            settled one. It names the identifier now.
+#
+#            gap: an unparseable `filter` on `GET /scim/v2/Users` is silently
+#            ignored and the full list is returned. RFC 7644 has `invalidFilter`
+#            for exactly this, and answering a filter you did not understand
+#            with everything is the `n409-swallowed-load-errors` shape on the
+#            wire — but a 400 there would break any IdP sending a filter form
+#            this service does not implement, so it needs the supported grammar
+#            settled first.
+#            gap: the two reapers write `job exceeded 900s while running
+#            (reaped)` and `run exceeded Ns in an active state (reaped)` into
+#            `ai_jobs.error` and `pipeline_runs.error`, one function away from
+#            `assertRunStood`'s sentence for the identical situation ("its
+#            result is not on file, so nothing was drafted from it. Run the
+#            agent again."). Both columns are drawn only on ops-facing surfaces
+#            — `GET /valuations/:id/ai` is ops-only and so is the admin job feed
+#            — so the jargon is defensible today and stops being so the moment
+#            either list gains a client reader.
+#            gap: the read half of the frontend census is still unscoped. Thirty
+#            `.catch(() => setError('Could not load X.'))` sites discard a
+#            `forbidden()` body that explains the access, and the argument for
+#            leaving them — the page is visibly missing its content and the
+#            reader's next move is the retry either way — is weaker for a 403
+#            than for a 503.
+#            gap: `AiPanel` renders `job.error ?? 'Pipeline failed.'` and
+#            `PackageTab` renders `c.error ?? '—'`, so a failed run whose
+#            settlement write itself failed is drawn as a category or as a dash.
+#            The reaper is what settles those rows, which is why this is
+#            recorded beside its gap rather than on its own.
