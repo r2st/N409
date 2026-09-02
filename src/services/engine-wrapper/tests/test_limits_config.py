@@ -88,18 +88,18 @@ def test_a_valid_threadpool_size_is_honoured(monkeypatch):
 # ── _read_capped ─────────────────────────────────────────────────────────────
 
 
-class _ScriptedRequest:
-    """The one thing `_read_capped` needs of a Request: an ASGI `receive`."""
+class _ScriptedReceive:
+    """The one thing `_read_capped` takes: an ASGI `receive` callable."""
 
     def __init__(self, messages):
         self._messages = list(messages)
 
-    async def receive(self):
+    async def __call__(self):
         return self._messages.pop(0)
 
 
 def _read(messages, limit):
-    return anyio.run(lambda: _read_capped(_ScriptedRequest(messages), limit))
+    return anyio.run(lambda: _read_capped(_ScriptedReceive(messages), limit))
 
 
 def test_a_body_within_the_cap_is_buffered_for_replay():
@@ -124,9 +124,9 @@ def test_a_body_over_the_cap_is_abandoned_rather_than_drained():
         {"type": "http.request", "body": b"a" * 8, "more_body": True},
         {"type": "http.request", "body": b"a" * 8, "more_body": False},
     ]
-    request = _ScriptedRequest(messages)
-    assert anyio.run(lambda: _read_capped(request, 10)) is None
-    assert len(request._messages) == 1  # the third chunk was never asked for
+    receive = _ScriptedReceive(messages)
+    assert anyio.run(lambda: _read_capped(receive, 10)) is None
+    assert len(receive._messages) == 1  # the third chunk was never asked for
 
 
 def test_the_cap_is_exclusive_at_the_boundary():

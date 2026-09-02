@@ -19,7 +19,9 @@ import time
 import uuid
 from typing import Callable
 
-from fastapi import Request
+from starlette.datastructures import Headers, MutableHeaders
+
+from .asgi import ASGIApp, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "x-request-id"
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
@@ -386,32 +388,47 @@ def make_request_context_middleware(service: str):
     """Middleware that binds a request id and logs one access line per request."""
     access_log = logging.getLogger(service)
 
-    async def request_context_middleware(request: Request, call_next):
-        request_id = acceptable_request_id(request.headers.get(REQUEST_ID_HEADER)) or uuid.uuid4().hex
-        token = _request_id.set(request_id)
-        started = time.perf_counter()
-        status = 500
-        try:
-            response = await call_next(request)
-            status = response.status_code
-            response.headers[REQUEST_ID_HEADER] = request_id
-            return response
-        finally:
-            duration_ms = round((time.perf_counter() - started) * 1000, 2)
-            # Level tracks the status so `level=error` is a usable production
-            # filter: at a uniform info, a 500 is indistinguishable from a 200
-            # in any log query that isn't already parsing the status field.
-            access_log.log(
-                _level_for(status),
-                "request",
-                extra={
-                    "event": "http_access",
-                    "http_method": request.method,
-                    "path": request.url.path,
-                    "status": status,
-                    "duration_ms": duration_ms,
-                },
-            )
-            _request_id.reset(token)
+    def factory(app: ASGIApp) -> ASGIApp:
+        async def request_context_middleware(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await app(scope, receive, send)
+                return
+            incoming = Headers(scope=scope).get(REQUEST_ID_HEADER)
+            request_id = acceptable_request_id(incoming) or uuid.uuid4().hex
+            token = _request_id.set(request_id)
+            started = time.perf_counter()
+            # 500 is what a request that never produced a response had: this
+            # runs in a `finally`, so an exception escaping the route reaches
+            # the access log as the failure it is rather than as a 200.
+            status = 500
 
-    return request_context_middleware
+            async def send_wrapper(message: dict) -> None:
+                nonlocal status
+                if message["type"] == "http.response.start":
+                    status = message["status"]
+                    MutableHeaders(scope=message)[REQUEST_ID_HEADER] = request_id
+                await send(message)
+
+            try:
+                await app(scope, receive, send_wrapper)
+            finally:
+                duration_ms = round((time.perf_counter() - started) * 1000, 2)
+                # Level tracks the status so `level=error` is a usable production
+                # filter: at a uniform info, a 500 is indistinguishable from a 200
+                # in any log query that isn't already parsing the status field.
+                access_log.log(
+                    _level_for(status),
+                    "request",
+                    extra={
+                        "event": "http_access",
+                        "http_method": scope["method"],
+                        "path": scope["path"],
+                        "status": status,
+                        "duration_ms": duration_ms,
+                    },
+                )
+                _request_id.reset(token)
+
+        return request_context_middleware
+
+    return factory

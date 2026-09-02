@@ -139,9 +139,9 @@ def limited_client() -> TestClient:
     def _health() -> dict:
         return {"status": "ok"}
 
-    limited.middleware("http")(make_rate_limit_middleware(2, window_s=60))
-    limited.middleware("http")(make_unhandled_error_middleware("engine-wrapper"))
-    limited.middleware("http")(make_request_context_middleware("engine-wrapper"))
+    limited.add_middleware(make_rate_limit_middleware(2, window_s=60))
+    limited.add_middleware(make_unhandled_error_middleware("engine-wrapper"))
+    limited.add_middleware(make_request_context_middleware("engine-wrapper"))
     install_error_handlers(limited)
     return TestClient(limited)
 
@@ -201,7 +201,7 @@ class TestMiddleware:
         def _thing() -> dict:
             return {"ok": True}
 
-        unlimited.middleware("http")(make_rate_limit_middleware(0))
+        unlimited.add_middleware(make_rate_limit_middleware(0))
         client = TestClient(unlimited)
         assert all(client.get("/engine/v1/thing").status_code == 200 for _ in range(50))
 
@@ -212,7 +212,7 @@ class TestMiddleware:
         def _thing() -> dict:
             return {"ok": True}
 
-        unlimited.middleware("http")(make_rate_limit_middleware(0))
+        unlimited.add_middleware(make_rate_limit_middleware(0))
         res = TestClient(unlimited).get("/engine/v1/thing")
         assert "x-ratelimit-limit" not in res.headers
 

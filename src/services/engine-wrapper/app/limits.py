@@ -19,8 +19,9 @@ import logging
 import os
 
 import anyio
-from fastapi import Request
+from starlette.datastructures import Headers
 
+from .asgi import ASGIApp, Receive, Scope, Send
 from .errors import error_response
 
 _log = logging.getLogger("limits")
@@ -65,7 +66,7 @@ def max_body_bytes(default: int) -> int:
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
-async def _read_capped(request: Request, limit_bytes: int) -> list[dict] | None:
+async def _read_capped(receive: Receive, limit_bytes: int) -> list[dict] | None:
     """Drain the request body, stopping the moment it passes `limit_bytes`.
 
     Returns the ASGI messages read (to be replayed downstream), or ``None`` if
@@ -75,7 +76,7 @@ async def _read_capped(request: Request, limit_bytes: int) -> list[dict] | None:
     messages: list[dict] = []
     total = 0
     while True:
-        message = await request.receive()
+        message = await receive()
         messages.append(message)
         if message["type"] != "http.request":
             return messages  # http.disconnect — nothing more is coming
@@ -102,40 +103,55 @@ def make_body_limit_middleware(limit_bytes: int):
     chunked request still sees its body.
     """
 
-    async def body_limit_middleware(request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                declared = int(content_length)
-            except ValueError:
-                return error_response(400, "Invalid Content-Length")
-            # A negative length is not a small body; it is a malformed header
-            # that would otherwise slip under the comparison below.
-            if declared < 0:
-                return error_response(400, "Invalid Content-Length")
-            if declared > limit_bytes:
-                return error_response(413, f"Request body exceeds {limit_bytes} bytes")
-            return await call_next(request)
+    def factory(app: ASGIApp) -> ASGIApp:
+        async def body_limit_middleware(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await app(scope, receive, send)
+                return
+            content_length = Headers(scope=scope).get("content-length")
+            if content_length is not None:
+                try:
+                    declared = int(content_length)
+                except ValueError:
+                    await error_response(400, "Invalid Content-Length")(scope, receive, send)
+                    return
+                # A negative length is not a small body; it is a malformed header
+                # that would otherwise slip under the comparison below.
+                if declared < 0:
+                    await error_response(400, "Invalid Content-Length")(scope, receive, send)
+                    return
+                if declared > limit_bytes:
+                    await error_response(413, f"Request body exceeds {limit_bytes} bytes")(scope, receive, send)
+                    return
+                await app(scope, receive, send)
+                return
 
-        if request.method not in _BODY_METHODS:
-            return await call_next(request)
+            if scope["method"] not in _BODY_METHODS:
+                await app(scope, receive, send)
+                return
 
-        messages = await _read_capped(request, limit_bytes)
-        if messages is None:
-            return error_response(413, f"Request body exceeds {limit_bytes} bytes")
+            messages = await _read_capped(receive, limit_bytes)
+            if messages is None:
+                await error_response(413, f"Request body exceeds {limit_bytes} bytes")(scope, receive, send)
+                return
 
-        pending = iter(messages)
+            pending = iter(messages)
 
-        async def replay():
-            # After the buffered messages run out the body is finished; a
-            # downstream read past the end is answered with a disconnect, which
-            # is what an ASGI server sends once the client is done.
-            return next(pending, {"type": "http.disconnect"})
+            async def replay() -> dict:
+                # After the buffered messages run out the body is finished; a
+                # downstream read past the end is answered with a disconnect, which
+                # is what an ASGI server sends once the client is done.
+                return next(pending, {"type": "http.disconnect"})
 
-        request._receive = replay  # noqa: SLF001 — the documented ASGI replay hook
-        return await call_next(request)
+            # Pure ASGI replaces `receive` for everything downstream rather than
+            # reaching into a Request's private `_receive`: the route builds its
+            # own Request from whatever this hands on, so there is no object to
+            # patch and nothing that can be handed the original by mistake.
+            await app(scope, replay, send)
 
-    return body_limit_middleware
+        return body_limit_middleware
+
+    return factory
 
 
 def threadpool_size(default: int = 40) -> int:

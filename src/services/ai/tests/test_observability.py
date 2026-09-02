@@ -125,9 +125,11 @@ def test_no_call_site_logs_a_key_the_formatter_will_drop():
 # means the same thing by them. The expressions here are the whole set the two
 # tiers use for their true meaning: an HTTP status read off a response or an
 # exception, the status the access-log middleware is reporting, a literal code,
-# and the URL path off the request.
+# and the URL path off the request — or, since the middleware stack went pure
+# ASGI (``app/asgi.py``), off the raw scope, which is the same string by another
+# spelling: Starlette builds ``request.url.path`` from ``scope["path"]``.
 _STATUS_VALUES = re.compile(r"^(?:resp\.status_code|exc\.status_code|status|[1-5]\d\d)$")
-_PATH_VALUES = re.compile(r"^request\.url\.path$")
+_PATH_VALUES = re.compile(r"^(?:request\.url\.path|scope\[\"path\"\])$")
 
 
 def test_no_call_site_puts_a_non_status_in_status_or_a_non_path_in_path():

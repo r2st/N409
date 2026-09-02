@@ -22,7 +22,9 @@ import logging
 import os
 
 from fastapi import Request
+from starlette.datastructures import Headers
 
+from .asgi import ASGIApp, Receive, Scope, Send
 from .errors import error_response
 
 INTERNAL_TOKEN_HEADER = "x-internal-token"
@@ -143,27 +145,43 @@ def is_production() -> bool:
     return os.environ.get("APP_ENV", "").lower() == "production"
 
 
-async def internal_token_middleware(request: Request, call_next):
+def internal_token_middleware(app: ASGIApp) -> ASGIApp:
     """Reject non-health requests whose ``X-Internal-Token`` doesn't match.
 
     A no-op when the secret is unset outside production (local dev / tests).
     Production MUST set ``INTERNAL_SERVICE_TOKEN``: ``enforce_token_configured``
     refuses to start without it, and this middleware refuses every non-public
     request too, so the gate cannot be opened by unsetting the variable.
+
+    Registered with ``app.add_middleware(internal_token_middleware)``: this is
+    an ASGI factory, not a coroutine — see ``asgi.py`` for why every layer here
+    is one.
     """
-    expected = _configured_token()
-    if is_public_path(request.url.path):
-        return await call_next(request)
-    if expected is None:
-        # Unreachable after a successful start-up in production; kept because
-        # the token is read per-request so it can rotate without a restart, and
-        # rotating it to nothing must close the gate rather than open it.
-        if is_production():
-            return error_response(401, "Missing or invalid internal service token")
-        return await call_next(request)
-    if not tokens_match(request.headers.get(INTERNAL_TOKEN_HEADER), expected):
-        return error_response(401, "Missing or invalid internal service token")
-    return await call_next(request)
+
+    async def gate(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        expected = _configured_token()
+        if is_public_path(scope["path"]):
+            await app(scope, receive, send)
+            return
+        if expected is None:
+            # Unreachable after a successful start-up in production; kept because
+            # the token is read per-request so it can rotate without a restart, and
+            # rotating it to nothing must close the gate rather than open it.
+            if is_production():
+                await error_response(401, "Missing or invalid internal service token")(scope, receive, send)
+                return
+            await app(scope, receive, send)
+            return
+        presented = Headers(scope=scope).get(INTERNAL_TOKEN_HEADER)
+        if not tokens_match(presented, expected):
+            await error_response(401, "Missing or invalid internal service token")(scope, receive, send)
+            return
+        await app(scope, receive, send)
+
+    return gate
 
 
 def enforce_token_configured() -> None:

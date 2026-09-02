@@ -89,8 +89,8 @@ def boom_client() -> TestClient:
     def _ordinary_422() -> dict:
         raise HTTPException(status_code=422, detail="volatility must be positive")
 
-    boom_app.middleware("http")(make_unhandled_error_middleware("engine-wrapper"))
-    boom_app.middleware("http")(make_request_context_middleware("engine-wrapper"))
+    boom_app.add_middleware(make_unhandled_error_middleware("engine-wrapper"))
+    boom_app.add_middleware(make_request_context_middleware("engine-wrapper"))
     install_error_handlers(boom_app)
     return TestClient(boom_app)
 

@@ -35,9 +35,9 @@ def limited_client() -> TestClient:
     def _ready() -> dict:
         return {"status": "ready"}
 
-    limited.middleware("http")(make_rate_limit_middleware(2, window_s=60))
-    limited.middleware("http")(make_unhandled_error_middleware("ai"))
-    limited.middleware("http")(make_request_context_middleware("ai"))
+    limited.add_middleware(make_rate_limit_middleware(2, window_s=60))
+    limited.add_middleware(make_unhandled_error_middleware("ai"))
+    limited.add_middleware(make_request_context_middleware("ai"))
     install_error_handlers(limited)
     return TestClient(limited)
 

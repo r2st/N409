@@ -29,7 +29,9 @@ the thing to turn off. They get a policy sized to what they actually load.
 
 from __future__ import annotations
 
-from fastapi import Request
+from starlette.datastructures import MutableHeaders
+
+from .asgi import ASGIApp, Receive, Scope, Send
 
 # Sent on every response. `frame-ancestors` duplicates X-Frame-Options on
 # purpose: the modern directive is the one browsers honour, the legacy header
@@ -94,11 +96,23 @@ def make_security_headers_middleware():
     own policy keeps it.
     """
 
-    async def security_headers_middleware(request: Request, call_next):
-        response = await call_next(request)
-        for name, value in headers_for(request.url.path).items():
-            if name not in response.headers:
-                response.headers[name] = value
-        return response
+    def factory(app: ASGIApp) -> ASGIApp:
+        async def security_headers_middleware(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await app(scope, receive, send)
+                return
+            stamped = headers_for(scope["path"])
 
-    return security_headers_middleware
+            async def send_wrapper(message: dict) -> None:
+                if message["type"] == "http.response.start":
+                    headers = MutableHeaders(scope=message)
+                    for name, value in stamped.items():
+                        if name not in headers:
+                            headers[name] = value
+                await send(message)
+
+            await app(scope, receive, send_wrapper)
+
+        return security_headers_middleware
+
+    return factory

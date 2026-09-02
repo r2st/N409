@@ -44,6 +44,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .asgi import ASGIApp, Receive, Scope, Send
 from .engine.errors import EngineDegradedError
 from .observability import REQUEST_ID_HEADER, current_request_id, redact
 
@@ -145,25 +146,47 @@ def make_unhandled_error_middleware(service: str):
     """
     log = logging.getLogger(service)
 
-    async def unhandled_error_middleware(request: Request, call_next):
-        try:
-            return await call_next(request)
-        except Exception:
-            # exc_info, not str(exc): the message alone rarely says which line
-            # of which approach raised, and this is the only record there is.
-            log.error(
-                "unhandled exception",
-                exc_info=True,
-                extra={
-                    "event": "unhandled_error",
-                    "http_method": request.method,
-                    "path": request.url.path,
-                    "status": 500,
-                },
-            )
-            return error_response(500, INTERNAL_ERROR_DETAIL)
+    def factory(app: ASGIApp) -> ASGIApp:
+        async def unhandled_error_middleware(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await app(scope, receive, send)
+                return
+            started = False
 
-    return unhandled_error_middleware
+            async def send_wrapper(message: dict) -> None:
+                nonlocal started
+                if message["type"] == "http.response.start":
+                    started = True
+                await send(message)
+
+            try:
+                await app(scope, receive, send_wrapper)
+            except Exception:
+                # exc_info, not str(exc): the message alone rarely says which line
+                # of which approach raised, and this is the only record there is.
+                log.error(
+                    "unhandled exception",
+                    exc_info=True,
+                    extra={
+                        "event": "unhandled_error",
+                        "http_method": scope["method"],
+                        "path": scope["path"],
+                        "status": 500,
+                    },
+                )
+                # Once the status line is on the wire there is no 500 left to
+                # send — the client already has a header block saying otherwise.
+                # Re-raising hands it to the server, which closes the connection
+                # rather than appending an error body to a response that claimed
+                # success. The log line above is written either way, so the
+                # failure is still recorded.
+                if started:
+                    raise
+                await error_response(500, INTERNAL_ERROR_DETAIL)(scope, receive, send)
+
+        return unhandled_error_middleware
+
+    return factory
 
 
 def install_error_handlers(app: FastAPI, service: str | None = None) -> None:

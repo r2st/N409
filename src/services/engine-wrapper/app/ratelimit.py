@@ -31,8 +31,9 @@ import os
 import threading
 import time
 
-from fastapi import Request
+from starlette.datastructures import MutableHeaders
 
+from .asgi import ASGIApp, Receive, Scope, Send
 from .errors import error_response
 from .internal_auth import is_public_path
 
@@ -110,15 +111,20 @@ class FixedWindowRateLimiter:
             return len(self._windows)
 
 
-def client_key(request: Request) -> str:
+def client_key(scope: Scope) -> str:
     """Identify the caller by peer address.
 
     Deliberately not X-Forwarded-For: it is caller-supplied, and a limiter that
     trusts it can be defeated by varying one header. These services bind to
     loopback behind the valuation service, so the peer address is the truth.
+
+    Takes the raw ASGI scope rather than a ``Request``: this middleware is pure
+    ASGI (see ``asgi.py``) and the scope's ``client`` is the same
+    ``(host, port)`` pair ``Request.client`` reads.
     """
-    client = request.client
-    return client.host if client and client.host else "unknown"
+    client = scope.get("client")
+    host = client[0] if client else None
+    return host if host else "unknown"
 
 
 def make_rate_limit_middleware(limit: int, window_s: float = 60.0):
@@ -133,8 +139,8 @@ def make_rate_limit_middleware(limit: int, window_s: float = 60.0):
             extra={"event": "ratelimit_config", "limit": 0},
         )
 
-        async def passthrough(request: Request, call_next):
-            return await call_next(request)
+        def passthrough(app: ASGIApp) -> ASGIApp:
+            return app
 
         return passthrough
 
@@ -144,40 +150,54 @@ def make_rate_limit_middleware(limit: int, window_s: float = 60.0):
         extra={"event": "ratelimit_config", "limit": limit},
     )
 
-    async def rate_limit_middleware(request: Request, call_next):
-        # Same set the internal-token gate leaves open — liveness, readiness,
-        # API introspection — so the two can't drift into disagreeing about
-        # which endpoints are infrastructure.
-        if is_public_path(request.url.path):
-            return await call_next(request)
+    def factory(app: ASGIApp) -> ASGIApp:
+        async def rate_limit_middleware(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await app(scope, receive, send)
+                return
+            # Same set the internal-token gate leaves open — liveness, readiness,
+            # API introspection — so the two can't drift into disagreeing about
+            # which endpoints are infrastructure.
+            if is_public_path(scope["path"]):
+                await app(scope, receive, send)
+                return
 
-        key = client_key(request)
-        allowed, remaining, reset_at = limiter.check(key)
-        headers = {
-            "x-ratelimit-limit": str(limit),
-            "x-ratelimit-remaining": str(remaining),
-            "x-ratelimit-reset": str(int(reset_at)),
-        }
-        if not allowed:
-            retry_after = max(1, int(reset_at - time.time() + 0.999))
-            _log.warning(
-                "rate limit exceeded",
-                extra={
-                    "event": "ratelimit_exceeded",
-                    "http_method": request.method,
-                    "path": request.url.path,
-                    "status": 429,
-                },
-            )
-            response = error_response(429, f"Rate limit exceeded: {limit} requests per minute")
-            response.headers.update(headers)
-            response.headers["retry-after"] = str(retry_after)
-            return response
+            key = client_key(scope)
+            allowed, remaining, reset_at = limiter.check(key)
+            headers = {
+                "x-ratelimit-limit": str(limit),
+                "x-ratelimit-remaining": str(remaining),
+                "x-ratelimit-reset": str(int(reset_at)),
+            }
+            if not allowed:
+                retry_after = max(1, int(reset_at - time.time() + 0.999))
+                _log.warning(
+                    "rate limit exceeded",
+                    extra={
+                        "event": "ratelimit_exceeded",
+                        "http_method": scope["method"],
+                        "path": scope["path"],
+                        "status": 429,
+                    },
+                )
+                response = error_response(429, f"Rate limit exceeded: {limit} requests per minute")
+                response.headers.update(headers)
+                response.headers["retry-after"] = str(retry_after)
+                await response(scope, receive, send)
+                return
 
-        response = await call_next(request)
-        # Headroom on every answer, so a caller can back off before it is cut
-        # off rather than discovering the limit by hitting it.
-        response.headers.update(headers)
-        return response
+            async def send_wrapper(message: dict) -> None:
+                if message["type"] == "http.response.start":
+                    # Headroom on every answer, so a caller can back off before
+                    # it is cut off rather than discovering the limit by hitting
+                    # it.
+                    existing = MutableHeaders(scope=message)
+                    for name, value in headers.items():
+                        existing[name] = value
+                await send(message)
 
-    return rate_limit_middleware
+            await app(scope, receive, send_wrapper)
+
+        return rate_limit_middleware
+
+    return factory

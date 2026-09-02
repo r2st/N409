@@ -86,30 +86,33 @@ app = FastAPI(title="n409-engine-wrapper", version=ENGINE_VERSION, lifespan=life
 _metrics = MetricsRegistry()
 
 # Middleware order (Starlette runs last-added first): request-context is
-# outermost so its access log captures 401/413 responses too.
+# outermost so its access log captures 401/413 responses too. Every layer is a
+# pure-ASGI factory rather than an `@app.middleware("http")` coroutine — see
+# `asgi.py`; `add_middleware` inserts at the same end of the same list, so the
+# ordering below reads exactly as it did.
 # Shared-secret gate (audit B-1 P0): every non-health route requires the
 # X-Internal-Token the valuation service injects. No-op until the secret is set.
-app.middleware("http")(internal_token_middleware)
+app.add_middleware(internal_token_middleware)
 # Body-size cap (audit B-2 P2): reject oversized payloads before buffering.
-app.middleware("http")(make_body_limit_middleware(_MAX_BODY_BYTES))
+app.add_middleware(make_body_limit_middleware(_MAX_BODY_BYTES))
 # Per-caller request ceiling. Outside the token gate on purpose, so guessing at
 # the shared secret is throttled too.
-app.middleware("http")(make_rate_limit_middleware(limit_per_minute()))
+app.add_middleware(make_rate_limit_middleware(limit_per_minute()))
 # Last-resort 500 envelope. Inside request-context (so the request id is bound
 # when it logs) and outside everything else (so it catches their failures too).
-app.middleware("http")(make_unhandled_error_middleware(SERVICE))
+app.add_middleware(make_unhandled_error_middleware(SERVICE))
 # Structured access logging + x-request-id propagation (audit B-2 P3).
-app.middleware("http")(make_request_context_middleware(SERVICE))
+app.add_middleware(make_request_context_middleware(SERVICE))
 # RED for every request, including the ones refused above. Added after the
 # access-log middleware so it wraps it: a request the token gate, the body cap
 # or the limiter answered is a request this unit served, and a counter that
 # cannot see the 401s cannot tell a misconfigured caller from an idle service.
 # See metrics.py for why these two units are scrape targets at all.
-app.middleware("http")(make_metrics_middleware(_metrics))
+app.add_middleware(make_metrics_middleware(_metrics))
 # Outermost, so the headers reach the responses the layers above return without
 # ever seeing a route — the token gate's 401, the body cap's 413, the limiter's
 # 429 and the unhandled-error 500 (round 74).
-app.middleware("http")(make_security_headers_middleware())
+app.add_middleware(make_security_headers_middleware())
 # Put the request id on the deliberate failures as well, so every error
 # response this service can emit is traceable to a log line.
 install_error_handlers(app, SERVICE)

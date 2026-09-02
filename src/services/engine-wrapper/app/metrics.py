@@ -76,6 +76,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
 
+from .asgi import ASGIApp, Receive, Scope, Send
 from .build_info import build_info
 from .cgroup_memory import register_cgroup_memory_metrics
 from .observability import set_degraded_event_sink
@@ -680,24 +681,35 @@ def make_metrics_middleware(registry: MetricsRegistry):
         lambda: float(in_flight["n"]),
     )
 
-    async def metrics_middleware(request: Request, call_next):
-        method = method_label(request.method)
-        route = route_label(request.url.path)
-        started = time.perf_counter()
-        in_flight["n"] += 1
-        # 500 is the status a request that never produced a response had: an
-        # exception escaping the whole stack is a failed request, and counting
-        # it as anything else is how an outage reads as an idle service.
-        status = 500
-        try:
-            response = await call_next(request)
-            status = response.status_code
-            return response
-        finally:
-            in_flight["n"] -= 1
-            requests.inc({"method": method, "route": route, "status": status_class(status)})
-            if status >= 500:
-                errors.inc({"method": method, "route": route})
-            duration.observe(max(0.0, time.perf_counter() - started), {"method": method, "route": route})
+    def factory(app: ASGIApp) -> ASGIApp:
+        async def metrics_middleware(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await app(scope, receive, send)
+                return
+            method = method_label(scope["method"])
+            route = route_label(scope["path"])
+            started = time.perf_counter()
+            in_flight["n"] += 1
+            # 500 is the status a request that never produced a response had: an
+            # exception escaping the whole stack is a failed request, and counting
+            # it as anything else is how an outage reads as an idle service.
+            status = 500
 
-    return metrics_middleware
+            async def send_wrapper(message: dict) -> None:
+                nonlocal status
+                if message["type"] == "http.response.start":
+                    status = message["status"]
+                await send(message)
+
+            try:
+                await app(scope, receive, send_wrapper)
+            finally:
+                in_flight["n"] -= 1
+                requests.inc({"method": method, "route": route, "status": status_class(status)})
+                if status >= 500:
+                    errors.inc({"method": method, "route": route})
+                duration.observe(max(0.0, time.perf_counter() - started), {"method": method, "route": route})
+
+        return metrics_middleware
+
+    return factory

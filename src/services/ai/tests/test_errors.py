@@ -77,8 +77,8 @@ def boom_client() -> TestClient:
             detail=[{"loc": ["body", "owner"], "input": FOUNDER_ADDRESS, "msg": "bad"}],
         )
 
-    boom_app.middleware("http")(make_unhandled_error_middleware("ai"))
-    boom_app.middleware("http")(make_request_context_middleware("ai"))
+    boom_app.add_middleware(make_unhandled_error_middleware("ai"))
+    boom_app.add_middleware(make_request_context_middleware("ai"))
     install_error_handlers(boom_app)
     return TestClient(boom_app)
 
