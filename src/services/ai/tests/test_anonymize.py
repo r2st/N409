@@ -1,6 +1,7 @@
 """PII anonymization tests — redaction must never eat financial figures."""
 
 import base64
+import re
 
 import pytest
 
@@ -10,7 +11,9 @@ from app.anonymize import (
     MAX_KNOWN_ENTITIES,
     AnonymizeInputError,
     Redactor,
-    _entity_pattern,
+    _candidates,
+    _entities_pattern,
+    _entity_body,
     redact,
 )
 from app.openrouter import LlmResult
@@ -571,10 +574,12 @@ def test_the_refusal_does_not_quote_the_whole_entity():
 def test_an_over_long_entity_is_refused_before_a_pattern_is_built():
     """The cost being bounded is the compile, so it must not have happened."""
     name = "Acme " * 5_000
-    before = _entity_pattern.cache_info().misses
+    bodies = _entity_body.cache_info().misses
+    patterns = _entities_pattern.cache_info().misses
     with pytest.raises(AnonymizeInputError):
         redact("some text", company_names=[name])
-    assert _entity_pattern.cache_info().misses == before
+    assert _entity_body.cache_info().misses == bodies
+    assert _entities_pattern.cache_info().misses == patterns
 
 
 def test_an_over_long_entity_answers_422_not_500():
@@ -618,8 +623,101 @@ def test_redaction_stays_fast_at_the_bound():
 def test_the_compiled_pattern_is_memoised_across_fields():
     """A request redacts many strings against one entity list; compile once."""
     red = Redactor(company_names=["Acme Robotics, Inc."])
-    before = _entity_pattern.cache_info()
+    red.text("warm the cache")
+    before = _entities_pattern.cache_info()
     for _ in range(20):
         red.text("Acme Robotics, Inc. filed.")
-    after = _entity_pattern.cache_info()
-    assert after.hits > before.hits
+    after = _entities_pattern.cache_info()
+    assert after.hits - before.hits == 20
+    assert after.misses == before.misses
+
+
+def test_one_pass_over_the_text_however_many_entities_are_declared():
+    """The whole entity list is one alternation, not one scan each.
+
+    `_redact_entities` used to call `subn` once per candidate, so the text was
+    walked 1,000 times at the declared ceiling — 512 ms for a single 26 kB
+    document, on a threadpool that holds the GIL while it runs. Counting the
+    scans rather than timing them keeps the assertion a property of the code
+    instead of of the box: the ratio between a one-entity list and a
+    five-hundred-entity one is what regressed, and it is 1.
+    """
+    scans = 0
+    real_subn = re.Pattern.subn
+
+    class Counting:
+        def __init__(self, inner: re.Pattern[str]) -> None:
+            self._inner = inner
+
+        def subn(self, *args, **kwargs):
+            nonlocal scans
+            scans += 1
+            return real_subn(self._inner, *args, **kwargs)
+
+    from app import anonymize
+
+    built = anonymize._entities_pattern
+    monkeyed = lambda candidates: Counting(built(candidates))  # noqa: E731
+    anonymize._entities_pattern = monkeyed
+    try:
+        anonymize._redact_entities("Acme Robotics, Inc. filed.", ["Acme Robotics, Inc."], "companies")
+        one = scans
+        scans = 0
+        anonymize._redact_entities(
+            "Acme Robotics, Inc. filed.",
+            [f"Company{i} Holdings, Inc." for i in range(MAX_KNOWN_ENTITIES)],
+            "companies",
+        )
+        many = scans
+    finally:
+        anonymize._entities_pattern = built
+    assert one == 1
+    assert many == 1
+
+
+def test_the_candidate_list_is_derived_once_per_request_not_per_field():
+    """Deriving short forms and sorting a thousand names does not depend on the
+    string being redacted, and a request redacts many."""
+    red = Redactor(company_names=[f"Company{i} Holdings, Inc." for i in range(50)])
+    red.text("warm the cache")
+    before = _candidates.cache_info()
+    for _ in range(20):
+        red.text("Company7 Holdings, Inc. filed.")
+    after = _candidates.cache_info()
+    assert after.hits - before.hits == 20
+    assert after.misses == before.misses
+
+
+def test_deduplication_cannot_bring_an_over_size_list_under_the_ceiling():
+    """The bound is checked on the raw list, before the candidates are built."""
+    with pytest.raises(AnonymizeInputError):
+        redact("text", company_names=["Acme Robotics, Inc."] * (MAX_KNOWN_ENTITIES + 1))
+
+
+def test_an_empty_entity_list_matches_nothing():
+    """`(?:)` matches the empty string everywhere, so the list needs its own
+    answer rather than an alternation of nothing."""
+    # Every entry below the minimum length, so the candidate set comes out
+    # empty after filtering rather than before it.
+    text, counts = redact("Acme Robotics filed.", company_names=["a", "b"])
+    assert text == "Acme Robotics filed."
+    assert "companies" not in counts
+
+
+def test_longest_first_survives_the_single_pass():
+    """The suffix-less short form must not strike before the registered name."""
+    text, counts = redact(
+        "Acme Robotics, Inc. and Acme Robotics both appear.",
+        company_names=["Acme Robotics, Inc."],
+    )
+    assert text == "[COMPANY] and [COMPANY] both appear."
+    assert counts["companies"] == 2
+
+
+def test_the_alternation_is_ordered_by_the_value_not_by_a_set():
+    """Two same-length names are tried in a stated order, so the pattern is a
+    function of the list — the old loop sorted a `set` by length alone."""
+    first = _entities_pattern(tuple(sorted({"Alpha Two", "Alpha One"}, key=lambda v: (-len(v), v))))
+    again = _entities_pattern(tuple(sorted({"Alpha One", "Alpha Two"}, key=lambda v: (-len(v), v))))
+    assert first is not None and again is not None
+    assert first.pattern == again.pattern

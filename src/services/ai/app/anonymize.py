@@ -266,8 +266,8 @@ def _short_form(value: str) -> str | None:
 
 
 @lru_cache(maxsize=4096)
-def _entity_pattern(value: str) -> re.Pattern[str]:
-    """A whole-entity matcher for one known name.
+def _entity_body(value: str) -> str:
+    """The bare alternative for one known name, without the word boundaries.
 
     Memoised because a request redacts many strings against the same entity
     list — every document body, every filename, every interpolated prompt
@@ -313,10 +313,80 @@ def _entity_pattern(value: str) -> re.Pattern[str]:
     if tail:
         body += f"(?:{re.escape(tail)})?"
 
-    # (?<!\w) / (?!\w) rather than \b. Where the entity does start and end on a
-    # word character the two are identical; where it does not, only these are
-    # right — which is the whole bug.
-    return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+    return body
+
+
+# (?<!\w) / (?!\w) rather than \b. Where the entity does start and end on a
+# word character the two are identical; where it does not, only these are right
+# — which is the whole bug. Written once, around whichever alternation of
+# entity bodies is being matched.
+_BOUNDED_BEFORE = r"(?<!\w)(?:"
+_BOUNDED_AFTER = r")(?!\w)"
+
+
+def _entity_pattern(value: str) -> re.Pattern[str]:
+    """A whole-entity matcher for one known name. See {@link _entity_body}."""
+    return re.compile(_BOUNDED_BEFORE + _entity_body(value) + _BOUNDED_AFTER, re.IGNORECASE)
+
+
+@lru_cache(maxsize=32)
+def _candidates(entities: tuple[str, ...], label: str) -> tuple[str, ...]:
+    """The entity list as the alternatives to match, longest first.
+
+    Longest first so "Acme Robotics Inc" is caught before "Acme" — the
+    suffix-less short form must not strike first and leave "…, Inc." stranded
+    beside a placeholder. The value itself breaks ties, so the result is a
+    function of the list rather than of a `set`'s iteration order.
+
+    Memoised alongside the pattern it feeds and for the same reason: a request
+    redacts many strings against one list, and deriving the short forms and
+    sorting a thousand names is work that does not depend on the string being
+    redacted. Bounds are checked by the caller on the raw list, before this
+    runs — deduplication must not be able to bring an over-size list under the
+    ceiling.
+    """
+    candidates = {e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN}
+    if label == "companies":
+        # Only companies: a person is not "Ada Lovelace, Inc.", and stripping a
+        # trailing word off a person's name would strike their surname alone.
+        candidates |= {s for s in (_short_form(e) for e in candidates) if s}
+    return tuple(sorted(candidates, key=lambda v: (-len(v), v)))
+
+
+@lru_cache(maxsize=32)
+def _entities_pattern(candidates: tuple[str, ...]) -> re.Pattern[str] | None:
+    """One matcher for a whole entity list, instead of one scan per entity.
+
+    `_redact_entities` ran `subn` once per candidate, so a request redacting
+    against the declared ceiling walked every document 1,000 times: 500 known
+    companies (plus their suffix-less short forms) and 500 known people, each a
+    separate pass over the text. Measured on a 26 kB document at that ceiling —
+    which is one document, and a request carries three plus its prompt fields —
+    **512 ms per string, 25 ms after**. `re` holds the GIL, so that cost is not
+    one slow request among forty; it is every request on the process waiting.
+
+    The alternation is ordered longest-first for the same reason the sequential
+    loop was: "Acme Robotics Inc" has to be struck before "Acme", or the
+    corporate suffix is left stranded beside a placeholder. Within one starting
+    position `re` tries the alternatives in written order, so that ordering
+    carries over exactly — and where two candidates of equal length could match
+    at *different* positions the leftmost wins, which is what the loop did too.
+    The tie-break on the value itself is new: the loop sorted a `set` by length
+    alone, so two same-length names were tried in whatever order the set
+    happened to yield.
+
+    Memoised on the candidate tuple because a request redacts many strings
+    against one list — every document body, every filename, every interpolated
+    prompt field — and 60 ms of assembly per field is the cost this replaces.
+    Small cache: the key is a whole entity list, and one is in play at a time.
+
+    Returns None for an empty list, which is not the same as a pattern that
+    matches nothing: `(?:)` matches the empty string everywhere.
+    """
+    if not candidates:
+        return None
+    body = "|".join(_entity_body(value) for value in candidates)
+    return re.compile(_BOUNDED_BEFORE + body + _BOUNDED_AFTER, re.IGNORECASE)
 
 
 def _refuse_long_entities(entities: list[str], label: str) -> None:
@@ -344,7 +414,6 @@ def _refuse_long_entities(entities: list[str], label: str) -> None:
 def _redact_entities(text: str, entities: list[str], label: str) -> tuple[str, int]:
     """Strike each known entity by whole-word, case-insensitive match. Longest
     first so "Acme Robotics Inc" is caught before "Acme"."""
-    total = 0
     placeholder = _PLACEHOLDERS[label]
     # Bounded before anything is compiled or scanned — see MAX_KNOWN_ENTITIES.
     # Checked on the raw list rather than the deduplicated set, so the cost of
@@ -355,17 +424,10 @@ def _redact_entities(text: str, entities: list[str], label: str) -> tuple[str, i
             f"(the limit is {MAX_KNOWN_ENTITIES})"
         )
     _refuse_long_entities(entities, label)
-    candidates = {e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN}
-    if label == "companies":
-        # Only companies: a person is not "Ada Lovelace, Inc.", and stripping a
-        # trailing word off a person's name would strike their surname alone.
-        # Longest-first ordering below means the full name is always struck
-        # before the short form, so a document using both spends one match on
-        # each rather than leaving "…, Inc." stranded after "[COMPANY]".
-        candidates |= {s for s in (_short_form(e) for e in candidates) if s}
-    for value in sorted(candidates, key=len, reverse=True):
-        text, n = _entity_pattern(value).subn(placeholder, text)
-        total += n
+    pattern = _entities_pattern(_candidates(tuple(entities), label))
+    if pattern is None:
+        return text, 0
+    text, total = pattern.subn(placeholder, text)
     return text, total
 
 
