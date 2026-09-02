@@ -86,6 +86,58 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
     });
   });
 
+  /**
+   * The machine-readable half of an error (R350, methodology M19).
+   *
+   * `detail` is prose — the one field RFC 7644 does not ask to be stable, and
+   * the one a connector cannot branch on. Every error under this prefix used to
+   * be `{schemas, status, detail}` and nothing else, and the consequential
+   * omission is the 409: a connector reading `scimType: "uniqueness"` treats an
+   * address that already has an account as something to reconcile and carries
+   * on, while a bare 409 goes into the admin's error queue. On a first import of
+   * a directory into a platform people already had logins for, that is the whole
+   * import.
+   */
+  describe('scimType', () => {
+    it('classifies a userName that already has an account as uniqueness', async () => {
+      const first = await scim('POST', '/scim/v2/Users', { userName: 'dup@corp.example' });
+      expect(first.statusCode).toBe(201);
+      const again = await scim('POST', '/scim/v2/Users', { userName: 'dup@corp.example' });
+      expect(again.statusCode).toBe(409);
+      const body = again.json();
+      expect(body.scimType).toBe('uniqueness');
+      // And the prose says what to do about it, which the two words it replaced
+      // did not.
+      expect(body.detail).toMatch(/match the existing account|change the userName/i);
+    });
+
+    it('classifies a refused field as invalidValue, naming the field', async () => {
+      const res = await scim('POST', '/scim/v2/Users', { userName: 'not-an-address' });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().scimType).toBe('invalidValue');
+      expect(res.json().detail).toMatch(/userName/);
+    });
+
+    it('classifies a body that is not JSON as invalidSyntax', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/scim/v2/Users',
+        headers: { ...bearer, 'content-type': CT },
+        payload: '{ not json',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().scimType).toBe('invalidSyntax');
+    });
+
+    it('omits it where RFC 7644 defines none, rather than sending a null', async () => {
+      // A null on a 401 asserts the field was considered and found not to
+      // apply; for an auth refusal that is not a thing this service knows.
+      const res = await ctx.app.inject({ method: 'GET', url: '/scim/v2/Users' });
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).not.toHaveProperty('scimType');
+    });
+  });
+
   describe('listing', () => {
     it('returns the provisioned users when no filter is given', async () => {
       const created = await scim('POST', '/scim/v2/Users', { userName: 'listed@corp.example' });

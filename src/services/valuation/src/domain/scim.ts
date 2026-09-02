@@ -68,11 +68,28 @@ export interface ScimListResponse {
   Resources: ScimUser[];
 }
 
+/**
+ * The machine-readable half of a SCIM error (RFC 7644 §3.12).
+ *
+ * Only the members this service can actually raise. The full set is larger, and
+ * publishing a token for a condition no handler produces would be a claim about
+ * behaviour rather than a description of it.
+ */
+export type ScimType = 'uniqueness' | 'invalidValue' | 'invalidSyntax';
+
 export interface ScimErrorResponse {
   schemas: string[];
   /** SCIM sends the status as a string in the body, not a number. */
   status: string;
   detail: string;
+  /**
+   * The classifier a connector branches on, absent unless the condition has
+   * one. Omitted rather than nulled: RFC 7644 defines `scimType` only for 400
+   * and for the 409 uniqueness case, and a null on a 401 or a 503 asserts that
+   * the field was considered and found not to apply, which for a rate limit or
+   * an unhandled fault is not a thing this service knows.
+   */
+  scimType?: ScimType;
 }
 
 export function toScimUser(u: ScimUserRow): ScimUser {
@@ -117,8 +134,31 @@ export function scimBoolean(value: unknown): boolean {
   return Boolean(value);
 }
 
-export function scimError(status: number, detail: string): ScimErrorResponse {
-  return { schemas: [SCIM_ERROR_SCHEMA], status: String(status), detail };
+/**
+ * A SCIM error, with the classifier when the condition has one.
+ *
+ * Every error under `/scim/v2` used to be `{schemas, status, detail}` and
+ * nothing else, and `detail` is prose — the one field RFC 7644 does not ask to
+ * be stable, and the one a connector therefore cannot branch on. The
+ * consequential omission is the 409 on `POST /Users`: a directory connector
+ * that reads `scimType: "uniqueness"` treats "this person already has an
+ * account" as something to reconcile and carries on, and a bare 409 as an
+ * unclassified failure it files as an error for a human to resolve by hand.
+ * The condition it describes — an existing account for an address the IdP is
+ * pushing — is the ordinary case on a first import of a directory into a
+ * platform people already had logins for, so the whole of that import lands in
+ * the admin's error queue (R350, methodology M19).
+ *
+ * The prose is unchanged and stays the thing a person reads; this is the field
+ * beside it for the software.
+ */
+export function scimError(status: number, detail: string, scimType?: ScimType): ScimErrorResponse {
+  return {
+    schemas: [SCIM_ERROR_SCHEMA],
+    status: String(status),
+    detail,
+    ...(scimType ? { scimType } : {}),
+  };
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   scimPage,
   SCIM_MAX_PAGE,
   toScimUser,
+  type ScimType,
   type ScimUserRow,
 } from '../domain/scim.js';
 
@@ -111,7 +112,16 @@ export function registerScimRoutes(
         try {
           done(null, JSON.parse(raw) as unknown);
         } catch {
-          done(new ApiProblem({ status: 400, title: 'Bad Request', detail: 'Body is not valid JSON' }));
+          done(
+            new ApiProblem({
+              status: 400,
+              title: 'Bad Request',
+              detail: 'Body is not valid JSON',
+              // Carried through the scoped handler below, which is the only
+              // reader — `registerProblemHandler` never sees this scope.
+              extensions: { scimType: 'invalidSyntax' },
+            }),
+          );
         }
       });
 
@@ -127,13 +137,20 @@ export function registerScimRoutes(
        * request and so may be echoed — and differs only in what it writes.
        */
       scope.setErrorHandler((err: unknown, req: FastifyRequest, reply: FastifyReply) => {
-        const send = (status: number, detail: string) =>
-          reply.status(status).header('content-type', CT).send(scimError(status, detail));
+        const send = (status: number, detail: string, scimType?: ScimType) =>
+          reply.status(status).header('content-type', CT).send(scimError(status, detail, scimType));
         if (err instanceof ApiProblem) {
           if (err.retryAfterSeconds !== undefined) {
             void reply.header('retry-after', String(err.retryAfterSeconds));
           }
-          return send(err.status, err.detail ?? err.title);
+          // `scimType` if the thrower named one — the body parser above does,
+          // for the one 400 that reaches here rather than being sent inline.
+          const named = err.extensions?.scimType;
+          return send(
+            err.status,
+            err.detail ?? err.title,
+            typeof named === 'string' ? (named as ScimType) : undefined,
+          );
         }
         const fastifyErr = err as { statusCode?: number; message?: string };
         const status = fastifyErr.statusCode && fastifyErr.statusCode < 500 ? fastifyErr.statusCode : 500;
@@ -367,11 +384,25 @@ export function registerScimRoutes(
         // connector surfaces `detail` verbatim to the directory admin, and "a
         // userName is required" for a 4 KB givenName sends them to the wrong field.
         if (isScimRejection(parsed))
-          return reply.status(400).header('content-type', CT).send(scimError(400, parsed.rejected));
+          return reply
+            .status(400)
+            .header('content-type', CT)
+            .send(scimError(400, parsed.rejected, 'invalidValue'));
 
         const existing = await findUserByEmail(deps.pool, parsed.email);
         if (existing) {
-          return reply.status(409).header('content-type', CT).send(scimError(409, 'User already exists'));
+          return reply
+            .status(409)
+            .header('content-type', CT)
+            .send(
+              scimError(
+                409,
+                'A user with that userName already exists on this platform. It was not created by ' +
+                  'this directory, so it has not been linked — match the existing account or change ' +
+                  'the userName in the directory.',
+                'uniqueness',
+              ),
+            );
         }
         const user = await createProvisionedUser(deps.pool, {
           email: parsed.email,
