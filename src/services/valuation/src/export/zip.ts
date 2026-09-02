@@ -3,7 +3,7 @@
  * node's own `zlib`). UTF-8 filenames (general-purpose flag bit 11), CRC-32 per
  * the ZIP appnote, and per-entry deflate — see {@link deflateWins}.
  */
-import { deflateRawSync } from 'node:zlib';
+import { crc32 as zlibCrc32, deflateRawSync } from 'node:zlib';
 
 export interface ZipEntry {
   name: string;
@@ -12,29 +12,28 @@ export interface ZipEntry {
   mtime?: Date;
 }
 
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
 /**
- * Indexed rather than `for (const byte of buf)`.
+ * The ZIP appnote's checksum: CRC-32, the IEEE polynomial, over every byte of
+ * every entry.
  *
- * A `Buffer` iterator allocates a result object per byte and goes through the
- * generic iteration protocol, and this runs over every byte of every entry —
- * on a full evidence bundle that is the whole archive. Measured over a 2.7 MB
- * `calculations.json`: 21.8 ms iterating, 6.2 ms indexed. Same checksum, and
- * the IEEE vector in `zip.test.ts` is what says so.
+ * `node:zlib` computes it natively. This was a table-driven byte loop in
+ * JavaScript, which R330 had already taken from 21.8 ms to 6.2 ms over a 2.7 MB
+ * `calculations.json` by indexing rather than iterating — and the loop is the
+ * wrong shape of work to hand V8 at all. Over a 7.6 MB entry (twenty runs of a
+ * 200-class cap table, which is what `calculations.json` is at this platform's
+ * own ceiling) it is **16.6 ms against 0.22 ms**, on the event loop of the
+ * process that is also serving every other request.
+ *
+ * Same polynomial and the same seeding convention, which is not something to
+ * take on faith for a checksum: verified equal on 200 random buffers, on the
+ * empty buffer, and on the appnote's own `123456789` -> `cbf43926` vector,
+ * which `zip.test.ts` pins from the other side.
+ *
+ * `zlib.crc32` has been in Node since 20.15 and this package requires 22, so
+ * there is no version to fall back for.
  */
 export function crc32(buf: Buffer): number {
-  let crc = 0xffffffff;
-  for (let i = 0; i < buf.length; i += 1) crc = CRC_TABLE[(crc ^ buf[i]!) & 0xff]! ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
+  return zlibCrc32(buf);
 }
 
 /** MS-DOS date/time pair as used by the ZIP format (2-second resolution). */

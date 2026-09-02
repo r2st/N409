@@ -60,6 +60,53 @@ describe('crc32', () => {
   it('empty input is 0', () => {
     expect(crc32(Buffer.alloc(0))).toBe(0);
   });
+
+  /*
+   * R367 (M8). The byte loop this replaced was 16.6 ms over a 7.6 MB entry
+   * against zlib's 0.22 ms, on the event loop of the process serving every
+   * other request — so the checksum now comes from `node:zlib` rather than
+   * from a table in this repository.
+   *
+   * The two vectors above are necessary and not sufficient. CRC-32 comes in
+   * variants that agree on `123456789` and on the empty input and disagree
+   * elsewhere — reflected or not, complemented or not — and a checksum that is
+   * wrong for *some* inputs is the worst version of this defect: the archive
+   * still opens for the reader that does not verify, and fails for the auditor
+   * who does. So the reference implementation stays, here, where it is the
+   * test's model of the appnote rather than the code under test.
+   */
+  it('agrees with the table-driven reference on arbitrary bytes', () => {
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      table[n] = c >>> 0;
+    }
+    const reference = (buf: Buffer): number => {
+      let crc = 0xffffffff;
+      for (let i = 0; i < buf.length; i += 1) crc = table[(crc ^ buf[i]!) & 0xff]! ^ (crc >>> 8);
+      return (crc ^ 0xffffffff) >>> 0;
+    };
+
+    // Deterministic rather than random: a checksum test that fails one run in
+    // fifty is a test nobody trusts. Lengths either side of a word boundary,
+    // all-zero and all-ones runs, and the high bytes a signed reading would
+    // mangle.
+    const cases: Buffer[] = [
+      Buffer.alloc(0),
+      Buffer.alloc(1, 0x00),
+      Buffer.alloc(1, 0xff),
+      Buffer.from('n409-evidence-bundle/1', 'utf8'),
+      Buffer.alloc(4096, 0x00),
+      Buffer.alloc(4096, 0xff),
+    ];
+    for (const length of [3, 4, 5, 7, 8, 9, 255, 256, 257, 65_537]) {
+      const buf = Buffer.alloc(length);
+      for (let i = 0; i < length; i += 1) buf[i] = (i * 31 + (i >> 3)) & 0xff;
+      cases.push(buf);
+    }
+    for (const buf of cases) expect(crc32(buf)).toBe(reference(buf));
+  });
 });
 
 describe('buildZip', () => {
