@@ -168,6 +168,51 @@ describe('ProjectionPanel', () => {
     expect(await screen.findByText(/Re-run the calculation/)).toBeInTheDocument();
   });
 
+  /*
+   * Round 360 (M5). A forecast whose terminal year has no positive EBITDA
+   * cannot carry an exit multiple, so the apply route clears
+   * `terminal_metric`/`terminal_metric_basis` on the engagement and reports it
+   * on `terminal_metric_warning`. This panel read `recalculation_required` and
+   * nothing else, so an analyst who had adopted a terminal metric had it
+   * removed — moving the terminal value from an exit multiple to Gordon, and
+   * so the concluded value — under the single word "Adopted."
+   */
+  it('says when adopting cleared the terminal metric', async () => {
+    const warning =
+      'The terminal year’s EBITDA is -250000, which an exit multiple cannot be struck against. ' +
+      'Any previously adopted terminal metric has been cleared; a Gordon terminal value is the ' +
+      'method this forecast supports.';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (!init || init.method === undefined || init.method === 'GET')
+        return jsonResponse({
+          projections: [RUN],
+          applied_free_cash_flows: null,
+          applied_matches_run: false,
+        });
+      if (path.endsWith('/projection/run')) return jsonResponse({ projection: RUN }, 201);
+      return jsonResponse({
+        projection: { ...RUN, applied_at: '2026-08-02T09:00:00.000Z' },
+        applied_free_cash_flows: RUN.free_cash_flows,
+        recalculation_required: true,
+        adopted_terminal_metric: null,
+        terminal_metric_warning: warning,
+      });
+    });
+    panel();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Adopt as the valuation’s cash flows' }),
+    );
+
+    // The adoption still happened and still says so...
+    expect(await screen.findByText(/Re-run the calculation/)).toBeInTheDocument();
+    // ...and the change nobody asked for is announced rather than left to the
+    // next Calculate.
+    const said = await screen.findByText(new RegExp('exit multiple cannot be struck against'));
+    expect(said).toHaveAttribute('role', 'alert');
+  });
+
   it('renders the per-year build behind the stream', async () => {
     mockApi({ projections: [RUN], applied_free_cash_flows: RUN.free_cash_flows, applied_matches_run: true });
     panel();

@@ -166,6 +166,11 @@ export function ProjectionPanel({
   const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  /*
+   * A consequence of the last action that is neither a refusal nor good news
+   * (round 360, methodology M5). See `adopt`.
+   */
+  const [warning, setWarning] = useState<string | null>(null);
 
   const [method, setMethod] = useState<'growth' | 'driver'>('growth');
   const [growth, setGrowth] = useState({ ...EMPTY_GROWTH });
@@ -192,6 +197,7 @@ export function ProjectionPanel({
   const run = async (work: () => Promise<unknown>, failure: string) => {
     setBusy(true);
     setError(null);
+    setWarning(null);
     try {
       await work();
       await load();
@@ -313,15 +319,31 @@ export function ProjectionPanel({
 
   const adopt = (row: Projection) =>
     run(async () => {
-      const res = await api<{ recalculation_required: boolean }>(
-        `/valuations/${valuationId}/projection/${row.id}/apply`,
-        { method: 'POST', body: {} },
-      );
+      const res = await api<{
+        recalculation_required: boolean;
+        terminal_metric_warning?: string | null;
+      }>(`/valuations/${valuationId}/projection/${row.id}/apply`, { method: 'POST', body: {} });
       setNote(
         res.recalculation_required
           ? 'Adopted. Re-run the calculation for the concluded value to reflect the new cash flows.'
           : 'Adopted. The calculation already ran on these cash flows.',
       );
+      /*
+       * The half of the adoption nobody was told about (round 360, M5).
+       *
+       * A forecast whose terminal year has no positive EBITDA cannot carry an
+       * exit multiple, so the route clears `terminal_metric` and
+       * `terminal_metric_basis` on the engagement and says so on
+       * `terminal_metric_warning`. This panel read `recalculation_required`
+       * and nothing else, so an analyst who had adopted a terminal metric had
+       * it removed — changing the terminal value from an exit multiple to
+       * Gordon, and so the concluded value — under the word "Adopted."
+       *
+       * The route's own comment on the sibling field says the alternative is
+       * discovering it on the next Calculate. This one was not even that: the
+       * next Calculate simply runs Gordon.
+       */
+      if (res.terminal_metric_warning) setWarning(res.terminal_metric_warning);
     }, 'Could not adopt the forecast as the valuation’s cash flows.');
 
   if (error && !data) return <LoadError message={error} {...retryProps} />;
@@ -375,6 +397,14 @@ export function ProjectionPanel({
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
         </div>
+      )}
+      {warning && (
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          {warning}
+        </p>
       )}
       {note && (
         <div
