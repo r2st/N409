@@ -180,6 +180,12 @@ export {
   type CgroupReadOptions,
   type GaugeSink,
 } from './cgroupMemory.js';
+export {
+  readDiskSpace,
+  registerDiskMetrics,
+  type DiskReadOptions,
+  type DiskSpace,
+} from './diskSpace.js';
 export { TtlCache } from './cache.js';
 export {
   conditionalJson,

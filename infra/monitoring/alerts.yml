@@ -249,6 +249,60 @@ groups:
           summary: '{{ $labels.job }} has had a process killed by the cgroup OOM handler'
           runbook: 'journalctl -u n409-<unit> --grep=oom; the unit is still up, so something under it is not'
 
+  - name: n409-disk
+    rules:
+      # The other finite resource on this box, and the one that had no gauge at
+      # all until R353.
+      #
+      # Memory has had a ceiling since R99, a reading of it since R337 and four
+      # rules since. A full disk has the wider blast radius and arrived with no
+      # lead time whatsoever: PostgreSQL stops accepting writes, so every write
+      # on the estate answers `503 database-unavailable` — which is
+      # `databaseUnavailableReason` working exactly as designed and says nothing
+      # about the cause; uploads fail at `open` with ENOSPC; the nightly dump
+      # has nowhere to land on precisely the day somebody wants to restore from
+      # it; and the journal that would describe all three is the first thing
+      # dropped. Every one of those is a symptom after the fact.
+      #
+      # Reported from the valuation unit only, which is the one that owns
+      # `DOCUMENTS_DIR`. This host has one volume — the cluster, the documents
+      # and the journal share it — so one reading answers for the box, and three
+      # units reporting the same filesystem would be three pages for one
+      # condition. `mount` is the role rather than the device: what an operator
+      # needs first is what stops working.
+      #
+      # `bavail`, not `bfree`: ext4 reserves 5% for root, so a service running as
+      # `n409` hits ENOSPC with the naive free-space figure still comfortable.
+      #
+      # A ratio and not an absolute, for the reason `HighServerErrorRate` is a
+      # ratio: "eight gigabytes left" is a different situation on a 40 GB volume
+      # and on a 400 GB one, and the volume is resized without anybody
+      # remembering this file.
+      - alert: DiskFillingUp
+        expr: |
+          n409_disk_available_bytes / (n409_disk_total_bytes > 0) < 0.15
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.mount }} filesystem is over 85% full'
+          runbook: 'du -xh --max-depth=2 / | sort -h | tail -30; the usual three are the documents directory, /var/lib/postgresql and the journal (journalctl --vacuum-size=200M)'
+
+      # The same reading past the point where it is somebody's Tuesday.
+      #
+      # `for` is short on purpose. The gap between the two thresholds is not
+      # time, it is room: a volume that has gone from 15% free to 5% free is one
+      # that is filling from something still running, and what is left is the
+      # margin in which a person can still SSH in, write a file and take a dump
+      # of the database. Waiting out a long window here spends exactly that.
+      - alert: DiskNearlyFull
+        expr: |
+          n409_disk_available_bytes / (n409_disk_total_bytes > 0) < 0.05
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: 'the {{ $labels.mount }} filesystem is over 95% full — writes are about to start failing'
+          runbook: 'PostgreSQL refusing writes and uploads failing with ENOSPC are the next symptoms, and both read as an application outage. Free space before diagnosing anything else.'
+
   - name: n409-http
     rules:
       # Rate, not count: "forty 5xx" means nothing without knowing whether that

@@ -14,6 +14,7 @@ import {
   registerHttpMetrics,
   registerMetricsEndpoint,
   registerCgroupMemoryMetrics,
+  registerDiskMetrics,
   registerProcessMetrics,
   registerNoStoreDefault,
   registerPermissionsPolicy,
@@ -789,6 +790,26 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // seconds, leaving nothing in this process's own output to say it happened.
   // No-op off Linux and on a cgroup v1 host — see cgroupMemory.ts.
   registerCgroupMemoryMetrics(metricsRegistry);
+  /*
+   * And the other finite resource on the same box, which had no gauge at all.
+   *
+   * Memory has had one since R337 and two rules since. A full disk is the
+   * failure with the wider blast radius and it arrived with no lead time
+   * whatsoever: PostgreSQL stops accepting writes and every write answers
+   * `503 database-unavailable`, uploads fail at `open` with ENOSPC, the nightly
+   * dump has nowhere to land on exactly the day somebody needs it, and the
+   * journal that would describe all three is the first thing dropped. Every one
+   * of those is a symptom after the fact, and none of them names the disk.
+   *
+   * One role, because this host has one volume: `DOCUMENTS_DIR` is on the same
+   * filesystem as the cluster and the journal, so a single reading answers for
+   * the box — and it is named for what stops working rather than for the
+   * device, so a second volume later is a second entry here rather than a
+   * rewrite. One `statfs` per scrape, which is what makes it honest to take
+   * inside one; see `diskSpace.ts` for why the read is deliberately allowed to
+   * throw rather than report a zero.
+   */
+  registerDiskMetrics(metricsRegistry, { documents: config.DOCUMENTS_DIR });
   metricsRegistry.gauge(
     'http_requests_in_flight',
     'Requests currently being served',
