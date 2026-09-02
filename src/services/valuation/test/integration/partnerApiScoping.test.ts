@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { PARTNER_API_ENDPOINTS, PARTNER_API_PREFIX } from '../../src/routes/partnerApi.js';
 import { recordDelivery } from '../../src/repos/partnerWebhooks.js';
+import { MAX_DOCUMENT_BYTES } from '../../src/routes/documents.js';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -343,6 +344,61 @@ describe.skipIf(!dbUp)('partner API scoping and paging', () => {
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().detail).toContain('base64');
+    // R350: all three of this route's upload refusals name the file. Its reader
+    // is a script partway through a batch, whose whole record of the failure is
+    // one line in its own log.
+    expect(res.json().detail).toContain('notes.pdf');
+    expect(res.json().filename).toBe('notes.pdf');
+  });
+
+  it('names the file, its size and the cap when the upload is over the limit', async () => {
+    // The one thing the session route's twin cannot say. `bufferUpload` is fed
+    // a stream busboy cut at the limit, so the size that was refused is
+    // unknowable there; here the body is decoded and in hand.
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/valuations/${ownValuationId}/documents`,
+      headers: keyHeader(apiKey),
+      payload: {
+        filename: 'huge.pdf',
+        content_base64: Buffer.alloc(MAX_DOCUMENT_BYTES + 1024, 0x41).toString('base64'),
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    const body = res.json();
+    expect(body.detail).toContain('huge.pdf');
+    expect(body.detail).toContain('25 MB limit');
+    expect(body.detail).toMatch(/none of it was stored/i);
+    expect(body.size_bytes).toBe(MAX_DOCUMENT_BYTES + 1024);
+    expect(body.limit_bytes).toBe(MAX_DOCUMENT_BYTES);
+  });
+
+  it('does not invite a retry of a file that decoded to nothing', async () => {
+    // Zero bytes that arrived intact is a failed export, not a lost transfer,
+    // and "Uploaded file is empty" said neither.
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/valuations/${ownValuationId}/documents`,
+      headers: keyHeader(apiKey),
+      // `'='` is padding and nothing else — well-formed, and decodes to no
+      // bytes. An empty string never reaches here; the schema's own min(1)
+      // refuses it first, naming the field.
+      payload: { filename: 'blank.pdf', content_base64: '=' },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toContain('blank.pdf');
+    expect(res.json().detail).toMatch(/will not help/i);
+  });
+
+  it('does not let an uploaded name reorder the sentence it is quoted in', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/valuations/${ownValuationId}/documents`,
+      headers: keyHeader(apiKey),
+      payload: { filename: 'memo\u202egnp.pdf', content_base64: 'not base64!!! @@@' },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).not.toContain('\u202e');
   });
 
   it('rejects a file whose bytes disagree with its name', async () => {

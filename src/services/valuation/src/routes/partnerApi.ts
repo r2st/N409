@@ -1039,21 +1039,66 @@ export function registerPartnerApiRoutes(
       const parsed = UploadBody.safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid upload', parsed.error);
 
+      /*
+       * The same three refusals as the session upload route, in the same words
+       * (R350, methodology M19).
+       *
+       * They were four, five and seven words here — "content_base64 is not
+       * valid base64", "Uploaded file is empty", "File exceeds the 25 MB
+       * limit" — against a paragraph apiece on `POST
+       * /valuations/:id/documents`, which says what zero bytes usually means
+       * and why re-sending will not help, and which `bufferUpload` gave a
+       * remedy for the size cap. None of the three named the file.
+       *
+       * That is the wrong way round. The session route's reader is looking at
+       * the file they just picked; this route's is a script partway through a
+       * batch, whose whole record of the failure is one line in their own log,
+       * and the filename is the only thing in it that identifies which upload
+       * it was about. The name goes through `safeFilename` for the reason the
+       * type refusal below already does: it is the partner's bytes, and a bidi
+       * control in it reorders the sentence their terminal draws.
+       *
+       * The size refusal can also do something its streaming twin cannot.
+       * `bufferUpload` states outright that the size that was not accepted is
+       * unknowable — busboy cut the stream at the limit — so it quotes only
+       * the cap. Here the whole body is decoded and in hand, so the figure is
+       * known and saying it is the difference between "split the file" and
+       * knowing whether splitting it in two is enough.
+       */
+      const named = safeFilename(parsed.data.filename);
       // Validate base64 encoding — Buffer.from silently skips invalid chars
       if (!/^[A-Za-z0-9+/]*={0,2}$/.test(parsed.data.content_base64)) {
-        throw problems.unprocessable('content_base64 is not valid base64');
+        throw problems.unprocessable(
+          `The body sent for “${named}” is not valid base64, so nothing was stored. ` +
+            'Encode the file with standard base64 (A–Z, a–z, 0–9, + and /, padded with =); ' +
+            'the URL-safe alphabet and embedded newlines are both refused.',
+          { filename: named },
+        );
       }
       const buffer = Buffer.from(parsed.data.content_base64, 'base64');
-      if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
+      if (buffer.length === 0) {
+        throw problems.unprocessable(
+          `“${named}” decodes to no data — it is zero bytes, so there is nothing to store. This is ` +
+            'usually a failed export or a placeholder rather than a transfer problem, so sending ' +
+            'it again will not help; check the file on disk first.',
+          { filename: named },
+        );
+      }
       if (buffer.length > MAX_DOCUMENT_BYTES) {
-        throw problems.unprocessable(`File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`);
+        const mb = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(1);
+        throw problems.unprocessable(
+          `“${named}” is ${mb(buffer.length)} MB, over the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB ` +
+            'limit, so none of it was stored. Split it, or send the pages or sheets that matter on ' +
+            'their own; a scanned document is usually much smaller re-exported as a compressed PDF.',
+          { filename: named, size_bytes: buffer.length, limit_bytes: MAX_DOCUMENT_BYTES },
+        );
       }
 
       // File type validation — same as the session upload route (audit B-1 P2)
       const typeCheck = checkUploadType(parsed.data.filename, buffer);
       if (!typeCheck.ok) {
         throw problems.unprocessable(`Rejected upload: ${typeCheck.reason}`, {
-          filename: safeFilename(parsed.data.filename),
+          filename: named,
           sniffed: typeCheck.sniffed,
         });
       }
