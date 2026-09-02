@@ -393,6 +393,41 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       }
 
       /*
+       * The half of the import that failed, said out loud (round 360,
+       * methodology M5).
+       *
+       * `fetchFinancials` catches the balance-sheet fetch separately and hands
+       * the reason back on `balance_sheet_error` rather than raising — right,
+       * because the revenue import the analyst asked for did work. But that
+       * string had no reader anywhere. The response carried it and the panel
+       * discarded the body to print "Financials imported"; `recordImport`
+       * folded it into `last_import_summary` and cleared `last_error`, so the
+       * connection reported a clean import; and nothing logged it, while the
+       * sentence it substitutes for an unvouched error says in as many words
+       * that the reason "is in the service log".
+       *
+       * What the silence costs: `engine_inputs.asset` is only written when both
+       * subtotals came through, so a run after this import concludes with no
+       * asset approach at all — from a screen that said the import succeeded.
+       *
+       * `warn`, not `error`: the import is a real one and the engagement is
+       * usable. Not recorded on the connection either — `recordImportError`
+       * would set `status = 'error'` on a connection that is working, and the
+       * next import would still be worth pressing.
+       */
+      if (financials.balance_sheet_error) {
+        req.log.warn(
+          {
+            provider,
+            connectionId: connection.id,
+            valuationId: valuation.id,
+            reason: financials.balance_sheet_error,
+          },
+          'accounting import completed without a balance sheet',
+        );
+      }
+
+      /*
        * The bound the params form enforces, on the figures nobody typed
        * (round 259, methodology M6).
        *

@@ -128,6 +128,42 @@ describe('AccountingConnect (§23)', () => {
     ).toBeInTheDocument();
   });
 
+  /*
+   * Round 360 (M5). The server fetches the P&L and the balance sheet
+   * separately; a balance sheet it could not read comes back on
+   * `balance_sheet_error` with the request still a 200, because the revenue
+   * params did update. This panel discarded the body, so the only thing on
+   * screen was "Financials imported" — while the engagement was left with no
+   * `asset.total_assets`, and the asset approach silently out of the next run.
+   */
+  it('says which half of the import did not come through', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/accounting/xero/import': () =>
+        jsonResponse({
+          imported: {
+            revenue_cents: 100,
+            balance_sheet_error: 'Xero balance sheet fetch failed (500)',
+          },
+        }),
+    });
+    renderComponent();
+    await screen.findByText('Xero');
+
+    await user.click(screen.getByRole('button', { name: 'Import financials' }));
+
+    // The import that did happen is still reported as one...
+    expect(
+      await screen.findByText('Financials imported — revenue params were updated from the P&L.'),
+    ).toBeInTheDocument();
+    // ...and the gap in it is said out loud, in the alert voice.
+    const said = await screen.findByText(
+      'Balance sheet not imported — Xero balance sheet fetch failed (500)',
+    );
+    expect(said).toBeInTheDocument();
+    expect(said.closest('[role="alert"]')).not.toBeNull();
+  });
+
   it('surfaces the OAuth redirect outcome from the query string', async () => {
     mockApi();
     renderComponent('/?accounting=connected&provider=xero');

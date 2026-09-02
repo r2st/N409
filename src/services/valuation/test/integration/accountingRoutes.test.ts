@@ -1,3 +1,5 @@
+import { Writable } from 'node:stream';
+import { pino } from 'pino';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -66,7 +68,14 @@ const XERO_BALANCE_SHEET = {
  * records what was asked for so a test can prove the exchange actually
  * happened rather than infer it from a stored row.
  */
-function xeroStub(overrides: { tokenStatus?: number; plStatus?: number; refreshStatus?: number } = {}) {
+function xeroStub(
+  overrides: {
+    tokenStatus?: number;
+    plStatus?: number;
+    refreshStatus?: number;
+    bsStatus?: number;
+  } = {},
+) {
   const calls: string[] = [];
   /** The `grant_type` of each token-endpoint call, in order. */
   const grants: string[] = [];
@@ -92,7 +101,12 @@ function xeroStub(overrides: { tokenStatus?: number; plStatus?: number; refreshS
       });
     }
     if (url.includes('/connections')) return json([{ tenantId: 'tenant-1', tenantName: 'Acme' }]);
-    if (url.includes('BalanceSheet')) return json(XERO_BALANCE_SHEET);
+    if (url.includes('BalanceSheet')) {
+      if (overrides.bsStatus && overrides.bsStatus !== 200) {
+        return new Response('upstream is down', { status: overrides.bsStatus });
+      }
+      return json(XERO_BALANCE_SHEET);
+    }
     if (url.includes('ProfitAndLoss')) {
       if (overrides.plStatus && overrides.plStatus !== 200) {
         return new Response('upstream is down', { status: overrides.plStatus });
@@ -515,6 +529,83 @@ describe.skipIf(!dbUp)('accounting routes', () => {
         expect(failing.calls.some((u) => u.includes('ProfitAndLoss'))).toBe(false);
         const connection = await findConnection(other.pool, id, 'xero');
         expect(connection!.last_error).toMatch(/reconnect Xero/i);
+      } finally {
+        await other.teardown();
+      }
+    });
+
+    /**
+     * Round 360 (M5). The balance sheet is fetched separately and its failure
+     * is reported on `balance_sheet_error` rather than raised, because the
+     * revenue import did work. Until this round that string had no reader
+     * anywhere: the panel discarded the body and printed "Financials
+     * imported", `recordImport` folded it into `last_import_summary` and
+     * cleared `last_error`, and nothing was logged — while the sentence it
+     * substitutes for an unvouched error says the reason "is in the service
+     * log". Meanwhile `engine_inputs.asset` is not written, so the next run
+     * concludes with no asset approach at all.
+     */
+    it('says out loud when the import came back without a balance sheet', async () => {
+      const failing = xeroStub({ bsStatus: 500 });
+      const other = await setupTestApp(
+        { PUBLIC_BASE_URL: BASE_URL, XERO_CLIENT_ID: 'xero-client', XERO_CLIENT_SECRET: 'xero-secret' },
+        { accountingFetch: failing.fetchFn },
+      );
+      try {
+        const lines: Array<Record<string, unknown>> = [];
+        (other.app.log as unknown as Record<symbol, unknown>)[pino.symbols.streamSym] = new Writable({
+          write(chunk, _enc, cb) {
+            lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+            cb();
+          },
+        });
+        // `setupTestApp` runs the logger silent, which is the state that hid
+        // this: turn it up only far enough to see the line under test.
+        other.app.log.level = 'warn';
+
+        const user = await seedUser(other, { roles: ['valuation_user'] });
+        const created = await other.app.inject({
+          method: 'POST',
+          url: '/api/v1/valuations',
+          headers: authHeader(user.token),
+          payload: { kind: '409a', company_name: 'No Balance Sheet Co' },
+        });
+        const id = created.json().valuation.id as string;
+        const started = await other.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/accounting/xero/connect`,
+          headers: authHeader(user.token),
+        });
+        const state = new URL(started.json().authorize_url).searchParams.get('state')!;
+        await other.app.inject({
+          method: 'GET',
+          url: `/api/v1/accounting/callback?state=${encodeURIComponent(state)}&code=abc`,
+        });
+
+        const res = await other.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/accounting/xero/import`,
+          headers: authHeader(user.token),
+        });
+
+        // The import the analyst asked for still succeeded...
+        expect(res.statusCode).toBe(200);
+        expect(res.json().imported.revenue_cents).toBe(50_000_000);
+        // ...and the half that did not is on the response for the panel to draw.
+        expect(res.json().imported.balance_sheet_error).toMatch(/500/);
+
+        // The asset approach has nothing, which is the cost of the silence.
+        const params = await findParams(other.pool, id);
+        expect((params!.engine_inputs as Record<string, unknown>).asset).toBeUndefined();
+
+        // And an operator has a line to find it by.
+        const said = lines.find(
+          (l) => l.msg === 'accounting import completed without a balance sheet',
+        );
+        expect(said).toBeDefined();
+        expect(said!.level).toBe('warn');
+        expect(said!.reason).toMatch(/500/);
+        expect(said!.valuationId).toBe(id);
       } finally {
         await other.teardown();
       }

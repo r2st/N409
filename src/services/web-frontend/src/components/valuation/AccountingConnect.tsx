@@ -133,8 +133,27 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
     setError(null);
     setNotice(null);
     try {
-      await api(`/valuations/${valuationId}/accounting/${provider}/import`, { method: 'POST' });
+      const { imported } = await api<{ imported: { balance_sheet_error?: string | null } }>(
+        `/valuations/${valuationId}/accounting/${provider}/import`,
+        { method: 'POST' },
+      );
       setNotice('Financials imported — revenue params were updated from the P&L.');
+      /*
+       * The half that did not come through (round 360). The server imports the
+       * P&L and the balance sheet separately: a balance sheet it could not
+       * fetch or could not recognise is reported on `balance_sheet_error` and
+       * the request still succeeds, because the revenue params did update.
+       *
+       * This panel discarded the body, so that sentence had no reader and the
+       * only thing on screen was "Financials imported". The engagement is then
+       * missing `asset.total_assets` / `total_liabilities`, and the asset
+       * approach is left out of the next run with nothing anywhere saying why.
+       *
+       * Both notes are drawn: the import is a real one, and the gap in it is
+       * not something to find out about from a valuation.
+       */
+      if (imported?.balance_sheet_error)
+        setError(`Balance sheet not imported — ${imported.balance_sheet_error}`);
       void load();
     } catch (err) {
       setError(describeActionFailure(err, 'Import failed.'));
