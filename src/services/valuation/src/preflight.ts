@@ -241,6 +241,18 @@ export interface PreflightOptions {
  * under one of the two readings is not a deployment anyone should have to reason
  * about.
  */
+/**
+ * A directory-listing failure in the few words that identify it. `ENOENT`
+ * (the path is not there) and `EACCES` (it is, and this process cannot read
+ * it) are different faults with different fixes, and the code is the shortest
+ * thing that says which.
+ */
+function listErrorText(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && code) return code;
+  return err instanceof Error ? err.message : String(err);
+}
+
 export function preflight(options: PreflightOptions): PreflightResult {
   const read = options.readFile ?? ((file: string) => readFileSync(file, 'utf8'));
   const stat =
@@ -253,15 +265,51 @@ export function preflight(options: PreflightOptions): PreflightResult {
       }
     });
   const resolve = options.resolveEnvFile ?? ((declared: string) => declared);
-  const list =
-    options.readDir ??
-    ((dir: string) => {
-      try {
-        return readdirSync(dir);
-      } catch {
-        return [];
-      }
-    });
+  /**
+   * The entries of a directory — and a directory that cannot be listed is a
+   * fault, not an empty one.
+   *
+   * WHAT THIS USED TO BE (R368, methodology M5). `catch { return [] }`. Every
+   * check in this file that iterates a directory therefore had two ways to
+   * find nothing to complain about, and could not tell them apart: the
+   * directory holding no unguarded unit, and the directory not being readable.
+   *
+   * That is precisely the vacuity the two callers exist to prevent. The sweep
+   * below is there because `KNOWN_UNITS` is a hardcoded list and "a check whose
+   * scope is a hardcoded list silently narrows to nothing the moment reality
+   * grows past it"; `unitResourceFaults` iterates the *installer's* directories
+   * for the same reason, and returns before the estate-ceiling sum when it
+   * collected no ceilings at all. Hand either of them a path that is not there
+   * — `--install-dir` naming `infra/backup` on a host where the archive did not
+   * unpack it, a directory renamed, a mode that excludes the deploy user — and
+   * both find nothing, raise nothing, and the CLI prints `memory ceilings
+   * checked in <that very directory>`. A checker pointed at a directory it
+   * cannot read is the same failure as `install-units.sh`'s own note about a
+   * checker pointed at a file nothing reads, and that script gets this right on
+   * the same paths one step later: `[[ -d "$abs" ]] || die`.
+   */
+  const listed = (dir: string): { entries: string[]; error: unknown } => {
+    try {
+      const readDir = options.readDir ?? ((d: string): string[] => readdirSync(d));
+      return { entries: readDir(dir), error: null };
+    } catch (err) {
+      return { entries: [], error: err };
+    }
+  };
+  const list = (dir: string, into: PreflightFault[]): string[] => {
+    const { entries, error } = listed(dir);
+    if (error !== null) {
+      into.push({
+        scope: dir,
+        message:
+          `could not be listed (${listErrorText(error)}) — every guard in this checker that reads ` +
+          'this directory found nothing in it, which is indistinguishable from finding nothing wrong. ' +
+          'install-units.sh installs every unit under it, so a directory this process cannot read is ' +
+          'either the wrong path or one the deploy user cannot see.',
+      });
+    }
+    return entries;
+  };
   const faults: PreflightFault[] = [];
   const units: string[] = [];
   /** Env files already reported on, so one shared `.env` is not reported five times. */
@@ -380,7 +428,7 @@ export function preflight(options: PreflightOptions): PreflightResult {
   // is answered either by giving it one or by not shipping it in this
   // directory.
   const known = new Set(KNOWN_UNITS);
-  for (const entry of list(options.unitDir).sort()) {
+  for (const entry of list(options.unitDir, faults).sort()) {
     if (!entry.endsWith('.service')) continue;
     if (known.has(entry)) continue;
     faults.push({
@@ -453,7 +501,7 @@ const MODELLED_FLOORS: Record<string, () => { bytes: number; why: string }> = {
 function unitResourceFaults(
   options: PreflightOptions,
   read: (file: string) => string,
-  list: (dir: string) => string[],
+  list: (dir: string, into: PreflightFault[]) => string[],
 ): PreflightFault[] {
   const faults: PreflightFault[] = [];
   const dirs = options.installDirs ?? [options.unitDir];
@@ -464,7 +512,7 @@ function unitResourceFaults(
   const seen = new Set<string>();
 
   for (const dir of dirs) {
-    for (const entry of list(dir).sort()) {
+    for (const entry of list(dir, faults).sort()) {
       if (!entry.endsWith('.service')) continue;
       if (seen.has(entry)) continue;
       seen.add(entry);

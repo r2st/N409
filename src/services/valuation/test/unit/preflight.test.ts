@@ -195,6 +195,7 @@ describe('the environment file itself', () => {
       resolveEnvFile: () => '/opt/N409/.env',
       readFile: (file) => (file === '/opt/N409/.env' ? GOOD_ENV : (UNITS[file.replace('/units/', '')] ?? '')),
       statFile: () => null,
+      readDir: () => Object.keys(UNITS),
     });
     expect(result.faults).toEqual([]);
   });
@@ -635,5 +636,68 @@ describe('memory ceilings', () => {
         ).totalBytes,
     });
     expect(formatFaults(both)).toBe('');
+  });
+
+  /*
+   * R368 (M5). `list` was `catch { return [] }`, so a directory that could not
+   * be read reached both sweeps as a directory holding nothing — and finding
+   * nothing is what "no faults" looks like. `unitResourceFaults` then returns
+   * before the estate sum, because it collected no ceilings; the sweep for
+   * unguarded units finds none; and `preflight-cli` prints "memory ceilings
+   * checked in <dir>" about a directory it never opened.
+   *
+   * `--install-dir` is where this bites: `deploy.sh` names `infra/backup`
+   * alongside `infra/systemd`, and `install-units.sh` — reading the same two
+   * paths one step later — dies on a path that is not a directory. The checker
+   * that runs first said the estate was clean.
+   */
+  it('reports a directory it cannot list rather than reading it as empty', () => {
+    const result = preflight({
+      unitDir: '/units',
+      installDirs: ['/units', '/gone'],
+      resolveEnvFile: () => '/opt/N409/.env',
+      readFile: (file) => {
+        if (file === '/opt/N409/.env') return GOOD_ENV;
+        const text = UNITS[file.replace('/units/', '')];
+        if (text === undefined) throw new Error(`ENOENT ${file}`);
+        return text;
+      },
+      statFile: () => 0o100600,
+      readDir: (dir) => {
+        if (dir !== '/units') {
+          throw Object.assign(new Error(`ENOENT: no such file or directory, scandir '${dir}'`), {
+            code: 'ENOENT',
+          });
+        }
+        return Object.keys(UNITS);
+      },
+    });
+    const listing = result.faults.filter((f) => f.scope === '/gone');
+    expect(listing).toHaveLength(1);
+    // The code, because ENOENT (the wrong path) and EACCES (the right path,
+    // unreadable by the deploy user) are different faults with different fixes.
+    expect(listing[0]!.message).toContain('ENOENT');
+    expect(listing[0]!.message).toContain('could not be listed');
+  });
+
+  it('says nothing about a directory it can list and that holds nothing extra', () => {
+    // Vacuity guard for the guard: an empty install directory is a legitimate
+    // deployment — `infra/backup` holds two units today and could hold none —
+    // and must not be confused with one that would not open.
+    const result = preflight({
+      unitDir: '/units',
+      installDirs: ['/units', '/empty'],
+      resolveEnvFile: () => '/opt/N409/.env',
+      readFile: (file) => {
+        if (file === '/opt/N409/.env') return GOOD_ENV;
+        const text = UNITS[file.replace('/units/', '')];
+        if (text === undefined) throw new Error(`ENOENT ${file}`);
+        return text;
+      },
+      statFile: () => 0o100600,
+      readDir: (dir) => (dir === '/units' ? Object.keys(UNITS) : []),
+    });
+    expect(result.faults.filter((f) => f.scope === '/empty')).toEqual([]);
+    expect(formatFaults(result)).toBe('');
   });
 });
