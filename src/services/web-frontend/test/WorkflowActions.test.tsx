@@ -140,6 +140,35 @@ describe('WorkflowActions', () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
+  /**
+   * When the server says nothing, the panel's own sentence is the whole
+   * message — and all three buttons used to send the same one (R374, M19).
+   *
+   * "Workflow action failed." is `Action failed.` with the section heading
+   * prefixed to it: a verb with no object, standing for advance, restart and
+   * reassign at once, and the only word in it that is not a category is the
+   * heading the reader is already looking at. `describeActionFailure` reads
+   * this half exactly when the problem body carried no `detail`, which is the
+   * failure the reader can least interpret on their own.
+   */
+  it('names which workflow action failed when the server says nothing', async () => {
+    const cases = [
+      { button: /Advance →/i, says: /could not be moved to In review/i },
+      { button: 'Restart', says: /could not be sent back to the first stage/i },
+    ] as const;
+    for (const { button, says } of cases) {
+      vi.restoreAllMocks();
+      // A body with no `detail` — `registerProblemHandler`'s unhandled-500 arm.
+      mockApi([], { workflow: () => jsonResponse({ title: 'Internal Server Error' }, 500) });
+      const { unmount } = render(
+        <WorkflowActions valuation={valuation({ state: 'completed', paid_status: 'unpaid' })} onChanged={vi.fn()} />,
+      );
+      await userEvent.click(await screen.findByRole('button', { name: button }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(says);
+      unmount();
+    }
+  });
+
   describe('reassignment', () => {
     it('labels the reviewer picker so clicking the label focuses it', async () => {
       mockApi([]);

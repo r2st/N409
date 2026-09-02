@@ -58,14 +58,25 @@ export function WorkflowActions({
       : AUTO_ADVANCE[valuation.state];
   const canRestart = valuation.state !== 'published' && valuation.state !== 'started';
 
-  const run = async (path: string, body?: unknown) => {
+  /*
+   * `operation` is per call, not per panel (R374, M19).
+   *
+   * The three buttons below shared one sentence — "Workflow action failed." —
+   * which is the shape R357 banned as `Action failed.`: a verb with no object,
+   * standing for several operations at once. The only word in it that was not
+   * a category was "Workflow", and that is the heading over the section the
+   * reader is already looking at. `describeActionFailure` returns the server's
+   * `detail` alone whenever there is one, so this half is read exactly when
+   * the server said nothing — which is when it is the entire message.
+   */
+  const run = async (path: string, operation: string, body?: unknown) => {
     setError(null);
     setBusy(true);
     try {
       await api(`/valuations/${valuation.id}/workflow/${path}`, { method: 'POST', body });
       await onChanged();
     } catch (err) {
-      setError(describeActionFailure(err, 'Workflow action failed.'));
+      setError(describeActionFailure(err, operation));
     } finally {
       setBusy(false);
     }
@@ -80,7 +91,14 @@ export function WorkflowActions({
         </div>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={busy || !next} onClick={() => void run('advance')}>
+        <Button disabled={busy || !next} onClick={() =>
+            void run(
+              'advance',
+              next
+                ? `This engagement could not be moved to ${STATE_LABELS[next]}.`
+                : 'This engagement could not be advanced.',
+            )
+          }>
           {next ? `Advance → ${STATE_LABELS[next]}` : 'No next step'}
         </Button>
         <Button
@@ -97,7 +115,7 @@ export function WorkflowActions({
                 ? 'This engagement is already at the first stage.'
                 : 'Send this engagement back to the first stage.'
           }
-          onClick={() => void run('restart')}
+          onClick={() => void run('restart', 'This engagement could not be sent back to the first stage.')}
         >
           Restart
         </Button>
@@ -137,7 +155,11 @@ export function WorkflowActions({
                 ? 'This is already the assigned reviewer. Pick a different one to reassign.'
                 : undefined
           }
-          onClick={() => void run('reassign', { reviewer_id: reviewerId || null })}
+          onClick={() =>
+            void run('reassign', 'The assigned reviewer could not be changed.', {
+              reviewer_id: reviewerId || null,
+            })
+          }
         >
           Reassign
         </Button>

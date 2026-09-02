@@ -213,7 +213,12 @@ describe('HrisSyncPanel (feature 11)', () => {
     renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Import now' }));
-    expect(await screen.findByText(/Sync failed\./)).toBeInTheDocument();
+    // Names what was being done, not the verb alone: "Sync failed." stood for
+    // this pull and for the cap-table pull one panel over, and the object of
+    // the sentence is the only part that told the two apart (R374, M19).
+    expect(
+      await screen.findByText(/roster and grants could not be pulled from this provider/i),
+    ).toBeInTheDocument();
   });
 
   it('changes the cadence and reloads on the answer', async () => {

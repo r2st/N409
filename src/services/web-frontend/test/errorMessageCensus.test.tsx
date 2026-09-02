@@ -79,6 +79,22 @@ const CONTENTLESS = [
    */
   /^Action failed[.]?$/i,
   /^Could not save[.]?$/i,
+  /*
+   * R374, and the same rule read one notch lower. `Workflow action failed.`
+   * was the operation on all three buttons of `WorkflowActions` — advance,
+   * restart, reassign — reached through one `run(path)` helper, so it is
+   * "Action failed." with the section heading prefixed to it, and the heading
+   * is the word the reader is already looking at. `Sync failed.` stood for the
+   * HRIS pull and the cap-table pull, in two different panels of two different
+   * subsystems.
+   *
+   * Neither was found by an assertion; both were found by reading the list of
+   * operations, which is the only thing that finds a sentence that parses and
+   * says nothing. They are banned by name for the reason the four above are —
+   * so the next person to reach for the phrase has to write the object.
+   */
+  /^Workflow action failed[.]?$/i,
+  /^Sync failed[.]?$/i,
 ];
 
 /**
@@ -231,9 +247,20 @@ describe('a page that cannot reach the server says so', () => {
   });
 
   it('still names the operation at every one of them', () => {
-    const idiom = sources.flatMap(({ text }) => [
-      ...text.matchAll(/describeActionFailure\((?:err|e), '((?:[^\\']|\\.)*)'\)/g),
-    ]);
+    /*
+     * Every string literal in the operation argument, not the literal that
+     * happens to sit directly after the comma (R374). A call site whose
+     * operation depends on what the caller is doing writes it as a ternary —
+     * `apply ? 'The cap table could not be updated…' : '…could not be read…'` —
+     * and the old pattern matched neither arm, so the sites that had bothered
+     * to distinguish two operations were the ones this dropped from its
+     * population.
+     */
+    const idiom = sources.flatMap(({ text }) =>
+      [...text.matchAll(/describeActionFailure\((?:err|e),([\s\S]*?)\);/g)].flatMap((m) => [
+        ...m[1]!.matchAll(/'((?:[^\\'\n]|\\.)*)'/g),
+      ]),
+    );
     // The population is large and is expected to stay large.
     expect(idiom.length).toBeGreaterThan(150);
     const operations = idiom.map((m) => m[1]!);

@@ -163,7 +163,9 @@ export function CapTableSyncPanel({
         setPending({ provider, outcome });
       }
     } catch (err) {
-      setError(describeActionFailure(err, 'Sync failed.'));
+      setError(describeActionFailure(err, apply
+          ? 'The cap table could not be updated from this provider.'
+          : 'The cap table could not be read from this provider.'));
     } finally {
       setBusy(null);
     }

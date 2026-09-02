@@ -147,7 +147,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
       onImported();
       await load();
     } catch (err) {
-      setError(describeActionFailure(err, 'Sync failed.'));
+      setError(describeActionFailure(err, 'The roster and grants could not be pulled from this provider.'));
     } finally {
       setBusy(null);
     }
