@@ -408,20 +408,34 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
 
   const load = useCallback(async () => {
     setScenarioLoadError(null);
+    /*
+     * Both reads are issued before either is awaited. They are two independent
+     * documents of one valuation — `valuation_params` and the engine inputs
+     * beside it — and neither request is derived from the other's answer, so
+     * awaiting them in turn cost the panel two round trips to fill one form.
+     *
+     * The `catch` below is not error handling: it marks the second promise as
+     * handled for the window in which the first one's rejection sends us to
+     * the outer catch without ever awaiting it. The real handling is the inner
+     * `await` and its own catch, which still sees the original rejection.
+     */
+    const paramsRequest = api<{ params: ValuationParams }>(`/valuations/${valuationId}/params`);
+    const engineInputsRequest = api<{
+      engine_inputs: {
+        pwerm?: { scenarios?: unknown[] };
+        hybrid?: { opm_weight?: number | null; pwerm_weight?: number | null };
+      };
+    }>(`/valuations/${valuationId}/engine-inputs`);
+    void engineInputsRequest.catch(() => {});
     try {
-      const { params: p } = await api<{ params: ValuationParams }>(`/valuations/${valuationId}/params`);
+      const { params: p } = await paramsRequest;
       setParams(p);
       setVersion(p.version);
       setForm(fromParams(p));
       setDlomLegs(legsFromParams(p));
       loadSelections(p);
       try {
-        const { engine_inputs } = await api<{
-          engine_inputs: {
-            pwerm?: { scenarios?: unknown[] };
-            hybrid?: { opm_weight?: number | null; pwerm_weight?: number | null };
-          };
-        }>(`/valuations/${valuationId}/engine-inputs`);
+        const { engine_inputs } = await engineInputsRequest;
         const hy = engine_inputs?.hybrid;
         if (hy) {
           setHybridWeights((w) => ({

@@ -134,19 +134,35 @@ export function ReportTab() {
   const [conflictedWith, setConflictedWith] = useState<number | null>(null);
 
   const load = useCallback(async () => {
+    /*
+     * Two independent reads, issued together. The version history does not
+     * depend on the report body — `ops` is a prop, known before either request
+     * leaves — so awaiting the body first cost this tab two round trips to draw
+     * one screen for the only role that sees the history.
+     *
+     * The `catch` is not error handling: it marks the second promise handled
+     * for the window in which the body's rejection leaves the tab without ever
+     * awaiting it (a 404 here is "no report shared with this role yet", and the
+     * history 404s with it). The `await` below still sees the real rejection.
+     */
+    const reportRequest = api<{
+      report: Report;
+      version: { version: number; content: ReportContent } | null;
+    }>(`/valuations/${valuation.id}/report`);
+    const versionsRequest = ops
+      ? api<{ versions: ReportVersionSummary[]; truncated: boolean }>(
+          `/valuations/${valuation.id}/report/versions`,
+        )
+      : null;
+    void versionsRequest?.catch(() => {});
     try {
-      const res = await api<{ report: Report; version: { version: number; content: ReportContent } | null }>(
-        `/valuations/${valuation.id}/report`,
-      );
+      const res = await reportRequest;
       setReport(res.report);
       setContent(res.version?.content ?? null);
       setDirty(false);
       setConflictedWith(null);
-      if (ops) {
-        const { versions: v, truncated } = await api<{
-          versions: ReportVersionSummary[];
-          truncated: boolean;
-        }>(`/valuations/${valuation.id}/report/versions`);
+      if (versionsRequest) {
+        const { versions: v, truncated } = await versionsRequest;
         setVersions(v);
         setVersionsTruncated(truncated);
       }
