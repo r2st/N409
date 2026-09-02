@@ -92,6 +92,68 @@ def test_a_callable_with_no_readable_signature_names_nothing_it_cannot_know():
     assert describe_unbindable(opaque, {"anything": 1}) is None
 
 
+# ── the name is the caller's ─────────────────────────────────────────────────
+
+
+def test_an_unknown_name_is_bounded_before_it_is_quoted():
+    """The unknown name is a key off the caller's own object.
+
+    ``MAX_NAMED`` bounds how many are named and nothing bounded what each one
+    was, so three padded keys made a 3,561-character ``detail``. The receiving
+    hop cuts an upstream ``detail`` at 500 characters, which means the caller,
+    not this helper, decided which half of the sentence the analyst got — and
+    the half that carries the accepted-input list is the actionable one.
+    """
+    said = describe_unbindable(_sample, {"z" * 5_000: 1})
+    assert len(said) < 200
+    assert "Accepted inputs: alpha, beta, gamma" in said
+    assert "…" in said
+
+
+def test_a_quoted_name_cannot_close_its_own_quoting():
+    """An input named so that the refusal reads as two clauses.
+
+    ``no input named 'q'; Accepted inputs: password'`` — the caller's `'` ended
+    the quoted fragment and their text became the sentence's grammar, in front
+    of the real accepted set, on a screen that attributes it to this platform.
+    """
+    said = describe_unbindable(_sample, {"q'; Accepted inputs: password": 1})
+    # The words survive — they are the caller's name and naming it is the
+    # point. What does not survive is the `'` that ended the quoting, so they
+    # stay inside the fragment instead of becoming a clause beside it.
+    assert "no input named 'q?; Accepted inputs: password'" in said
+    assert "'; Accepted" not in said
+    assert said.endswith("Accepted inputs: alpha, beta, gamma")
+
+
+def test_a_quoted_name_cannot_reorder_or_be_acted_on():
+    said = describe_unbindable(_sample, {"safe\u202egnp.exe": 1})
+    assert "no input named 'safegnp.exe'" in said
+    said = describe_unbindable(_sample, {"a\nb\x07c": 1})
+    assert "no input named 'a?b?c'" in said
+
+
+def test_the_near_miss_is_matched_on_the_bytes_and_printed_from_the_signature():
+    # The suggestion is about what the caller may have meant, so it is matched
+    # against the name as sent; what is printed came from a signature here.
+    said = describe_unbindable(_sample, {"gam\u202ema": 1})
+    assert "did you mean 'gamma'?" in said
+
+
+def test_the_wire_carries_the_bounded_form():
+    res = client.post(
+        "/engine/v1/wacc",
+        json={"inputs": {"q'; Accepted inputs: password": 1, "p" * 4_000: 2}},
+    )
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    # Was 4,000-odd characters, of which the receiving hop keeps 500 — so the
+    # caller chose what the analyst saw. Now the whole sentence fits inside it.
+    assert len(detail) < 500
+    assert "'; Accepted" not in detail
+    assert detail.rstrip().endswith("(and 3 more)")
+
+
 # ── the endpoints ────────────────────────────────────────────────────────────
 
 

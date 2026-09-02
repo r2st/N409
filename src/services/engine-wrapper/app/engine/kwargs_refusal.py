@@ -25,6 +25,8 @@ import inspect
 from collections.abc import Mapping
 from typing import Callable, Iterable, Sequence
 
+from .display_text import quote_for_message
+
 # How many names a clause lists before it counts the rest. A refusal stops
 # being read once it stops fitting where the UI puts it, and `project_financials`
 # accepts 22 inputs.
@@ -74,10 +76,23 @@ def _listed(names: Sequence[str]) -> str:
 
 
 def _unknown_clause(unknown: Sequence[str], accepted: Sequence[str]) -> str:
+    """The names this calculation does not have, quoted back at the caller.
+
+    ``MAX_NAMED`` bounds how many are named and `quote_for_message` bounds what
+    each one may be. Both halves are needed: the name is a key off the caller's
+    own JSON object, so it is as long and as strange as they care to make it,
+    and this sentence is shown to an analyst verbatim.
+
+    The near miss is matched against the *raw* name — a spelling this
+    calculation might have meant is about the bytes sent, not about their
+    display form — and only the accepted name it finds is printed, which came
+    from a signature here. See :mod:`app.engine.display_text`.
+    """
     parts = []
     for name in unknown[:MAX_NAMED]:
         near = difflib.get_close_matches(name, accepted, n=1, cutoff=0.7)
-        parts.append(f"no input named '{name}'" + (f" (did you mean '{near[0]}'?)" if near else ""))
+        shown = quote_for_message(name)
+        parts.append(f"no input named '{shown}'" + (f" (did you mean '{near[0]}'?)" if near else ""))
     hidden = len(unknown) - len(parts)
     if hidden > 0:
         parts.append(f"and {hidden} more unrecognised name{'' if hidden == 1 else 's'}")
