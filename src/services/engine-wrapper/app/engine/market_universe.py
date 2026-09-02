@@ -50,7 +50,7 @@ from datetime import datetime, timezone
 
 from .market_data import Company
 from .market_data import _COMPANIES as SNAPSHOT  # noqa: PLC2701 — same package
-from .market_feed import UNSET, MarketFeedClient
+from .market_feed import NO_PROVIDER_REASON, UNSET, MarketFeedClient
 
 __all__ = [
     "UniverseResolution",
@@ -373,12 +373,21 @@ def resolve_universe(
 
         feed = default_client() if client is UNSET else client
         if not isinstance(feed, MarketFeedClient) or feed.provider is None:
-            # The ordinary case with yfinance not installed. Cached like any
-            # other resolution so the next screen does not retry the import.
+            # The ordinary case with no live provider. Cached like any other
+            # resolution so the next screen does not retry the import.
+            #
+            # The reason comes from the client, which settled it when it tried
+            # to build the provider (R368, M5). This line used to state
+            # "yfinance not installed" as a fact, and it is the analyst-facing
+            # half of that sentence: it is rendered into `universe.warnings` on
+            # a comparables screen. An import that failed for any other reason —
+            # a transitive dependency gone, an ABI mismatch after an in-place
+            # upgrade — reported a package that is sitting right there as
+            # missing.
+            reason = getattr(feed, "no_provider_reason", NO_PROVIDER_REASON)
             resolved = _snapshot_only(
                 snapshot,
-                ["no market-data provider available (yfinance not installed) — "
-                 "screening against the static snapshot"],
+                [f"{reason} — screening against the static snapshot"],
             )
             if cached_ok:
                 _store(resolved, clock)

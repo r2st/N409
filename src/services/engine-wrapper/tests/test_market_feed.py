@@ -107,7 +107,7 @@ def test_no_provider_returns_fallback():
     c = MarketFeedClient(provider=None)  # explicitly disable the live source
     out = c.get_company_financials("DDOG", fallback={"beta": 1.3})
     assert out["source"] == "fallback"
-    assert "yfinance not installed" in out["warning"]
+    assert "no market-data provider" in out["warning"]
     assert out["beta"] == 1.3  # LLM-estimated fallback surfaced
 
 
@@ -166,7 +166,7 @@ def test_a_missing_provider_is_logged_too(caplog):
     assert len(records) == 1
     assert records[0].feed_kind == "financials"
     assert records[0].ticker == "DDOG"
-    assert "yfinance not installed" in records[0].detail
+    assert "no market-data provider" in records[0].detail
 
 
 def test_a_served_answer_logs_nothing():

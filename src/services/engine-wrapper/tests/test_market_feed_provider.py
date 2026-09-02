@@ -18,11 +18,13 @@ import sys
 import pytest
 
 from app.engine.market_feed import (
+    NO_PROVIDER_REASON,
     MarketFeedClient,
     YFinanceProvider,
     _drop_non_finite,
     _safe_float,
     default_provider,
+    resolve_default_provider,
 )
 
 
@@ -171,6 +173,104 @@ def test_default_provider_is_none_when_the_library_is_absent(monkeypatch):
     # so this reproduces an install without the optional `market` extra.
     monkeypatch.setitem(sys.modules, "yfinance", None)
     assert default_provider() is None
+
+
+# ── Why there is no provider (R368, M5) ──────────────────────────────────────
+#
+# `default_provider` answered every one of these with `None`, and `_cached`
+# then told the log and the analyst "yfinance not installed" about all of them.
+# Three of the four are misbuilt boxes where the package is present, and the
+# exception that said which was discarded before anything could read it.
+
+
+def test_an_absent_library_names_the_module_that_is_missing(monkeypatch, caplog):
+    monkeypatch.setitem(sys.modules, "yfinance", None)
+    with caplog.at_level("WARNING", logger="market_feed"):
+        provider, reason = resolve_default_provider()
+    assert provider is None
+    assert "could not be imported" in reason
+    events = [r for r in caplog.records if getattr(r, "event", None) == "market_feed_provider_unavailable"]
+    assert len(events) == 1
+    assert events[0].detail == reason
+
+
+def test_a_transitive_dependency_is_named_rather_than_yfinance(monkeypatch):
+    """The commonest misbuild that is *not* an absent yfinance.
+
+    yfinance imports pandas and numpy at module scope. With one of those gone
+    the `ImportError` names it, not yfinance — and a message reading "yfinance
+    not installed" sends the operator to look for a package that is sitting
+    right there.
+    """
+
+    def _raise(*_a, **_k):
+        raise ImportError("No module named 'pandas'")
+
+    monkeypatch.setattr("builtins.__import__", _raise)
+    provider, reason = resolve_default_provider()
+    assert provider is None
+    assert "pandas" in reason
+
+
+def test_an_import_that_raises_something_other_than_import_error_says_so(monkeypatch, caplog):
+    """A partial `pip install --upgrade` leaves numpy and pandas disagreeing
+    about their C ABI, and the import raises `ValueError` out of the extension
+    rather than `ImportError`. The bare `except Exception` that used to be here
+    turned that into the same four words as an absent package.
+    """
+
+    def _raise(name, *_a, **_k):
+        if name == "yfinance":
+            raise ValueError("numpy.dtype size changed, may indicate binary incompatibility")
+        return _real_import(name, *_a, **_k)
+
+    _real_import = __import__
+    monkeypatch.setattr("builtins.__import__", _raise)
+    with caplog.at_level("WARNING", logger="market_feed"):
+        provider, reason = resolve_default_provider()
+    assert provider is None
+    assert "ValueError" in reason
+    assert "binary incompatibility" in reason
+    assert [r for r in caplog.records if getattr(r, "event", None) == "market_feed_provider_unavailable"]
+
+
+def test_the_reason_reaches_the_payload_the_analyst_reads(monkeypatch):
+    """The whole point of carrying it: the fallback `warning` is rendered on a
+    comparables screen, and it is where an operator first sees this at all.
+    """
+
+    def _raise(name, *_a, **_k):
+        if name == "yfinance":
+            raise ValueError("numpy.dtype size changed")
+        return _real_import(name, *_a, **_k)
+
+    _real_import = __import__
+    monkeypatch.setattr("builtins.__import__", _raise)
+    out = MarketFeedClient().get_company_financials("DDOG", fallback={"beta": 1.3})
+    assert out["source"] == "fallback"
+    assert "numpy.dtype size changed" in out["warning"]
+
+
+def test_a_live_provider_carries_no_reason(fake_yfinance):
+    # Vacuity guard: the assertions above would all pass against a resolver
+    # that never returns a provider.
+    provider, reason = resolve_default_provider()
+    assert isinstance(provider, YFinanceProvider)
+    assert reason == ""
+
+
+def test_an_explicit_opt_out_is_not_reported_as_a_failure(fake_yfinance, caplog):
+    """`MarketFeedClient(provider=None)` is a caller saying "no live source",
+    which is how the whole test tree runs. It has no exception behind it, so it
+    must neither quote one nor log.
+    """
+    with caplog.at_level("WARNING", logger="market_feed"):
+        c = MarketFeedClient(provider=None)
+    assert c.no_provider_reason == NO_PROVIDER_REASON
+    assert "yfinance" not in c.no_provider_reason
+    assert not [
+        r for r in caplog.records if getattr(r, "event", None) == "market_feed_provider_unavailable"
+    ]
 
 
 def test_client_resolves_the_default_provider_when_none_is_passed(fake_yfinance):

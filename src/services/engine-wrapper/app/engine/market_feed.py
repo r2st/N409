@@ -38,6 +38,7 @@ __all__ = [
     "MarketFeedClient",
     "YFinanceProvider",
     "default_provider",
+    "resolve_default_provider",
     "fetch_timeout_seconds",
     "UNSET",
 ]
@@ -104,12 +105,77 @@ class YFinanceProvider:
         }
 
 
-def default_provider():
-    """The yfinance provider if the library is importable, else None."""
+#: What `_cached` tells the caller when there is no provider at all. Kept as a
+#: constant because it is the reason a caller sees when the client was
+#: constructed with `provider=None` — an explicit opt-out, which has no failure
+#: behind it to quote.
+NO_PROVIDER_REASON = "no market-data provider available (no market-data provider is configured)"
+
+
+def resolve_default_provider() -> tuple[object | None, str]:
+    """The live provider, or `None` and the sentence saying why there isn't one.
+
+    WHY THE REASON IS CARRIED (R368, methodology M5). This used to be
+    `except Exception: return None`, and the sentence every caller then saw —
+    from `_cached`, in the `warning` line R305 added and in the `warning` field
+    of the fallback payload the analyst reads — was the fixed string *"yfinance
+    not installed"*. That is one diagnosis stated with certainty over a `catch`
+    that admitted four:
+
+      - the package genuinely absent, which is the sentence;
+      - the package present and one of *its* imports absent, which raises
+        `ImportError` naming pandas or numpy, not yfinance;
+      - the package present and unimportable — a numpy/pandas ABI mismatch
+        after a partial `pip install` raises `ValueError` or `AttributeError`
+        out of the C extension, which is the commonest way this breaks on a box
+        that has been upgraded in place;
+      - anything else the import executes.
+
+    In the last three the message is false, and the exception that would have
+    said so was discarded without ever reaching a log. `requirements.txt`
+    declares yfinance, so all four mean the same thing operationally — this
+    deployment is misbuilt — but they do not mean the same thing to whoever has
+    to fix it, and "not installed" sends them to look for a package that is
+    sitting right there.
+
+    So the exception is quoted, into the reason and into a line of its own. The
+    line is here rather than at the fallback because this runs once per client
+    and `default_client()` holds one for the life of the process: a misbuilt
+    image says so at startup, instead of only on the first valuation that
+    happens to want market data.
+    """
     try:
-        return YFinanceProvider()
-    except Exception:
-        return None
+        return YFinanceProvider(), ""
+    except ImportError as exc:
+        # `ImportError` from a *transitive* dependency reads exactly like the
+        # package's own absence at this level, so the module name in `exc` is
+        # the whole difference and it goes in the sentence.
+        reason = f"no market-data provider available (yfinance could not be imported: {exc})"
+    except Exception as exc:  # noqa: BLE001 - an import runs arbitrary module code
+        reason = (
+            "no market-data provider available "
+            f"(importing yfinance raised {type(exc).__name__}: {exc})"
+        )
+    _log.warning(
+        "market-data provider unavailable; every fetch will fall back to caller-supplied figures",
+        extra={
+            "event": "market_feed_provider_unavailable",
+            # `detail`, not a key of its own, for the reason `_fallback` gives:
+            # this quotes an exception's own words and `detail` is redacted like
+            # the message. See `_EXTRA_KEYS` in app/observability.py.
+            "detail": reason,
+        },
+    )
+    return None, reason
+
+
+def default_provider():
+    """The yfinance provider if the library is importable, else None.
+
+    The reason-carrying form is `resolve_default_provider`; this is the shape
+    the tests and any caller that only wants the object ask for.
+    """
+    return resolve_default_provider()[0]
 
 
 # How long a memoized fetch stays usable, and how many are kept.
@@ -306,7 +372,13 @@ class MarketFeedClient:
         fetch_timeout_s: float | None = None,
         multiples_budget_s: float | None = None,
     ) -> None:
-        self.provider = default_provider() if provider is UNSET else provider
+        if provider is UNSET:
+            self.provider, self.no_provider_reason = resolve_default_provider()
+        else:
+            # An explicit `provider=None` is an opt-out, not a failure; there is
+            # no exception behind it to quote.
+            self.provider = provider
+            self.no_provider_reason = NO_PROVIDER_REASON
         # key → (expires_at, result). Insertion order doubles as recency, the
         # same way the Node side's TtlCache bounds itself.
         self.cache: dict = cache if cache is not None else {}
@@ -400,8 +472,12 @@ class MarketFeedClient:
         kind = str(key[0]) if key else "unknown"
         ticker = key[1] if len(key) > 1 else None
         if self.provider is None:
+            # The reason was settled when this client was built, and it names
+            # which of the four ways there is no provider this one is — see
+            # `resolve_default_provider`. It used to be the fixed sentence
+            # "yfinance not installed", which was true of one of them.
             return self._fallback(
-                "no market-data provider available (yfinance not installed)",
+                self.no_provider_reason,
                 fallback,
                 kind=kind,
                 ticker=ticker,

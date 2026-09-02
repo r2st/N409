@@ -376,7 +376,7 @@ def test_no_provider_falls_back_to_the_snapshot_without_raising():
     assert resolution.companies == SNAP
     assert resolution.live_count == 0
     assert resolution.as_of is None
-    assert "yfinance not installed" in resolution.warnings[0]
+    assert "no market-data provider" in resolution.warnings[0]
 
 
 def test_a_total_outage_falls_back_to_the_snapshot():
@@ -588,7 +588,7 @@ def test_the_screen_still_works_with_no_provider_at_all():
     result = screen_comparables(**TARGET, live=True)
     assert result["universe"]["source"] == "snapshot"
     assert len(result["selected"]) > 0
-    assert "yfinance not installed" in result["universe"]["warnings"][0]
+    assert "no market-data provider" in result["universe"]["warnings"][0]
 
 
 def test_the_full_analysis_carries_the_provenance_through():
