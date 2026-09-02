@@ -30,7 +30,10 @@ const SIGNED = [{ signed_at: SIGNED_AT }];
 const WRITTEN_BEFORE = [{ created_at: new Date('2026-08-14T00:00:00Z') }];
 /** The body written after — rule 4's case. */
 const WRITTEN_AFTER = [{ created_at: new Date('2026-08-16T00:00:00Z') }];
-const CALC = [{ id: 'calc-1', status: 'succeeded' }];
+/** The run the signature is about: computed before it was signed. */
+const CALC = [{ id: 'calc-1', status: 'succeeded', created_at: new Date('2026-08-13T00:00:00Z') }];
+/** The run computed after — rule 5's case. */
+const RECALCULATED = [{ id: 'calc-2', status: 'succeeded', created_at: new Date('2026-08-16T00:00:00Z') }];
 /** A report whose current body is the one the review below graded. */
 const REPORT_V4 = [{ current_version: 4 }];
 
@@ -152,6 +155,60 @@ describe('publish gate (signature + QA)', () => {
         'published',
       ),
     ).rejects.toMatchObject({ status: 409, detail: expect.stringContaining('since it was signed') });
+  });
+
+  it('blocks publish when the engine has been re-run since it was signed', async () => {
+    // Rule 5. Every QA rule is satisfied — the review below grades the *new*
+    // run and the body nobody touched — and rule 4 passes, because a
+    // recalculation writes no report version. What has changed is the concluded
+    // value: the summary page, the exhibits and the per-share figure are
+    // resolved from the newest run at render time, so the certification page
+    // would print the analyst's name and the 15th against a number computed on
+    // the 16th.
+    await expect(
+      assertPublishGate(
+        poolWith({
+          signatures: SIGNED,
+          calculations: RECALCULATED,
+          reports: REPORT_V4,
+          qaReviews: [{ status: 'pass', report_version: 4 }],
+        }),
+        'v1',
+        'published',
+      ),
+    ).rejects.toMatchObject({ status: 409, detail: expect.stringContaining('recalculated since it was signed') });
+  });
+
+  it('applies the recalculation rule to an engagement with no report body', async () => {
+    // Rule 5 sits before rule 4's `if (!report) return`, because a conclusion
+    // outlives the absence of a report: the auditor portal and the partner API
+    // both serve `equity_value` / `fmv_per_share` off this same latest run.
+    await expect(
+      assertPublishGate(
+        poolWith({
+          signatures: SIGNED,
+          calculations: RECALCULATED,
+          reports: [],
+          qaReviews: [{ status: 'pass', report_version: null }],
+        }),
+        'v1',
+        'published',
+      ),
+    ).rejects.toMatchObject({ status: 409, detail: expect.stringContaining('recalculated since it was signed') });
+  });
+
+  it('asks about the QA review before it asks about the re-signing', async () => {
+    // The remedy for a recalculation is two steps in an order: re-run QA over
+    // the new run, then sign what QA cleared. A gate that named the signature
+    // first would send the operator to sign a run no reviewer had graded, and
+    // they would be back here a moment later — rule 4's own argument.
+    await expect(
+      assertPublishGate(
+        poolWith({ signatures: SIGNED, calculations: RECALCULATED, reports: REPORT_V4 }),
+        'v1',
+        'published',
+      ),
+    ).rejects.toMatchObject({ detail: expect.stringContaining('QA review') });
   });
 
   it('does not read the report before the rules that come first', async () => {

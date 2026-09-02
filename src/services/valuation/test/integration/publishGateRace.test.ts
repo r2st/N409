@@ -106,6 +106,15 @@ describe.skipIf(!dbUp)('publish gate under concurrency', () => {
     return id;
   }
 
+  /** Sign again, so `signed_at` post-dates whatever has been computed since. */
+  const resign = (id: string) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/signatures`,
+      headers: authHeader(ops.token),
+      payload: { role: 'main', signer_name: 'Alice Analyst', signature_text: 'Alice Analyst' },
+    });
+
   /**
    * Repeated, because one run is not a test of this.
    *
@@ -231,6 +240,14 @@ describe.skipIf(!dbUp)('publish gate under concurrency', () => {
         },
         actor,
       );
+      // Re-signed over the run and the review, because rule 5 asks that the
+      // signature post-date the conclusion it certifies: `signedAtDraftAccepted`
+      // signs an engagement with nothing computed, and `first` lands after it.
+      // Without this the race would start from a state the gate already refuses,
+      // and the test would prove only that an unpublishable valuation stays
+      // unpublished.
+      expect(await resign(id)).toMatchObject({ statusCode: 201 });
+
       // The gate is satisfied right now — this is the state the race starts
       // from, and without it the test would prove only that an unpublishable
       // valuation stays unpublished.
@@ -247,10 +264,14 @@ describe.skipIf(!dbUp)('publish gate under concurrency', () => {
         expect(review!.status).not.toBe('fail');
       } else {
         // The recalculation won the lock; the publish was refused by the rule
-        // that now applies, and said which one.
+        // that now applies, and said which one. Two rules see this run: rule 2,
+        // because C2 carries no review, and rule 5, because C2 was computed
+        // after the signature. Either is the correct refusal — which one speaks
+        // depends on the order the gate asks in, and both name the step the
+        // operator has to take.
         expect(state, `run ${run}`).toBe('draft_accepted');
         expect(published.statusCode, `run ${run}`).toBe(409);
-        expect(published.json().detail).toContain('QA review');
+        expect(published.json().detail).toMatch(/QA review|recalculated since it was signed/);
       }
     }
   });

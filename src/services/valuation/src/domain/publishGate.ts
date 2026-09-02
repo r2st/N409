@@ -54,6 +54,12 @@ import { findReportByValuation, versionWrittenAt } from '../repos/reports.js';
  *    rule 3's, because re-signing before the re-review is the wrong order and
  *    the operator would land back here.
  *
+ * 5. And the *conclusion* the analyst signed must still be the one the
+ *    deliverable states (R372, methodology M3). Rule 4's argument stops where
+ *    the prose stops: the figures are render-time markers resolved against the
+ *    newest calculation, so re-running the engine restates the concluded value
+ *    without writing a report version — the only thing rule 4 can see.
+ *
  * Runs on the pool or on a transaction's client. Both readings matter and they
  * are not the same reading — see {@link assertPublishGateForWrite}.
  */
@@ -110,6 +116,47 @@ export async function assertPublishGate(
         'Quality gate: the report body has been edited since the last QA review — re-run QA before publishing',
       );
     }
+  }
+
+  /*
+   * Rule 5. The conclusion the analyst signed must still be the conclusion the
+   * deliverable states (R372, methodology M3).
+   *
+   * Rule 4 is the same argument about the prose, and it stops exactly where the
+   * prose stops. The figures are not in the body: `{{figures}}`, `{{exhibits}}`
+   * and `{{signatures}}` are markers the stored chapters keep, and the render
+   * resolves them — `routes/reports.ts` loads `latestCalculationForKind` on the
+   * way to the PDF and builds the summary page, the exhibit schedules and the
+   * concluded FMV out of whatever run is newest at that instant. So the equity
+   * value and the per-share figure on a signed report are late-bound in a way
+   * the chapters are not, and re-running the engine restates them without
+   * writing a report version, which is the only thing rule 4 can see.
+   *
+   * Which leaves the ordinary correction sequence open: sign, notice a wrong
+   * input, recompute, re-run QA — rules 2 and 3 both pass, being keyed to the
+   * new run and to a body nobody touched — then publish. The certification page
+   * prints "/s/ …, Date signed" against a concluded value the signer never saw,
+   * and it is the value that matters most: USPAP SR 10-3 certifies the analyses
+   * and the opinion, not the paragraphs around them, and the §409A safe
+   * harbour turns on an appraiser having concluded *this* number.
+   *
+   * The newest succeeded run of any shape, which is the row rule 2 already
+   * grades, rather than the report's own `latestCalculationForKind`. On a 409A
+   * engagement they are the same row. On a specialty one an off-kind run does
+   * not move the deliverable's figures, so this refuses a publish the
+   * deliverable would have survived — the conservative direction, and the one
+   * rule 2 already takes about the same row.
+   *
+   * Before rule 4's `if (!report) return`, because an engagement with no report
+   * body still has a conclusion: `routes/auditorPortal.ts` and the partner API
+   * both serve `equity_value` / `fmv_per_share` off that same latest run to
+   * readers outside the firm.
+   */
+  if (calculation && calculation.created_at.getTime() > signedAt.getTime()) {
+    throw problems.conflict(
+      'The valuation has been recalculated since it was signed — the signature on file certifies an ' +
+        'earlier conclusion. Re-sign the valuation before publishing.',
+    );
   }
 
   /*
