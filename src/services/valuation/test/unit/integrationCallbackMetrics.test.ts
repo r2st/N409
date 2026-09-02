@@ -143,4 +143,16 @@ describe('the integration callback outcome counter', () => {
     const app = readFileSync(path.resolve(HERE, '../../src/app.ts'), 'utf8');
     expect(app).toContain('registerIntegrationCallbackMetrics(metricsRegistry)');
   });
+
+  it('has a rule reading the one outcome that is never ordinary', () => {
+    // The other five are refusals and their rules are long-windowed ratios,
+    // because a cancelled consent screen is Tuesday. `unstored` has no ordinary
+    // version: one of them is a live access token and refresh token at a
+    // provider that nothing here can spend or revoke, and somebody has to go
+    // into that provider's console. A counter nothing alerts on would leave it
+    // where it was — in a query parameter in one person's browser.
+    const alerts = readFileSync(path.resolve(HERE, '../../../../../infra/monitoring/alerts.yml'), 'utf8');
+    expect(alerts).toContain('integration_callback_outcomes_total{outcome="unstored"}');
+    expect(alerts).toContain("grep 'the provider granted access and it could not be stored'");
+  });
 });

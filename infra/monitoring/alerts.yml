@@ -1323,3 +1323,23 @@ groups:
         annotations:
           summary: '{{ $labels.family }} connections are being refused after the OAuth hop — the engagement or the actor changed mid-flow'
           runbook: "journalctl -u n409-valuation | grep 'integration callback refused'"
+
+      # The sixth outcome, and the only one that is not a refusal (R382). The
+      # exchange returned and the write that stores its result did not, so the
+      # provider minted an access token and a refresh token against this
+      # deployment's OAuth app — standing access to a client's payroll roster or
+      # cap table — that nothing here recorded, and so nothing here can spend or
+      # revoke. Somebody has to go into the provider's console and withdraw it.
+      #
+      # No ratio and no `for`: the two rules above are long-windowed because a
+      # cancelled consent screen is Tuesday, and this one has no ordinary
+      # version. One is the incident. The threshold is therefore `> 0` over an
+      # hour rather than a rate, and the runbook line is the one place the
+      # credential is named at all.
+      - alert: IntegrationConnectGrantedButUnstored
+        expr: |
+          sum by (family) (increase(integration_callback_outcomes_total{outcome="unstored"}[1h])) > 0
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.family }} granted this deployment access and it could not be stored — revoke it in the provider'
+          runbook: "journalctl -u n409-valuation | grep 'the provider granted access and it could not be stored'"
