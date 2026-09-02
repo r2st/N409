@@ -175,6 +175,35 @@ describe('TemplatesPage', () => {
     expect(screen.getByText('409a.v55')).toBeInTheDocument();
   });
 
+  /*
+   * Four operations shared one wrapper and one message, "Action failed." — on a
+   * table of many rows, where activating is what decides the skeleton every
+   * 409A rendered from here uses next. The operation half is what the reader
+   * sees whenever the server sent no sentence of its own, which the test above
+   * is the other side of.
+   */
+  it('names the action when the server sent no sentence of its own', async () => {
+    mockApi(() => jsonResponse({ status: 500, title: 'Internal Server Error' }, 500));
+    renderPage();
+    await screen.findByText('409a.v54');
+
+    await userEvent.click(within(rowFor('409a.v55')).getByRole('button', { name: 'Activate' }));
+    const message = await screen.findByText(/Could not activate that template version\./);
+    expect(message).not.toHaveTextContent(/Action failed/);
+    // And not the reason phrase, which is the one string in a detail-less body
+    // guaranteed not to be about this request.
+    expect(message).not.toHaveTextContent('Internal Server Error');
+  });
+
+  it('tells archiving apart from activating', async () => {
+    mockApi(() => jsonResponse({ status: 500, title: 'Internal Server Error' }, 500));
+    renderPage();
+    await screen.findByText('409a.v54');
+
+    await userEvent.click(within(rowFor('409a.v54')).getByRole('button', { name: 'Archive' }));
+    await screen.findByText(/Could not archive that template\./);
+  });
+
   it('edits a draft body and PATCHes it, then closes the editor', async () => {
     const writes: Array<{ path: string; body: unknown }> = [];
     mockApi((path, init) => {
@@ -292,7 +321,9 @@ describe('TemplatesPage', () => {
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Activate' })[0]!);
 
-    expect(await screen.findByText(/Action failed\./)).toBeInTheDocument();
+    // R357: the wording it falls back to now names the action. It was "Action
+    // failed." for all four of this page's writes, on a table of many rows.
+    expect(await screen.findByText(/Could not activate that template version\./)).toBeInTheDocument();
   });
 
   /**

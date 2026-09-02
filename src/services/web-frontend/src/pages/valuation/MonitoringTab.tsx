@@ -64,14 +64,20 @@ export function MonitoringTab() {
     void load();
   }, [load, token]);
 
-  const act = async (fn: () => Promise<unknown>) => {
+  /*
+   * Starting and stopping a watch are opposite requests and shared one word.
+   * "Action failed." leaves the reader looking at a control whose label is the
+   * only clue to what they just asked for, which is the state the message
+   * exists to resolve.
+   */
+  const act = async (operation: string, fn: () => Promise<unknown>) => {
     setError(null);
     setBusy(true);
     try {
       await fn();
       await load();
     } catch (err) {
-      setError(describeActionFailure(err, 'Action failed.'));
+      setError(describeActionFailure(err, operation));
     } finally {
       setBusy(false);
     }
@@ -117,7 +123,9 @@ export function MonitoringTab() {
               <Button
                 disabled={busy}
                 onClick={() =>
-                  void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'POST', body: {} }))
+                  void act('Could not start monitoring this valuation.', () =>
+                    api(`/valuations/${valuation.id}/monitor`, { method: 'POST', body: {} }),
+                  )
                 }
               >
                 Enable monitoring
@@ -177,7 +185,9 @@ export function MonitoringTab() {
                   variant="secondary"
                   disabled={busy}
                   onClick={() =>
-                    void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'DELETE' }))
+                    void act('Could not stop monitoring this valuation.', () =>
+                      api(`/valuations/${valuation.id}/monitor`, { method: 'DELETE' }),
+                    )
                   }
                 >
                   Disable monitoring

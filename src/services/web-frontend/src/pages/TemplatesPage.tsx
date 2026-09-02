@@ -67,14 +67,20 @@ export function TemplatesPage() {
     void load();
   }, [load, token]);
 
-  const run = async (fn: () => Promise<unknown>) => {
+  /*
+   * Named by the caller: this wrapper carries four operations on a table of
+   * many rows, and "Action failed." says which of them about as well as it says
+   * which row. Activating is the one that costs most to leave unsaid — it is
+   * what decides the skeleton every 409A rendered from here uses next.
+   */
+  const run = async (operation: string, fn: () => Promise<unknown>) => {
     setActionError(null);
     setBusy(true);
     try {
       await fn();
       await load();
     } catch (err) {
-      setActionError(describeActionFailure(err, 'Action failed.'));
+      setActionError(describeActionFailure(err, operation));
     } finally {
       setBusy(false);
     }
@@ -98,7 +104,7 @@ export function TemplatesPage() {
   });
 
   const create = handleSubmit(() => {
-    void run(async () => {
+    void run('Could not create the template.', async () => {
       await api('/report-templates', {
         method: 'POST',
         body: { name: form.name.trim(), kind: form.kind, body: form.body },
@@ -236,7 +242,7 @@ export function TemplatesPage() {
                               <Button
                                 disabled={busy}
                                 onClick={() =>
-                                  void run(() =>
+                                  void run('Could not activate that template version.', () =>
                                     api(`/report-templates/${t.id}/activate`, { method: 'POST' }),
                                   )
                                 }
@@ -250,7 +256,9 @@ export function TemplatesPage() {
                               variant="ghost"
                               disabled={busy}
                               onClick={() =>
-                                void run(() => api(`/report-templates/${t.id}/archive`, { method: 'POST' }))
+                                void run('Could not archive that template.', () =>
+                                  api(`/report-templates/${t.id}/archive`, { method: 'POST' }),
+                                )
                               }
                             >
                               Archive
@@ -270,7 +278,7 @@ export function TemplatesPage() {
                               disabled={busy}
                               className="mt-2"
                               onClick={() =>
-                                void run(async () => {
+                                void run('Could not save the template draft.', async () => {
                                   await api(`/report-templates/${t.id}`, {
                                     method: 'PATCH',
                                     body: { body: editing.body },

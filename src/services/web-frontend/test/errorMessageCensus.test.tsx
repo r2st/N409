@@ -65,6 +65,20 @@ const CONTENTLESS = [
   // starts as a sentence does.
   /^Failed[.]?$/,
   /^Error[.]?$/,
+  /*
+   * R357. These reached `describeActionFailure` as the *operation* half, which
+   * is the half that names what the reader was doing — and they named a verb
+   * with no object, on wrappers shared by four operations each. "Could not
+   * save." was also the answer to two removals, where nothing was being saved
+   * and the sentence sent the reader back to a form rather than to the row
+   * still sitting there.
+   *
+   * They pass the length and whole-sentence rules below, which is why they
+   * belong here: an operation can be a grammatical sentence and still not be
+   * an operation.
+   */
+  /^Action failed[.]?$/i,
+  /^Could not save[.]?$/i,
 ];
 
 /**

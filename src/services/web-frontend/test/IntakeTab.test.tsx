@@ -332,6 +332,27 @@ describe('IntakeTab', () => {
   });
 
   describe('saving a section', () => {
+    /*
+     * The wizard is one section at a time behind Back/Next, so "Could not
+     * save." left the reader with a failed write and no way to tell which of
+     * the sections it was — including after stepping on, which is what the
+     * Save-then-Next path does. The section is in hand at the call site.
+     */
+    it('names the section it could not save', async () => {
+      const user = userEvent.setup();
+      // No `detail`, which is when the operation half is what gets shown:
+      // `describeActionFailure` prefers the server's own sentence.
+      mockApi({ save: () => json({ status: 500, title: 'Internal Server Error' }, 500) });
+      renderTab();
+      await ready();
+      await user.click(next());
+      await screen.findByRole('heading', { name: 'Financials' });
+      await user.click(screen.getByRole('button', { name: 'Save section' }));
+
+      const message = await screen.findByText(/Could not save the “Financials” section\./);
+      expect(message).not.toHaveTextContent('Internal Server Error');
+    });
+
     it('sends the whole section, nulling what is unanswered', async () => {
       // The server merges, so an omitted key is "leave as it was". Sending the
       // explicit null is what makes clearing an answer possible at all.

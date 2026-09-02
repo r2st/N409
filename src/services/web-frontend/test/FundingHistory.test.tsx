@@ -54,7 +54,7 @@ interface Call {
 
 function mockApi(
   state: { rounds?: FundingRound[]; transactions?: ValuationTransaction[] },
-  opts: { loadStatus?: number; writeStatus?: number } = {},
+  opts: { loadStatus?: number; writeStatus?: number; writeDetailless?: boolean } = {},
 ) {
   const calls: Call[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -68,6 +68,13 @@ function mockApi(
       return jsonResponse({ transactions: state.transactions ?? [] });
     }
     if (opts.writeStatus) {
+      // A body with no `detail` is the case the operation half exists for:
+      // `describeActionFailure` prefers the server's own sentence wherever
+      // there is one, and this is what `registerProblemHandler` sends when a
+      // route threw — a reason phrase and nothing about the request.
+      if (opts.writeDetailless) {
+        return jsonResponse({ status: opts.writeStatus, title: 'Internal Server Error' }, opts.writeStatus);
+      }
       return jsonResponse({ status: opts.writeStatus, detail: 'Refused by the server.' }, opts.writeStatus);
     }
     return jsonResponse({ ok: true }, method === 'POST' ? 201 : 200);
@@ -413,6 +420,36 @@ describe('FundingHistory', () => {
     await waitFor(() =>
       expect(calls.some((c) => c.method === 'DELETE' && c.path.endsWith('/transactions/txn-1'))).toBe(true),
     );
+  });
+
+  /*
+   * The four writes on this panel shared one wrapper and one message, "Could
+   * not save." — vague for the two adds and wrong for the two removes: nothing
+   * was being saved, and a reader told a save failed goes back to the form
+   * they had just filled in rather than to the row that is still there.
+   */
+  it('says a failed removal was a removal, not a failed save', async () => {
+    mockApi({ rounds: [round()] }, { writeStatus: 500, writeDetailless: true });
+    renderHistory();
+
+    const row = (await screen.findByText('Series A')).closest('tr') as HTMLElement;
+    await userEvent.click(within(row).getByRole('button', { name: 'Remove' }));
+
+    const message = await screen.findByText(/Could not remove that funding round\./);
+    // The second half is still `describeRequestFailure` — the operation names
+    // what was asked, not what went wrong.
+    expect(message).toHaveTextContent('500');
+    expect(message).not.toHaveTextContent(/Could not save/);
+  });
+
+  it('names the transaction it could not remove', async () => {
+    mockApi({ transactions: [txn()] }, { writeStatus: 500, writeDetailless: true });
+    renderHistory();
+
+    const row = (await screen.findByText('Secondary sale')).closest('tr') as HTMLElement;
+    await userEvent.click(within(row).getByRole('button', { name: 'Remove' }));
+
+    await screen.findByText(/Could not remove that secondary transaction\./);
   });
 
   it('shows a read-only viewer the history and no way to change it', async () => {

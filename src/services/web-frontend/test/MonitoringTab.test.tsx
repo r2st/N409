@@ -204,6 +204,30 @@ describe('MonitoringTab', () => {
     await waitFor(() => expect(writes).toEqual([`DELETE /api/v1/valuations/${valuation.id}/monitor`]));
   });
 
+  /*
+   * Starting and stopping a watch are opposite requests, and both were answered
+   * with "Action failed." The operation half is what a reader sees whenever the
+   * server sent no sentence of its own — `describeActionFailure` prefers the
+   * server's `detail` where there is one — which is exactly the failure they
+   * have least other information about.
+   */
+  it('says which of the two monitoring actions failed', async () => {
+    const detailless = () => jsonResponse({ status: 500, title: 'Internal Server Error' }, 500);
+
+    mockApi(OFF, detailless);
+    const view = renderTab();
+    await userEvent.click(await screen.findByRole('button', { name: /Enable monitoring/i }));
+    const started = await screen.findByText(/Could not start monitoring this valuation\./);
+    expect(started).not.toHaveTextContent(/Action failed/);
+    view.unmount();
+
+    vi.restoreAllMocks();
+    mockApi(ON_GREEN, detailless);
+    renderTab();
+    await userEvent.click(await screen.findByRole('button', { name: /Disable monitoring/i }));
+    await screen.findByText(/Could not stop monitoring this valuation\./);
+  });
+
   it('reports a failed load rather than spinning forever', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(problem(403, 'monitoring is operations-only'));
     renderTab();

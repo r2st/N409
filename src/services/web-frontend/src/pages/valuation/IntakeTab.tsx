@@ -117,7 +117,11 @@ export function IntakeTab() {
       setData((d) => (d ? { ...d, completion: res.completion, answers: res.answers } : d));
       return true;
     } catch (err) {
-      setError(describeActionFailure(err, 'Could not save.'));
+      // The section is in hand, so the message says which one: this form is
+      // long enough that its sections are collapsed, and a save failure that
+      // named none of them left the reader scrolling to find the one that did
+      // not go through.
+      setError(describeActionFailure(err, `Could not save the “${section.title}” section.`));
       return false;
     } finally {
       setBusy(false);

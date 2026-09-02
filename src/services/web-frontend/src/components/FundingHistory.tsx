@@ -77,14 +77,25 @@ export function FundingHistory({
     void load();
   }, [load]);
 
-  const run = async (fn: () => Promise<unknown>) => {
+  /*
+   * The operation is the caller's to name, because this wrapper serves four of
+   * them and two are removals.
+   *
+   * It answered all four with "Could not save.", which is vague for the two
+   * adds and simply untrue for the two removes: nothing was being saved, and a
+   * reader told a save failed goes back to the form they had just filled in
+   * rather than to the row that is still there. `describeActionFailure`
+   * concatenates this with the server's own sentence, so the cost of the
+   * shared wrapper was the whole first half of every message.
+   */
+  const run = async (operation: string, fn: () => Promise<unknown>) => {
     setError(null);
     setBusy(true);
     try {
       await fn();
       await load();
     } catch (err) {
-      setError(describeActionFailure(err, 'Could not save.'));
+      setError(describeActionFailure(err, operation));
     } finally {
       setBusy(false);
     }
@@ -110,7 +121,7 @@ export function FundingHistory({
   });
 
   const addRound = roundValidation.handleSubmit(() =>
-    run(async () => {
+    run('Could not add that funding round.', async () => {
       await api(`/valuations/${valuationId}/rounds`, {
         method: 'POST',
         body: {
@@ -131,7 +142,7 @@ export function FundingHistory({
   );
 
   const addTxn = txnValidation.handleSubmit(() =>
-    run(async () => {
+    run('Could not add that secondary transaction.', async () => {
       await api(`/valuations/${valuationId}/transactions`, {
         method: 'POST',
         body: {
@@ -271,7 +282,7 @@ export function FundingHistory({
                     <td className="py-2.5 text-right">
                       <button
                         onClick={() =>
-                          void run(() =>
+                          void run('Could not remove that funding round.', () =>
                             api(`/valuations/${valuationId}/rounds/${r.id}`, { method: 'DELETE' }),
                           )
                         }
@@ -393,7 +404,7 @@ export function FundingHistory({
                     <td className="py-2.5 text-right">
                       <button
                         onClick={() =>
-                          void run(() =>
+                          void run('Could not remove that secondary transaction.', () =>
                             api(`/valuations/${valuationId}/transactions/${t.id}`, { method: 'DELETE' }),
                           )
                         }
