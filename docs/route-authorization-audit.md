@@ -17,6 +17,7 @@ and for where each guard lives; run the tests to find out what is true now.
 | `test/integration/crossTenantResourceAccess.test.ts` | behavioural (**new, R157**) | 17 probes: firm B, signed in and valid, aimed at firm A's ids; each paired with firm A making the same request | resources with no second tenant |
 | `test/integration/partnerApiScoping.test.ts` | behavioural, registry-driven (**rewritten, R157**) | every `{id}`-scoped partner-API operation 404s for another firm's row, and serves the key's own | — |
 | `test/unit/authorizationCoverageCensus.test.ts` | source scan + real route table (**new, R185**) | the 75 routes that name *nothing* — `GET /tasks`, `/funds`, `/firm/clients`, `/support/messages` — consult the caller; **and** every authenticated route the app registers is claimed by exactly one of the five sweeps | the correctness of the filter, once one is present |
+| `test/unit/subResourceScopeCensus.test.ts` | source scan (**new, R381**) | the 28 routes whose second path parameter names a resource row tie that row to the parent in the URL — either by passing the parent through the child's lookup or by comparing the child's parent column back against it (27 do; the bridge is exempt and says why) | whether either id was *authorized*, which is what the scope sweeps above are for. It adds a rule over routes those sweeps already claim, so it is not a sixth partition of the table |
 | `test/unit/webhookSignatureCensus.test.ts` | source scan (**new, R185**) | every route behind a raw-buffer body parser reads a signature header, verifies it cryptographically over the raw bytes, and refuses on mismatch | outbound delivery signing, which `partnerWebhooks.test.ts` owns |
 | `test/integration/publicRouteThrottleCensus.test.ts` | behavioural | every route in `PUBLIC_ROUTES` is throttled, or `open` with an argument | — |
 | `test/integration/retiredEngagementWrites.test.ts`, `partnerApiRetired.test.ts` | behavioural, route-table-driven | no write reaches a withdrawn engagement | reads, which stay open by design |
@@ -93,6 +94,14 @@ guards, which is why they were still there:
    handler detached the engagement from whatever roll-up it was really in. Not
    an escalation, which is exactly why three sweeps walked past it: the fault is
    in the relationship between two ids that each pass their own check.
+
+   Routes with two path parameters were named here as the place to look for the
+   next one, and for a long time that was all that was asking. R381 turned it
+   into `subResourceScopeCensus.test.ts`: the rule is now stated over the whole
+   route table, so a sub-resource added next year is in the population the day
+   it is written. All 28 pass; `GET /valuations/:id/bridge/:compareId` is the
+   one exemption, and it carries its reason — two peer engagements, not a parent
+   and a child, so there is nothing to tie the second to.
 
 5. **Two privileged prefixes matched nothing.** `/api/v1/operations` and
    `/api/v1/prompts` had moved under `/api/v1/admin/` — coverage never lapsed,
