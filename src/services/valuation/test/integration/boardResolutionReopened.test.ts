@@ -114,6 +114,77 @@ describe.skipIf(!dbUp)('board resolution reopened', () => {
     expect(reopened[0]!.payload).toMatchObject({ from: 'approved' });
   });
 
+  /**
+   * The one recomputation a removal is not allowed to reach (R388, M3).
+   *
+   * The case above adds a second director who never decides, so the removal
+   * lands on 'pending' — which is what the reopen note describes removal as
+   * always doing. With the other director *signed*, the same DELETE recomputes
+   * to 'approved': `approved_at` — the safe-harbor moment under
+   * §1.409A-1(b)(5)(iv)(B) — stamped by a deletion, the spine's last word being
+   * `board_resolution_approved` with the operator who pressed remove as its
+   * actor, and no board member having done anything at that moment. A sign-off
+   * is write-once, so this was the only route from a recorded rejection to an
+   * approval.
+   */
+  it('will not turn a rejection into an adoption by removing the dissenter', async () => {
+    const { valuationId, memberId, token } = await newBoard('DissenterCo');
+    const other = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/board/members`,
+      headers: authHeader(ops.token),
+      payload: { name: 'Sam Vale', email: 'sam+dissenter@board.example' },
+    });
+    expect(other.statusCode).toBe(201);
+    expect((await sign(other.json().sign_token as string, 'signed')).statusCode).toBe(200);
+    expect((await sign(token, 'rejected')).statusCode).toBe(200);
+    expect((await board(valuationId)).status).toBe('rejected');
+
+    const refused = await removeMember(valuationId, memberId);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().detail).toMatch(/rejected/);
+    expect(refused.json().detail).toMatch(/Regenerate the resolution/);
+
+    // Nothing moved: the rejection stands, no approval was stamped, and the
+    // director is still on the list.
+    const after = await board(valuationId);
+    expect(after.status).toBe('rejected');
+    expect(after.approved_at).toBeNull();
+    expect(await spine(valuationId, 'board_resolution_approved')).toHaveLength(0);
+    expect(await spine(valuationId, 'board_member_removed')).toHaveLength(0);
+    expect(await findSignoffById(ctx.pool, memberId)).not.toBeNull();
+  });
+
+  /**
+   * The remedy the refusal names, taken. Regenerating reopens the resolution
+   * and discards every sign-off, so the board adopts on the record or does not.
+   */
+  it('lets the named remedy through', async () => {
+    const { valuationId, memberId, token } = await newBoard('DissenterRemedyCo');
+    const other = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/board/members`,
+      headers: authHeader(ops.token),
+      payload: { name: 'Sam Vale', email: 'sam+remedy@board.example' },
+    });
+    expect((await sign(other.json().sign_token as string, 'signed')).statusCode).toBe(200);
+    expect((await sign(token, 'rejected')).statusCode).toBe(200);
+
+    const regenerated = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/board`,
+      headers: authHeader(ops.token),
+      payload: { fmv_conclusion: 4.5 },
+    });
+    expect(regenerated.statusCode).toBe(201);
+    expect((await board(valuationId)).status).toBe('pending');
+    const reopened = await spine(valuationId, 'board_resolution_reopened');
+    expect(reopened).toHaveLength(1);
+    expect(reopened[0]!.payload).toMatchObject({ from: 'rejected' });
+    // The sign-offs went with it, so the removal question no longer arises.
+    expect(await findSignoffById(ctx.pool, memberId)).toBeNull();
+  });
+
   it('records it for a rejection withdrawn the same way', async () => {
     const { valuationId, memberId, token } = await newBoard('UnrejectCo');
     // A second director who never decides, so removing the first leaves the

@@ -415,12 +415,62 @@ export async function markMemberSent(pool: pg.Pool, signoffId: string): Promise<
   await pool.query('UPDATE board_signoffs SET sent_at = now() WHERE id = $1', [signoffId]);
 }
 
+/**
+ * Remove a director from the sign-off list.
+ *
+ * ONE OUTCOME IS REFUSED, AND IT IS THE ONE NOBODY SIGNED FOR (R388,
+ * methodology M3). `refreshResolutionStatusTx` recomputes the aggregate from
+ * the sign-offs that remain, and its own note reads removal as the *undoing* of
+ * a decision — "removing the sole director of an approved resolution, or the
+ * rejecting director of a rejected one" — landing on 'pending' with
+ * `approved_at` cleared and a `board_resolution_reopened` beside it. That is
+ * what it does whenever a member is left undecided.
+ *
+ * It is not what it does when every other member has signed. A resolution one
+ * director rejected, with the rest signed, recomputes to **'approved'** the
+ * moment the dissenter's row goes: `approved_at` — "the moment the board's
+ * adoption completed", the safe-harbor record under
+ * §1.409A-1(b)(5)(iv)(B) — is stamped by a DELETE, and the spine's last word on
+ * the FMV is `board_resolution_approved` with the operator who pressed remove
+ * as its actor. A sign-off is write-once (`recordSignoff`'s `status =
+ * 'pending'` predicate), so this is the only way a recorded rejection can
+ * become an approval, and no board member did anything at that moment.
+ *
+ * So the transition is refused rather than the removal: every other one stays
+ * available, including taking an approved resolution back to 'pending', which
+ * is the case the reopen event exists for. The remedy named is the sanctioned
+ * one — `upsertResolution` puts the document back to 'pending', discards the
+ * sign-offs and records the withdrawal, so a board that is going to adopt this
+ * FMV adopts it on the record.
+ */
 export async function deleteBoardMember(
   pool: pg.Pool,
   signoff: BoardSignoffRow,
   actor: EventActor,
 ): Promise<void> {
   await withTransaction(pool, async (client) => {
+    // Under the resolution's row lock, which `refreshResolutionStatusTx` takes
+    // again below: the status this reads has to be the one the recomputation
+    // will start from, and the set it asks about has to be the set that will be
+    // left. A second press of a double-clicked button reads the status the
+    // first one already moved, so it neither refuses nor writes.
+    const { rows: locked } = await client.query<{ status: BoardResolutionStatus }>(
+      'SELECT status FROM board_resolutions WHERE id = $1 FOR UPDATE',
+      [signoff.resolution_id],
+    );
+    if (locked[0]?.status === 'rejected') {
+      const { rows: remaining } = await client.query<{ status: BoardSignoffStatus }>(
+        'SELECT status FROM board_signoffs WHERE resolution_id = $1 AND id <> $2',
+        [signoff.resolution_id, signoff.id],
+      );
+      if (resolutionStatusFrom(remaining) === 'approved') {
+        throw problems.conflict(
+          'Removing this director would record the board as having adopted the fair market value it ' +
+            'rejected — every other member has signed, and no member signed at this moment. ' +
+            'Regenerate the resolution to put it back to the board, or leave the rejection on the record.',
+        );
+      }
+    }
     // Once per removal. The route reaches this through `findSignoffById`, a
     // statement earlier and on another connection, so two DELETEs off one read
     // is a double-clicked button — and the event below is the one place on this
