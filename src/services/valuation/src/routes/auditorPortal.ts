@@ -130,12 +130,18 @@ export function registerAuditorPortalRoutes(
     if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const expiresAt = new Date(Date.now() + parsed.data.expires_in_days * 24 * 60 * 60 * 1000);
-    const { access, token } = await createAuditorAccess(deps.pool, {
-      valuationId: valuation.id,
-      label: parsed.data.label,
-      expiresAt,
-      createdBy: principal.id,
-    });
+    const { access, token } = await createAuditorAccess(
+      deps.pool,
+      {
+        valuationId: valuation.id,
+        label: parsed.data.label,
+        expiresAt,
+        createdBy: principal.id,
+      },
+      // On the engagement's spine, in the transaction that mints the row. See
+      // `createAuditorAccess` for why the register of grants is not the record.
+      { actorType: 'human', actorId: principal.id, source: 'api' },
+    );
     const url = `${deps.publicBaseUrl.replace(/\/$/, '')}/auditor#token=${token}`;
     // The raw token + URL are returned once and never again.
     return reply.status(201).send({ access: toPublic(access), token, url });
@@ -156,7 +162,15 @@ export function registerAuditorPortalRoutes(
       const principal = requirePrincipal(req);
       const { id, accessId } = req.params as { id: string; accessId: string };
       const valuation = await loadManageable(principal, id);
-      if (!(await revokeAuditorAccess(deps.pool, valuation.id, accessId))) throw problems.notFound();
+      const revoked = await revokeAuditorAccess(deps.pool, valuation.id, accessId, {
+        actorType: 'human',
+        actorId: principal.id,
+        source: 'api',
+      });
+      // 404 covers both "no such grant" and "already revoked" — the statement's
+      // `revoked_at IS NULL` makes the second a no-op, and the event is written
+      // only on the pass that changed something.
+      if (!revoked) throw problems.notFound();
       return reply.status(204).send();
     },
   );

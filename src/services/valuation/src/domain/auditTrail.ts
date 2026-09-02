@@ -372,6 +372,26 @@ export const EVENT_CATALOG = {
   // thread it lands in (`email` kind) is ops-visible for the same reason.
   auditor_note_received: D('Auditor note received', 'review', 'notice'),
 
+  /*
+   * The link itself, which is the half nothing recorded (round 392, M11).
+   *
+   * `POST /valuations/:id/auditor-access` is the only door that hands a reader
+   * with no account the deliverable, the concluded value, the assumptions and
+   * the QA record, for as long as its expiry says. The board's external signing
+   * link — a strictly narrower grant — has written `board_member_added` and
+   * `board_member_removed` since it existed, and the auditor's reply writes
+   * `auditor_note_received` one line above. Only the grant and the withdrawal
+   * were silent, so this trail could show an outside reviewer putting something
+   * on the record with nothing anywhere saying who let them in, and `revoked_at`
+   * has never had an actor beside it.
+   *
+   * `notice` and `internal`, the same as the board pair: it is the firm's own
+   * decision about who reviews its work, and the payload names the grant's
+   * label and expiry — never the token or its hash.
+   */
+  auditor_access_granted: D('Auditor access granted', 'review', 'notice'),
+  auditor_access_revoked: D('Auditor access revoked', 'review', 'notice'),
+
   // ── Access & integration ────────────────────────────────────────────────
   email_received: D('Email received', 'access', 'info'),
   monitoring_enabled: D('Monitoring enabled', 'integration', 'info', 'client'),
