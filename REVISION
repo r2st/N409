@@ -11830,3 +11830,111 @@
 #            z.unknown())).max(MAX_CAP_TABLE_ENTRIES)` — the row count is
 #            bounded and the per-row key set is not, the same shape as the debt
 #            map without a confirmed renderer behind it.
+
+# R392 — Observability audit (M11). The question: a state change or an error
+#            path, and whether anything can see it. Two fixes and the census
+#            that derives them, at `d6bad2f8..12126542`.
+#
+#            Most of the round was walking a mature estate and finding it
+#            answered. Every sweep goes through `scheduleSweep`, which counts
+#            its runs, its failures and its per-outcome items, and
+#            `scheduledSweepRoster.test.ts` holds the roster equal to the
+#            timers. `registerProblemHandler` logs every 5xx, stamps
+#            `alert: true` on the unhandled ones and leaves 4xx silent on
+#            purpose. `reportRenderFailed` alerts on a render that produced no
+#            PDF, `configureReportPdfLogging` is installed by both hosts of the
+#            PDF library, `metricsWiringCensus` derives its population from the
+#            registrars themselves, the migration runner got R337, and the five
+#            `void`-and-forget sites in the service all carry a `logUnretried`
+#            or a `logFailure`. The valuation catalog has no orphan: all 92
+#            descriptors are written by something.
+#
+#            What was not answered was a class the estate keeps closing by
+#            hand: a repo that changes an engagement's state and reaches no
+#            spine.
+#
+#            bf83859 — the ASC 718 election. `asc718_settings` decides how the
+#            stock-compensation charge is measured: the expected term every
+#            grant that states none of its own inherits (`resolveExpectedTerm`
+#            reads it), the ESPP discount and lookback, the RSU performance
+#            conditions, the TSR peer basket, and whether the issuer is
+#            measured as public — which moves the underlying and the volatility
+#            onto a market feed. Each of those changes a figure that lands in
+#            somebody's financial statements. `upsertAsc718Settings` wrote the
+#            new values over the old and kept `updated_by`/`updated_at`: who
+#            saved last, never what moved. `POST /valuations/:id/asc718`
+#            persists nothing, so the settings row is the only state the whole
+#            surface holds. Every sibling already recorded one — `patchParams`,
+#            `upsertCompanyProfile`, the workbook, the methodology decisions,
+#            the overwrites — and R279 put the fund and debt measurement
+#            surfaces on the spine on exactly this argument. The event names
+#            the fields that *moved*, because the tab posts all seven columns
+#            on every save and a submitted-field list would be identical every
+#            time, which is where `upsertCompanyProfile` says that ends. Two
+#            normalisations make the diff true rather than merely present:
+#            `numeric` off the driver is a string that equals no number a
+#            caller sends, and `jsonb` does not keep key order, so without a
+#            canonical compare the basket and the conditions would report as
+#            edits nobody made on every save.
+#
+#            1c429c0 — the auditor's link, granted and taken back off the
+#            record. `POST /valuations/:id/auditor-access` is the only door
+#            that hands a reader with no account the deliverable, the concluded
+#            value, the assumptions and the QA record. The board's external
+#            signing link grants strictly less and has written
+#            `board_member_added`/`board_member_removed` since it existed; the
+#            auditor's *reply* writes `auditor_note_received`. So the trail
+#            could show an outside reviewer putting a finding on a signed
+#            deliverable with nothing anywhere saying who let them in. The
+#            counter-argument is on the repo — revoked and expired grants
+#            persist, and `listAuditorAccess` calls that "the audit trail" — and
+#            it is the same one R388 refused for `valuation_signatures`: a
+#            register of outstanding links is not a record of what happened to
+#            them, it is read by neither the change log nor the evidence bundle
+#            nor the client portal, and `revoked_at` is a timestamp with no
+#            actor column, so "who withdrew this auditor's access" had no
+#            answer at all. The revoke takes `RETURNING *` for the reason
+#            `deleteSignature` does. The payload carries the id, the label and
+#            the expiry and never the token or its hash.
+#
+#            1212654 — the census. Four hand-found instances over four rounds
+#            (R279's eleven, R388's two, R392's two) and nobody had derived the
+#            population. It is now the writes themselves: a repo mentioning
+#            `valuation_id` with an INSERT, UPDATE or DELETE — 50 today — must
+#            reach `recordEvent`/`recordEvents`, itself or through a module
+#            that imports it, or appear in `DECIDED` with a reason. Thirteen
+#            entries: the three connector families journal in
+#            `connector_sync_log`, six surfaces are on the admin spine with the
+#            reader that gives them, the outbox row is itself the record of a
+#            message, `inbox` is per-reader read state, `networkItems` is the
+#            observability journal rather than engagement state, and
+#            `communications` is in only because `valuation_id` appears in its
+#            candidate-selection reads and says so. Both directions, so a
+#            settled exemption fails as a position about nothing. Run against
+#            the pre-fix repos it names both by filename.
+#
+#            gap: the same question has never been asked of `admin_events`. Six
+#            of the thirteen exemptions above are "on the admin spine", and
+#            nothing derives the population of admin-scoped writes that reach
+#            it — `identityAuditCensus` covers one family of them and the
+#            billing spine another, which is two of the several.
+#            gap: `asc718Settings`' canonical `jsonb` compare is local to that
+#            repo. `patchParams` has seven jsonb columns and diffs them with
+#            `===` through `diffRecords`, so a caller that resends one of them
+#            unchanged — which the params form does, being a whole-form PATCH —
+#            reports it as an edit nobody made. Over-reporting is the safe
+#            direction and it is how `company_profile_updated` came to name
+#            sixteen fields on a postcode correction, which
+#            `upsertCompanyProfile` documents at length. A shared comparator is
+#            the fix and it touches the busiest audited write in the service.
+#            gap: `createAuditorAccess` is not in `credentialIssuingRoutes`'
+#            `CREDENTIAL_WRITES`. It mints a bearer that reads one engagement's
+#            deliverable, which is narrower than the six doors that list
+#            covers, and whether a scoped read-only link should demand a
+#            password is a security decision rather than an observability one —
+#            so it is named here rather than added there.
+#            gap: nothing observes that a *stored* ASC 718 setting has stopped
+#            matching the run that used it. The event says when the election
+#            moved; no reader compares it against the grants already measured
+#            under the previous one, which is the `stale_figure` question the
+#            QA gate asks about the report body and nobody asks here.
