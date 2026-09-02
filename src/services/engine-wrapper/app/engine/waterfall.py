@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 
 from .bs import bs_call, bs_call_delta, bs_call_terms
+from .display_text import quote_for_message
 from .errors import EngineInputError
 
 _KINDS = ("preferred", "common", "option")
@@ -94,8 +95,14 @@ def _normalize(classes: list[dict]) -> list[dict]:
         name = str(raw.get("name") or "").strip()
         if not name:
             raise EngineInputError(f"share_classes[{i}].name is required")
+        # `name` stays raw: it is the key the allocation is returned under, and
+        # two names that scrub alike are still two classes. `shown` is the copy
+        # every refusal below quotes — a class name comes off an imported cap
+        # table, so it is the caller's bytes rather than this product's words,
+        # and these sentences are drawn to an analyst. See display_text.
+        shown = quote_for_message(name)
         if name in names:
-            raise EngineInputError(f"share_classes: duplicate class name '{name}'")
+            raise EngineInputError(f"share_classes: duplicate class name '{shown}'")
         names.add(name)
         kind = raw.get("kind")
         if kind not in _KINDS:
@@ -112,13 +119,13 @@ def _normalize(classes: list[dict]) -> list[dict]:
             try:
                 pref = float(raw.get("preference"))
             except (TypeError, ValueError):
-                raise EngineInputError(f"'{name}': preference (total) is required for preferred") from None
-            _finite(pref, f"'{name}': preference")
+                raise EngineInputError(f"'{shown}': preference (total) is required for preferred") from None
+            _finite(pref, f"'{shown}': preference")
             if pref < 0:
-                raise EngineInputError(f"'{name}': preference must be >= 0")
+                raise EngineInputError(f"'{shown}': preference must be >= 0")
             seniority = raw.get("seniority", 1)
             if not isinstance(seniority, int) or isinstance(seniority, bool) or seniority < 1:
-                raise EngineInputError(f"'{name}': seniority must be an integer >= 1")
+                raise EngineInputError(f"'{shown}': seniority must be an integer >= 1")
             # `raw.get(...) or 1.0` would quietly turn a conversion_ratio of 0
             # into 1:1 and value the class as if it converted normally. Only an
             # absent or null ratio defaults; anything present is validated.
@@ -129,10 +136,10 @@ def _normalize(classes: list[dict]) -> list[dict]:
                 try:
                     ratio = float(raw_ratio)
                 except (TypeError, ValueError):
-                    raise EngineInputError(f"'{name}': conversion_ratio must be a number") from None
-            _finite(ratio, f"'{name}': conversion_ratio")
+                    raise EngineInputError(f"'{shown}': conversion_ratio must be a number") from None
+            _finite(ratio, f"'{shown}': conversion_ratio")
             if ratio <= 0:
-                raise EngineInputError(f"'{name}': conversion_ratio must be positive")
+                raise EngineInputError(f"'{shown}': conversion_ratio must be positive")
             # Both factors are finite and positive and their *product* still
             # need not be: the as-converted share count is what the residual
             # algebra actually runs on, and it is the figure that leaves the
@@ -154,7 +161,7 @@ def _normalize(classes: list[dict]) -> list[dict]:
             as_converted = shares * ratio
             if not math.isfinite(as_converted) or as_converted <= 0:
                 raise EngineInputError(
-                    f"'{name}': shares x conversion_ratio ({shares:g} x {ratio:g}) is not a "
+                    f"'{shown}': shares x conversion_ratio ({shares:g} x {ratio:g}) is not a "
                     "representable as-converted share count — the allocation is computed on the "
                     "converted count, so check both figures"
                 )
@@ -173,11 +180,11 @@ def _normalize(classes: list[dict]) -> list[dict]:
                 try:
                     cap = float(raw_cap)
                 except (TypeError, ValueError):
-                    raise EngineInputError(f"'{name}': participation_cap must be a number") from None
-                _finite(cap, f"'{name}': participation_cap")
+                    raise EngineInputError(f"'{shown}': participation_cap must be a number") from None
+                _finite(cap, f"'{shown}': participation_cap")
                 if not participating:
                     raise EngineInputError(
-                        f"'{name}': participation_cap applies only to participating preferred — "
+                        f"'{shown}': participation_cap applies only to participating preferred — "
                         "a non-participating class already stops at its preference"
                     )
                 # At or below the preference the class draws no residual at all,
@@ -189,7 +196,7 @@ def _normalize(classes: list[dict]) -> list[dict]:
                 # for it.
                 if cap <= pref:
                     raise EngineInputError(
-                        f"'{name}': participation_cap ({cap:g}) must exceed the liquidation "
+                        f"'{shown}': participation_cap ({cap:g}) must exceed the liquidation "
                         f"preference ({pref:g}) — a cap at or below the preference means the "
                         "class does not participate, which is `participating: false`"
                     )
@@ -204,10 +211,10 @@ def _normalize(classes: list[dict]) -> list[dict]:
             try:
                 strike = float(raw.get("strike"))
             except (TypeError, ValueError):
-                raise EngineInputError(f"'{name}': strike is required for options") from None
-            _finite(strike, f"'{name}': strike")
+                raise EngineInputError(f"'{shown}': strike is required for options") from None
+            _finite(strike, f"'{shown}': strike")
             if strike <= 0:
-                raise EngineInputError(f"'{name}': strike must be positive")
+                raise EngineInputError(f"'{shown}': strike must be positive")
             cls["strike"] = strike
         out.append(cls)
     if not any(c["kind"] == "common" for c in out):
@@ -815,4 +822,6 @@ def class_per_share(
     for c in normalized:
         if c["name"] == class_name:
             return values[c["name"]] / c["shares"]
-    raise EngineInputError(f"share class '{class_name}' not found in share_classes")
+    raise EngineInputError(
+        f"share class '{quote_for_message(str(class_name))}' not found in share_classes"
+    )

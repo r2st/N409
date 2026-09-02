@@ -39,6 +39,7 @@ import math
 
 from .compounding import compound_factor
 from .errors import EngineInputError
+from .display_text import quote_for_message
 from .kwargs_refusal import describe_unbindable
 
 # IRC §197 amortization period for purchased intangibles.
@@ -438,7 +439,8 @@ def value_intangible(method, params) -> dict:
     fn = _METHODS.get(str(method))
     if fn is None:
         raise EngineInputError(
-            f"unknown intangible method {method!r}; expected one of {sorted(_METHODS)}"
+            f"unknown intangible method '{quote_for_message(str(method))}'; "
+            f"expected one of {sorted(_METHODS)}"
         )
     if not isinstance(params, dict):
         raise EngineInputError("intangible params must be an object")

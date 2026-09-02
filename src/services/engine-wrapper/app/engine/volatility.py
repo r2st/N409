@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import statistics
 
+from .display_text import quote_for_message
 from .errors import EngineInputError
 
 __all__ = [
@@ -185,17 +186,20 @@ def parkinson_volatility(
 
 
 def _company_volatility(company: dict, method: str, periods_per_year: int) -> float:
+    # The ticker is whatever the caller put in the comparable, so the copy that
+    # goes into a refusal is bounded. See display_text.
+    shown = quote_for_message(str(company.get("ticker") or "?"))
     if method == "parkinson":
         highs = company.get("highs")
         lows = company.get("lows")
         if highs is None or lows is None:
             raise EngineInputError(
-                f"comparable '{company.get('ticker', '?')}' needs highs/lows for the parkinson method"
+                f"comparable '{shown}' needs highs/lows for the parkinson method"
             )
         return parkinson_volatility(highs, lows, periods_per_year=periods_per_year)
     prices = company.get("prices")
     if prices is None:
-        raise EngineInputError(f"comparable '{company.get('ticker', '?')}' needs a prices series")
+        raise EngineInputError(f"comparable '{shown}' needs a prices series")
     if method == "ewma":
         return ewma_volatility(prices, periods_per_year=periods_per_year)
     return historical_volatility(prices, periods_per_year=periods_per_year)

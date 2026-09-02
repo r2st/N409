@@ -26,6 +26,7 @@ import math
 from datetime import date
 
 from .compounding import compound_factor
+from .display_text import quote_for_message
 from .errors import EngineInputError
 
 __all__ = ["roll_forward", "DEFAULT_REVENUE_MATERIALITY", "DEFAULT_TIME_MATERIALITY_YEARS"]
@@ -151,14 +152,19 @@ def roll_forward(
         if not isinstance(adj, dict):
             raise EngineInputError("each value_adjustment must be an object")
         label = str(adj.get("label") or "adjustment")
-        pct = _num(adj.get("pct"), f"{label}.pct")
-        amount = _num(adj.get("amount"), f"{label}.amount")
+        # `label` stays raw — it is echoed back in the step it produces, where
+        # it is data the caller sent rather than prose this tier wrote. `shown`
+        # is the copy that goes into a refusal, including the field path a
+        # `_num` failure names. See display_text.
+        shown = quote_for_message(label)
+        pct = _num(adj.get("pct"), f"{shown}.pct")
+        amount = _num(adj.get("amount"), f"{shown}.amount")
         if pct is not None:
             equity *= 1.0 + pct
         if amount is not None:
             equity += amount
         if pct is None and amount is None:
-            raise EngineInputError(f"value_adjustment '{label}' needs pct or amount")
+            raise EngineInputError(f"value_adjustment '{shown}' needs pct or amount")
         steps.append({"step": "adjustment", "label": label, "value": round(equity, 2)})
 
     # Finiteness first: every individual input is finite by now, but the

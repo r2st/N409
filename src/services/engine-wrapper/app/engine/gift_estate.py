@@ -30,7 +30,13 @@ from __future__ import annotations
 
 import math
 
+from .display_text import quote_for_message
 from .errors import EngineInputError
+
+# How many unrecognised factor keys the refusal names before it counts the rest.
+# There are eight known factors and no bound on how many keys a caller sends;
+# a message stops being read once it stops fitting where the UI puts it.
+MAX_NAMED_FACTORS = 10
 
 # Rev. Rul. 59-60 §4.01 — the eight factors "to be considered" in valuing the
 # stock of a closely held corporation. Named here because the deliverable is
@@ -89,7 +95,9 @@ def _factors(addressed) -> dict:
     unknown = sorted(keys - known)
     if unknown:
         raise EngineInputError(
-            f"gifts.factors_addressed has unknown factor(s): {', '.join(unknown)}"
+            "gifts.factors_addressed has unknown factor(s): "
+            + ", ".join(quote_for_message(str(k)) for k in unknown[:MAX_NAMED_FACTORS])
+            + (f" (and {len(unknown) - MAX_NAMED_FACTORS} more)" if len(unknown) > MAX_NAMED_FACTORS else "")
         )
     return {
         # Whether the file said anything at all. `None` and `[]` produce the

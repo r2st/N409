@@ -25,6 +25,7 @@ import math
 
 from .bs import bs_call, discount_factor
 from .compounding import compound_factor
+from .display_text import quote_for_message
 from .errors import EngineInputError
 from .newton import IMPLIED_VOL_MAX, IMPLIED_VOL_MIN, implied_volatility
 
@@ -230,24 +231,28 @@ def mark_position(position: dict) -> dict:
     name = str(position.get("name") or "").strip()
     if not name:
         raise EngineInputError("position.name is required")
+    # `name` stays raw — it is returned as the mark's own `name`, which is the
+    # caller's data coming back. `shown` is the copy every refusal and field
+    # path below quotes. See display_text.
+    shown = quote_for_message(name)
     method = str(position.get("method") or "cost")
     if method not in _MARK_METHODS:
-        raise EngineInputError(f"position '{name}': method must be one of {_MARK_METHODS}")
-    quantity = _num(position.get("quantity", 0.0), f"{name}.quantity", minimum=0.0)
-    cost_basis = _num(position.get("cost_basis", 0.0), f"{name}.cost_basis", minimum=0.0)
+        raise EngineInputError(f"position '{shown}': method must be one of {_MARK_METHODS}")
+    quantity = _num(position.get("quantity", 0.0), f"{shown}.quantity", minimum=0.0)
+    cost_basis = _num(position.get("cost_basis", 0.0), f"{shown}.cost_basis", minimum=0.0)
 
     if method == "market":
-        price = _num(position.get("quoted_price", 0.0), f"{name}.quoted_price", minimum=0.0)
+        price = _num(position.get("quoted_price", 0.0), f"{shown}.quoted_price", minimum=0.0)
         fair_value = quantity * price
     elif method == "last_round":
-        price = _num(position.get("round_price_per_share", 0.0), f"{name}.round_price_per_share", minimum=0.0)
+        price = _num(position.get("round_price_per_share", 0.0), f"{shown}.round_price_per_share", minimum=0.0)
         fair_value = quantity * price
     elif method == "calibrated_opm":
-        fair_value = _num(position.get("model_value", 0.0), f"{name}.model_value", minimum=0.0)
+        fair_value = _num(position.get("model_value", 0.0), f"{shown}.model_value", minimum=0.0)
     else:  # cost
         fair_value = cost_basis
 
-    _finite_result(fair_value, f"{name}.fair_value")
+    _finite_result(fair_value, f"{shown}.fair_value")
     level = classify_level(method, has_quote=bool(position.get("quoted_price")))
     return {
         "name": name,

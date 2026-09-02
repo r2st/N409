@@ -36,6 +36,7 @@ from .approaches import DCF_TERMINAL_METHODS
 # figure the caller will actually get — a second copy here would drift from
 # the engine's and tell the analyst a number the calculation does not use.
 from .compute import DEFAULT_RISK_FREE_RATE, DEFAULT_TIME_TO_EXIT_YEARS
+from .display_text import quote_for_message
 from .dloc import (
     CONTROL_PREMIUM_STUDIES,
     DLOC_METHODS,
@@ -628,18 +629,25 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
             continue
 
         name = str(raw.get("name") or "").strip()
+        # `name` stays raw for the logic below — it is what the allocation is
+        # keyed by, and two names that scrub alike are still two names. `shown`
+        # is the copy that goes into a message: these are drawn in the
+        # validation panel unmodified, and a class name arrives off an imported
+        # cap table, so it is the caller's bytes rather than this product's
+        # words. See :mod:`app.engine.display_text`.
+        shown = quote_for_message(name) if name else ""
         if not name:
             c.error("required", f"{path}.name", f"share_classes[{i}].name is required")
         elif name in seen:
             c.error(
                 "duplicate",
                 f"{path}.name",
-                f"share_classes: duplicate class name '{name}'",
+                f"share_classes: duplicate class name '{shown}'",
                 "Each class needs a distinct label — the allocation is keyed by name.",
             )
         else:
             seen.add(name)
-        label = name or f"share_classes[{i}]"
+        shown_label = shown or f"share_classes[{i}]"
 
         kind = raw.get("kind")
         if kind not in ("preferred", "common", "option"):
@@ -653,12 +661,12 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
 
         shares = _finite(raw.get("shares"))
         if shares is None:
-            c.error("not_a_number", f"{path}.shares", f"'{label}': shares must be a number")
+            c.error("not_a_number", f"{path}.shares", f"'{shown_label}': shares must be a number")
         elif shares <= 0:
             c.error(
                 "not_positive",
                 f"{path}.shares",
-                f"'{label}': shares must be positive (got {shares:g})",
+                f"'{shown_label}': shares must be positive (got {shares:g})",
             )
 
         if kind == "preferred":
@@ -667,21 +675,21 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
                 c.error(
                     "required",
                     f"{path}.preference",
-                    f"'{label}': preference (total) is required for preferred",
+                    f"'{shown_label}': preference (total) is required for preferred",
                     "The total liquidation preference of the class, not the per-share amount.",
                 )
             elif preference < 0:
                 c.error(
                     "out_of_range",
                     f"{path}.preference",
-                    f"'{label}': preference must be >= 0 (got {preference:g})",
+                    f"'{shown_label}': preference must be >= 0 (got {preference:g})",
                 )
             seniority = raw.get("seniority", 1)
             if not isinstance(seniority, int) or isinstance(seniority, bool) or seniority < 1:
                 c.error(
                     "out_of_range",
                     f"{path}.seniority",
-                    f"'{label}': seniority must be an integer >= 1",
+                    f"'{shown_label}': seniority must be an integer >= 1",
                     "1 is the most senior rank; classes sharing a rank split pari passu.",
                 )
             # `None` defaults to 1:1; anything else present has to be a positive
@@ -693,13 +701,13 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
                     c.error(
                         "not_a_number",
                         f"{path}.conversion_ratio",
-                        f"'{label}': conversion_ratio must be a number",
+                        f"'{shown_label}': conversion_ratio must be a number",
                     )
                 elif ratio <= 0:
                     c.error(
                         "not_positive",
                         f"{path}.conversion_ratio",
-                        f"'{label}': conversion_ratio must be positive (got {ratio:g})",
+                        f"'{shown_label}': conversion_ratio must be positive (got {ratio:g})",
                     )
             # Mirrors `waterfall._normalize`: a cap only means something on a
             # participating class, and only above the preference. Both are
@@ -711,13 +719,13 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
                     c.error(
                         "not_a_number",
                         f"{path}.participation_cap",
-                        f"'{label}': participation_cap must be a number",
+                        f"'{shown_label}': participation_cap must be a number",
                     )
                 elif not bool(raw.get("participating", False)):
                     c.error(
                         "invalid_shape",
                         f"{path}.participation_cap",
-                        f"'{label}': participation_cap applies only to participating preferred",
+                        f"'{shown_label}': participation_cap applies only to participating preferred",
                         "Set participating: true, or drop the cap — a non-participating class "
                         "already stops at its preference.",
                     )
@@ -725,7 +733,7 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
                     c.error(
                         "out_of_range",
                         f"{path}.participation_cap",
-                        f"'{label}': participation_cap ({cap:g}) must exceed the liquidation "
+                        f"'{shown_label}': participation_cap ({cap:g}) must exceed the liquidation "
                         f"preference ({preference:g})",
                         "The cap is the total the class may take, preference included, so a cap "
                         "at or below the preference is `participating: false`.",
@@ -736,13 +744,13 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
                 c.error(
                     "required",
                     f"{path}.strike",
-                    f"'{label}': strike is required for options",
+                    f"'{shown_label}': strike is required for options",
                 )
             elif strike <= 0:
                 c.error(
                     "not_positive",
                     f"{path}.strike",
-                    f"'{label}': strike must be positive (got {strike:g})",
+                    f"'{shown_label}': strike must be positive (got {strike:g})",
                 )
 
     if not has_common:

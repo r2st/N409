@@ -67,9 +67,9 @@ def _signature_names(fn: Callable) -> tuple[tuple[str, ...], tuple[str, ...], bo
 
 def _listed(names: Sequence[str]) -> str:
     """Up to MAX_NAMED names, then a count of the rest."""
-    shown = list(names[:MAX_NAMED])
-    hidden = len(names) - len(shown)
-    listed = ", ".join(shown)
+    named = list(names[:MAX_NAMED])
+    hidden = len(names) - len(named)
+    listed = ", ".join(named)
     if hidden > 0:
         listed += f" (and {hidden} more)"
     return listed

@@ -25,6 +25,7 @@ import statistics
 
 from .compute import _num, _req, _time_to_exit, compute
 from .errors import EngineInputError
+from .display_text import quote_for_message
 
 PARAMETERS = ("discount_rate", "volatility", "exit_multiple", "time_to_exit", "growth_rate")
 
@@ -108,7 +109,7 @@ def _base_value(name: str, params: dict, inputs: dict) -> float | None:
     if name == "exit_multiple":
         multiples = _market_multiples(inputs)
         return statistics.median(multiples) if multiples else None
-    raise EngineInputError(f"unknown sensitivity parameter '{name}'")
+    raise EngineInputError(f"unknown sensitivity parameter '{quote_for_message(str(name))}'")
 
 
 def _variant(inputs: dict) -> dict:
@@ -158,7 +159,7 @@ def _apply(name: str, value: float, params: dict, inputs: dict) -> None:
         market.pop("multiple", None)
         inputs["market"] = market
     else:  # pragma: no cover - guarded by _base_value
-        raise EngineInputError(f"unknown sensitivity parameter '{name}'")
+        raise EngineInputError(f"unknown sensitivity parameter '{quote_for_message(str(name))}'")
 
 
 def _steps(base: float, span: float, steps: int) -> list[float]:

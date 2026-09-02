@@ -26,6 +26,7 @@ import math
 
 from .errors import EngineInputError
 from .kwargs_refusal import describe_unbindable
+from .display_text import quote_for_message
 from .newton import newton_raphson
 
 # Illustrative credit-rating → implied spread over the benchmark, in basis
@@ -119,7 +120,10 @@ def rating_implied_spread(rating: str) -> float:
     """Implied credit spread (decimal, e.g. 0.015) for a letter rating."""
     key = str(rating or "").strip().upper()
     if key not in RATING_SPREADS_BPS:
-        raise EngineInputError(f"unknown rating '{rating}'; known: {sorted(RATING_SPREADS_BPS)}")
+        raise EngineInputError(
+            f"unknown rating '{quote_for_message(str(rating))}'; "
+            f"known: {sorted(RATING_SPREADS_BPS)}"
+        )
     return RATING_SPREADS_BPS[key] / 10_000.0
 
 
@@ -804,5 +808,6 @@ def _dispatch(instrument_type: str, params: dict) -> dict:
     if it == "safe":
         return safe_conversion(**params)
     raise EngineInputError(
-        f"unknown instrument_type '{instrument_type}'; expected bond, term_loan, credit_spread, convertible or safe"
+        f"unknown instrument_type '{quote_for_message(str(instrument_type))}'; "
+        "expected bond, term_loan, credit_spread, convertible or safe"
     )

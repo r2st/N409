@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 
 from .errors import EngineInputError
+from .display_text import quote_for_message
 from .kwargs_refusal import describe_unbindable
 
 MAX_FLOW_YEARS = 100
@@ -153,7 +154,7 @@ def run_impairment_test(kind, params) -> dict:
     """Dispatch to one of the three standards' tests (endpoint entry point)."""
     fn = _TESTS.get(str(kind))
     if fn is None:
-        raise EngineInputError(f"unknown impairment test {kind!r}; expected one of {sorted(_TESTS)}")
+        raise EngineInputError(f"unknown impairment test '{quote_for_message(str(kind))}'; expected one of {sorted(_TESTS)}")
     if not isinstance(params, dict):
         raise EngineInputError("impairment params must be an object")
     # See kwargs_refusal: the caller gets this test's own input names, not the

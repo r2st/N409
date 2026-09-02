@@ -39,6 +39,7 @@ import math
 import statistics
 
 from .errors import EngineInputError
+from .display_text import quote_for_message
 from .market_data import Company, normalize_ticker
 from .market_universe import resolve_universe
 
@@ -143,7 +144,9 @@ def score_company(
     w = {**DEFAULT_WEIGHTS, **(weights or {})}
     for key, value in w.items():
         if key not in DEFAULT_WEIGHTS:
-            raise EngineInputError(f"comparables: unknown weight '{key}'")
+            raise EngineInputError(
+                f"comparables: unknown weight '{quote_for_message(str(key))}'"
+            )
         _num(value, f"comparables.weights.{key}", minimum=0.0, maximum=1.0)
 
     breakdown: dict[str, float] = {}
