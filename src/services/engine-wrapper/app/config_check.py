@@ -155,6 +155,28 @@ SPECS: tuple[EnvSpec, ...] = (
         true_tokens=frozenset({"1", "true", "yes", "on", "enabled"}),
         false_tokens=frozenset({"0", "false", "no", "off", "none", "disabled"}),
     ),
+    # ── The market feed's two ceilings (R368, M5) ────────────────────────────
+    #
+    # `market_feed._seconds` does log a value it cannot parse, which is more
+    # than most of the helpers above manage — but it logs it on the first fetch
+    # that reaches the helper, and this module's first argument is *when*: on a
+    # box where nothing has asked for market data yet, a mistyped ceiling is a
+    # line that has not been written. `test_config_census.py` is what put them
+    # here; they were the only two tunables this service reads that the roster
+    # had never heard of.
+    EnvSpec(
+        name="MARKET_FEED_FETCH_TIMEOUT_S",
+        effect="bounds one provider fetch (0 disables it)",
+        kind="float",
+        minimum=0,
+    ),
+    EnvSpec(
+        name="MARKET_FEED_MULTIPLES_BUDGET_S",
+        effect="bounds the fetching one multiples request may do across every ticker it names "
+        "(0 restores the unbounded fan-out)",
+        kind="float",
+        minimum=0,
+    ),
 )
 
 
