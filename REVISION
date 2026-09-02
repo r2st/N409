@@ -7745,3 +7745,109 @@
 #            (`routes/evidence.ts`) or writer-controlled ones (`export/xlsx.ts`,
 #            via `sanitizeSheetName`), so the two cannot disagree yet — but the
 #            writer holds that property by accident rather than by construction.
+
+# R348 — State machine & lifecycle (M3). Four findings, and three of them are
+#            one flag asked at doors nobody had counted. R342 closed four
+#            `partners.archived_at` doors and left "there is no census of what a
+#            partner archive is supposed to stop" as its gap; two more turned up
+#            immediately, which is what that sentence predicted. The fourth is
+#            unrelated and is a transition with no compare-and-swap in the one
+#            lifecycle where losing the race hands the second factor to somebody
+#            else.
+#
+#            **A portfolio could be redenominated after it was measured.**
+#            `fund_portfolios.currency` is the only currency in the ASC 820
+#            subsystem: 0086 gives `fund_positions.cost_basis`,
+#            `fund_marks.fair_value` and every money column of `lp_terms` a bare
+#            `numeric` with no unit of its own, so the portfolio's code is what
+#            says what all of them mean. `PATCH /funds/:id` accepted a new one
+#            and wrote it. R279 made the write auditable and its comment named
+#            the damage — "redenominated ... changes what every figure under it
+#            means, and what the NAV exhibit prints beside them" — but recording
+#            a transition is not permitting it, and nothing refused. Three
+#            characters restated a fund's whole mark trail, its NAV and its LP
+#            waterfall into a unit nothing was measured in, every number
+#            unchanged and no conversion anywhere. The debt twin, `PUT
+#            /debt/instruments/:id`, does not accept `currency` at all; funds was
+#            the outlier. Refused once the portfolio holds figures — any holding,
+#            or LP terms with a non-zero amount — and still allowed while it
+#            holds none, because an empty portfolio's code is one typed wrong at
+#            creation and there is nothing to restate. `fundForWriteIn` takes the
+#            row lock the count needs to be an answer.
+#
+#            **A 2FA enrolment could be finished against a secret it never
+#            checked.** `stageTotpSecret` re-states its route's refusal as the
+#            write's own predicate under a comment saying why — the answer read
+#            on the pool is one a second request is free to invalidate — and
+#            `confirmTotpEnrollment`, the write that actually turns the factor
+#            on, had no predicate at all. `POST /setup` is deliberately
+#            repeatable and replaces whatever is staged, "harmless, because it
+#            isn't enabled until /confirm", which holds only while `/confirm`
+#            speaks for the secret it verified. A setup landing between the
+#            route's read and the enabling UPDATE left the account enabled on the
+#            *new* secret, having proved possession of the old one: two tabs
+#            reach it by accident and lock the account out of its own
+#            authenticator, a stolen session reaches it on purpose and the factor
+#            the victim believes they enrolled is the attacker's. Pinned to the
+#            row's own ciphertext, so it does not depend on `encryptSecret` being
+#            deterministic, and to `totp_enabled = false`, so a confirm that
+#            loses to another confirm does not re-issue a second backup-code set
+#            over the one the winner already showed.
+#
+#            **A withdrawn firm's invitations still minted seats in it.**
+#            `assertAssignablePartner` refuses to mint an invitation into an
+#            archived partner — "new partner assignments must reference a live
+#            (non-archived) partner" — and that is the whole of the check: it
+#            runs once, up to seven days before the assignment it is about
+#            actually happens, on a flag an administrator can set in between.
+#            `acceptInvitation` asked about the row's own three columns and never
+#            about the `partner_id` it was copying onto a new `users` row.
+#            `revokeInvitationsFrom` is this shape one subject over and its
+#            comment is the argument in full: an invitation is authority written
+#            down and posted, redeemable for a week by whoever holds the link,
+#            and it "cannot be revoked by any of the mechanisms that end a
+#            person's access". Refused rather than revoked, as R342 did for the
+#            archived firm's API key, and one fragment over both redemption
+#            readers so a form cannot open and then refuse.
+#
+#            **A withdrawn firm could still be given new engagements.** `POST
+#            /valuations` checks its two id fields "in the shape the admin
+#            console already uses for the same two columns
+#            (`assertAssignablePartner`)" — its own comment — and that helper has
+#            two refusals where this had copied one. `convertIntakeLink` states
+#            the rule in a sentence: "a withdrawn firm acquiring fresh work is
+#            the thing being prevented". R342 closed the API key that created
+#            engagements under an archived firm and the fan-out that told it
+#            about them; the console reached the same place through the front
+#            door. Asked of the *resolved* partner, so the member path is covered
+#            too — archiving a firm does not sign its people out, and their own
+#            `principal.partnerId` is what the row is written with.
+#
+#            The census R342 asked for is `partnerArchiveDoors.test.ts`, driven
+#            off the foreign keys into `partners` rather than off the source: a
+#            scan for `archived_at IS NULL` passes by finding the clauses that
+#            exist, this fails on a relationship nobody has classified. Its
+#            second assertion holds every `refuses` verdict to the suite that
+#            drives an archived firm at that door.
+#
+#            gap: the one door left half closed is `partner_webhooks` — the
+#            fan-out stops, a delivery already queued still walks its ladder to
+#            the withdrawn receiver. Unchanged from R342 and recorded in the
+#            census entry rather than as a verdict of its own.
+#            gap: `accounting_connections` has no `auth_generation`, and 0197's
+#            note says why — "manual-import only ... no sync bookkeeping
+#            writers". It has three: `recordImport`, `recordImportError` and
+#            `updateTokens`, all guarded on `status <> 'revoked'` and none on
+#            which authorisation they belong to. The window is a route-driven
+#            import rather than a scheduler tick, so it needs two concurrent
+#            operators rather than a background pull, which is why it is recorded
+#            rather than fixed — but the migration's stated reason for the
+#            exemption is not the true one.
+#            gap: `convertIntakeLink` refuses an archived partner and does not
+#            ask about `revoked_at`, so a submitted link the firm has since
+#            withdrawn still converts into an engagement seeded with the
+#            prospect's answers. Arguably the firm's own act either way, which is
+#            why it is left, but the two liveness rules on that table now
+#            disagree about what revocation means.
+#            gap: `engagements.current_stage` and `valuations.state` are still
+#            two parallel lifecycles that never speak — R342's gap, unchanged.
