@@ -8972,3 +8972,117 @@
 #            — does not apply. `workbook.FISCAL_PERIODS` is five fiscal *years*
 #            and is the only column set either statement sheet has, so ×365 is
 #            right for every column the check can be handed.
+#
+# R364 — State machine & transition verification (M3). Four findings, and two of
+#            them close gaps R356 wrote down and could not reach. The round read
+#            the doors onto four state machines — the invitation, the engagement
+#            tag, the board resolution and the account — and the two with
+#            nothing new to say are worth naming: `board_resolutions` recomputes
+#            from its sign-offs under a row lock, refuses the vacuous approval
+#            (`signoffs.length > 0`) and now events every direction including
+#            the way back out; `report_templates` serialises activate against
+#            archive on the *name* rather than the row, and refuses the
+#            re-activation of an archived version under that same lock.
+#
+#            **A resend re-mailed an invitation into a firm that had been
+#            archived.** R356 recorded this as a gap and called it harmless —
+#            "the redemption refuses" — and the reason it is not is the reason
+#            resend exists. Minting refuses an archived partner
+#            (`assertAssignablePartner`) and redeeming refuses one
+#            (`LIVE_PARTNER_SQL`, on both `acceptInvitation` and the
+#            invite-info reader that draws the form). `refreshInvitation` sat
+#            between them asking only about `accepted_at` and `revoked_at`, so
+#            an invitation into a firm archived since it went out was re-minted,
+#            re-mailed and answered 200 — and the link it put in an inbox
+#            dead-ends on a page that will not render the form. Resend is also
+#            the only way to revive a lapsed invitation, which is what makes it
+#            more than cosmetic: an administrator whose way of dealing with a
+#            dead link is to send it again got no signal at all that the reason
+#            it was dead was one they could act on. The refusal names the firm
+#            and both remedies, and the row is left pending, unrotated and
+#            revocable exactly as `acceptInvitation` leaves it — archiving is a
+#            boolean an administrator can set back.
+#
+#            **Five removals were recorded twice, and the census R356 asked for
+#            now exists.** That round fixed four repo-side deletes that wrote
+#            their event without asking whether the DELETE matched anything, and
+#            named what it could not build: `terminalStatusWrites` reads
+#            `status` columns, so a plain-DELETE door is invisible to it, and
+#            "the question a census would have to ask is not about SQL but about
+#            the call site: which repo functions return `boolean` and which
+#            callers ignore it". Asked of the source, it finds five more — all
+#            at the route rather than in the repo, which is why reading the
+#            repos found none of them. `valuation_tag_removed`,
+#            `comparable_deleted`, `auto_email_deleted`, `help_article_deleted`
+#            and `blog_post_deleted` were each written off an existence check
+#            taken a statement earlier on another connection, so a double-clicked
+#            control put a second removal of one row on an append-only trail —
+#            for the tag, the line an audit of that table reads to date a
+#            classification's withdrawal. Every caller now gates the event on
+#            the answer and still returns 204: the caller asked for the row to
+#            be gone and it is. `deleteOnceCensus.test.ts` derives its roster
+#            from the source rather than listing it, so the next
+#            `Promise<boolean>` writer is in the sweep the moment it is written,
+#            and the three call sites that drop the answer on purpose — two that
+#            write nothing after the delete, and `recordSendFailure`, whose
+#            `false` cannot fire on a null provider event id — say why they may.
+#
+#            **A restored account was shown roles it did not have.** The console
+#            drops the administrator into the editor after a restore on purpose,
+#            so an account does not come back scoped to nothing, and it seeded
+#            the Roles box with `valuation_user` on the strength of the
+#            console's own deactivation — which does `DELETE FROM user_roles`.
+#            That is one of two doors onto a closed account. A directory
+#            deprovision reaches the same state through `setUserActive`, behind
+#            SCIM's `active: false` and `DELETE /scim/v2/Users/:id`, and leaves
+#            `user_roles` alone — deliberately, since an IdP reactivating a
+#            rehire must not hand back an account that can see nothing. So an
+#            IdP-deprovisioned administrator was restored with everything they
+#            had while the box said `valuation_user` about it: the admin either
+#            believes it and leaves a `god` account live, or saves and silently
+#            strips roles the restore had kept. The editor is now seeded from
+#            the restore response's own user and falls back to `valuation_user`
+#            only when the account really did come back role-less.
+#
+#            **And a test expectation left behind by R331.** R331 moved every
+#            body id field onto `ulidField()` under a census, which refuses a
+#            malformed `valuation_id` at the schema — one statement before the
+#            lookup the old 404 came from. `communicationsRefusals.test.ts` was
+#            not updated with it and has been red on `main` since. 422 naming
+#            the field is the right answer for a malformed id, so the test now
+#            asks for that; the route's own `isUlid` behind the schema is
+#            unreachable for this input and stays as the belt to its braces.
+#
+#            gap: `deleteOnceCensus` reads `Promise<boolean>` only. A repo
+#            function that reports the same fact as `{ changed }` —
+#            `archiveTemplate`, `setContactSubmissionStatus` — or as `X | null`
+#            — `decideValuationTag`, `refreshInvitation` — is outside its
+#            roster, and both shapes have callers that could drop the answer the
+#            same way. The `| null` half in particular is large enough that a
+#            census over it would need the same acknowledgement list to be
+#            useful rather than noise.
+#            gap: the exclusivity demotion in `routes/valuationTags.ts` writes
+#            no admin event for the tag it demotes. The row records `decided_by`
+#            and `decided_at`, and `valuation_tag_decided` is written for the tag
+#            being *promoted*, so the trail says an engagement became `series_a`
+#            and never says it stopped being `seed`. The decision is one
+#            operator action and arguably one event; recorded because the same
+#            reader that needs the promotion dated needs the demotion dated.
+#            gap: SCIM's `POST /Users` refuses a taken address with "It was not
+#            created by this directory, so it has not been linked", and
+#            `findUserByEmail` does not filter `deleted_at` — so the sentence is
+#            said about accounts this directory itself provisioned and later
+#            deprovisioned. A rehire whose IdP mints a new externalId POSTs, is
+#            refused, and has no relink path from the directory side; the only
+#            way through is an administrator restoring the account by hand. Same
+#            shape as the closed-account invitation refusal R362 wrote, and it
+#            wants the same treatment: a sentence that says which case it is and
+#            what the remedy is.
+#            gap: the auditor workbook's Summary sheet prints `Grant records` as
+#            `grants.length` while the Grants sheet totals only the active ones,
+#            under a heading that says so. Both are defensible readings of their
+#            own label and the two sit in one file, which is the argument
+#            `fullyDilutedShares` makes one section up for recomputing rather
+#            than trusting a summary — a cancelled grant is counted on one sheet
+#            and excluded on the other with nothing saying which question each
+#            answered.
