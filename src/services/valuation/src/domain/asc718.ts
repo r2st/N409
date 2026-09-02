@@ -90,7 +90,17 @@ export function monteCarloFairValue(
   const q = a.dividendYield ?? 0;
   if (s <= 0) return 0;
   if (t <= 0 || sigma <= 0) return blackScholesMerton(a);
-  const paths = Math.max(1000, Math.min(opts.paths ?? 20000, 200000));
+  // Draws are made in antithetic pairs, so the sample size is rounded up to an
+  // even number and the mean is taken over what was actually drawn. Asking for
+  // an odd `paths` used to generate `paths + 1` payoffs and divide by `paths`,
+  // which is not a mean of anything: the estimate came back scaled by
+  // (paths + 1) / paths, biased upward, and only for odd request sizes — so the
+  // cross-check on `blackScholesMerton` disagreed with it by a hair for reasons
+  // that had nothing to do with either model. `monte_carlo.py` counts the same
+  // way (`count = pairs * 2`); this now matches it.
+  const requested = Math.max(1000, Math.min(opts.paths ?? 20000, 200000));
+  const pairs = Math.ceil(requested / 2);
+  const paths = pairs * 2;
   // Deterministic LCG (Numerical Recipes) + Box-Muller for standard normals.
   let state = (opts.seed ?? 0x9e3779b1) >>> 0;
   const next = () => {
@@ -101,7 +111,7 @@ export function monteCarloFairValue(
   const vol = sigma * Math.sqrt(t);
   const disc = Math.exp(-r * t);
   let sum = 0;
-  for (let i = 0; i < paths; i += 2) {
+  for (let i = 0; i < pairs; i++) {
     const u1 = next();
     const u2 = next();
     const rad = Math.sqrt(-2 * Math.log(u1));

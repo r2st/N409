@@ -6,6 +6,7 @@ import {
   blackScholesMerton,
   expectedToVestFraction,
   monteCarloFairValue,
+  type Asc718Assumptions,
 } from '../../src/domain/asc718.js';
 
 describe('ASC 718 grant-date fair value', () => {
@@ -421,5 +422,44 @@ describe('asc718Portfolio', () => {
         expect(Math.abs(y.expense - annual.expenseByCalendarYear[i]!.expense)).toBeLessThan(1);
       });
     }
+  });
+});
+
+describe('monteCarloFairValue draw bookkeeping', () => {
+  const textbook: Asc718Assumptions = {
+    grantDateFairValue: 10,
+    exercisePrice: 10,
+    expectedTermYears: 6,
+    volatility: 0.6,
+    riskFreeRate: 0.04,
+  };
+
+  it('averages over the draws it actually made when `paths` is odd', () => {
+    // Draws come in antithetic pairs, so an odd request is rounded up to the
+    // next even number. Asking for 2001 and 2002 therefore has to be the same
+    // sample and the same estimate; before, 2001 divided 2002 payoffs by 2001.
+    const odd = monteCarloFairValue(textbook, { paths: 2001, seed: 3 });
+    const even = monteCarloFairValue(textbook, { paths: 2002, seed: 3 });
+    expect(odd).toBe(even);
+  });
+
+  it('does not bias the estimate upward at odd sample sizes', () => {
+    // The old arithmetic scaled the answer by (paths + 1) / paths — about
+    // +0.05% at 2000 paths, which is the same order as the sampling error the
+    // estimate is quoted at.
+    const bs = blackScholesMerton(textbook);
+    const mc = monteCarloFairValue(textbook, { paths: 20001, seed: 11 });
+    expect(Math.abs(mc / bs - 1)).toBeLessThan(0.03);
+  });
+
+  it('still clamps the request into its own bounds', () => {
+    // Below the floor and above the ceiling both round to an even count, so the
+    // clamped ends stay reproducible rather than depending on parity.
+    expect(monteCarloFairValue(textbook, { paths: 1, seed: 5 })).toBe(
+      monteCarloFairValue(textbook, { paths: 1000, seed: 5 }),
+    );
+    expect(monteCarloFairValue(textbook, { paths: 1e9, seed: 5 })).toBe(
+      monteCarloFairValue(textbook, { paths: 200000, seed: 5 }),
+    );
   });
 });
