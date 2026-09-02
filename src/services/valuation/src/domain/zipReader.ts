@@ -119,6 +119,31 @@ export function readZip(buf: Buffer, opts: { maxInflatedBytes?: number } = {}): 
     }
     if (name.endsWith('/')) continue; // directory marker
 
+    /*
+     * One part per name, or this is not a package.
+     *
+     * The entries are collected into a `Map`, so two records naming the same
+     * path silently resolved to whichever came last in the central directory —
+     * and `readXlsx` then read that one as the sheet. An archive carrying two
+     * `xl/worksheets/sheet1.xml` is a file that shows one cap table to whoever
+     * opens it and hands a different one to the importer, and nothing anywhere
+     * says the two disagreed: the upload succeeds, the preview is of the part
+     * this reader picked, and the analyst's check was of the part their
+     * spreadsheet picked.
+     *
+     * Which of the two each side picks is not a thing to reason about. OPC
+     * (ECMA-376 Part 2) gives a package exactly one part per name and Excel
+     * refuses a package that breaks it, so a duplicate is not a workbook whose
+     * meaning has to be chosen between — it is a file that was never one, and
+     * the honest answer is the same refusal the encrypted and ZIP64 cases get.
+     */
+    if (entries.has(name)) {
+      throw new ZipReadError(
+        `Entry "${quoteForMessage(name)}" appears twice — a workbook has one part per name, ` +
+          'so this file is damaged or was assembled by something other than a spreadsheet',
+      );
+    }
+
     if (localOffset + 30 > buf.length || buf.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) {
       throw new ZipReadError(`Malformed local header for "${quoteForMessage(name)}"`);
     }

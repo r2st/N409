@@ -117,6 +117,51 @@ describe('zipReader', () => {
     expect(() => readZip(zip)).toThrow(/encrypted/i);
   });
 
+  /**
+   * R346, methodology M6: two parts, one name.
+   *
+   * `readZip` collects into a `Map`, so two central-directory records naming
+   * the same path resolved to whichever came last — and `readXlsx` read that
+   * one as the sheet. An `.xlsx` carrying two `xl/worksheets/sheet1.xml` is a
+   * file that shows one cap table to whoever opens it and hands a different one
+   * to the importer, with nothing anywhere saying the two disagreed.
+   *
+   * Which part each reader picks is not worth reasoning about: OPC gives a
+   * package one part per name, so this is a file that was never a workbook.
+   */
+  it('refuses an archive carrying two parts of the same name', () => {
+    const zip = buildZip([
+      { name: 'xl/worksheets/sheet1.xml', data: '<benign/>' },
+      { name: 'xl/worksheets/sheet1.xml', data: '<substituted/>' },
+    ]);
+    expect(() => readZip(zip)).toThrow(ZipReadError);
+    expect(() => readZip(zip)).toThrow(/appears twice/i);
+  });
+
+  it('names the duplicated part through the same quoting every other refusal uses', () => {
+    const zip = buildZip([
+      { name: 'a"b.xml', data: '1' },
+      { name: 'a"b.xml', data: '2' },
+    ]);
+    try {
+      readZip(zip);
+      expect.unreachable('a duplicate part must be refused');
+    } catch (err) {
+      expect((err as Error).message).not.toContain('"a"b.xml"');
+    }
+  });
+
+  it('still reads an archive whose only repeated name is a directory marker', () => {
+    // Directory records are skipped before the check, and a writer that emits
+    // `nested/` alongside `nested/b.xml` is not naming one part twice.
+    const zip = buildZip([
+      { name: 'nested/', data: '' },
+      { name: 'nested/', data: '' },
+      { name: 'nested/b.xml', data: '<x/>' },
+    ]);
+    expect(readZip(zip).get('nested/b.xml')?.toString('utf8')).toBe('<x/>');
+  });
+
   it('reports an unsupported compression method by number', () => {
     const zip = Buffer.from(buildZip([{ name: 'a.txt', data: 'x' }]));
     const centralOffset = zip.readUInt32LE(zip.length - 22 + 16);
