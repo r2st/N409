@@ -171,7 +171,7 @@ Draft the company profile. Return JSON:
 Rank the classification candidates most likely first. Leave any value the documents do not support null — do not estimate one."""
 
     llm = c.ask(red, system, user, model)
-    parsed = c.safe_result(llm)
+    parsed = c.safe_result(llm, "company_profile")
     doc = parsed if isinstance(parsed, dict) else {}
 
     sic = _codes(doc.get("sic_codes"), _SIC_RE)

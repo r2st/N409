@@ -249,7 +249,7 @@ Propose 8 to 12 guideline public companies. Return JSON:
 }}
 Use real, currently-listed tickers. Order by relevance."""
     first = c.ask(red, suggest_system, suggest_user, model)
-    suggest_doc = c.safe_result(first)
+    suggest_doc = c.safe_result(first, "comp_selection")
     suggested = _suggested_comps(suggest_doc)
     sector = c.clean_str(suggest_doc.get("sector")) if isinstance(suggest_doc, dict) else ""
 
@@ -314,7 +314,7 @@ Select the {MIN_SELECTED}-{MAX_SELECTED} most defensible comps. Return JSON:
 Select ONLY from the candidate tickers above."""
         second = c.ask(red, _REFINE_SYSTEM, refine_user, model)
         refine_model = second.model
-        refine_doc = c.safe_result(second)
+        refine_doc = c.safe_result(second, "comp_selection")
         by_ticker = {co["ticker"]: co for co in candidates}
         selected = _selected(refine_doc, by_ticker)
         excluded = _excluded(refine_doc)

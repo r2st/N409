@@ -113,7 +113,7 @@ Recommend each assumption. Return JSON:
 Give numeric ranges. Cite real benchmarks from the comparable data where you can."""
 
     llm = c.ask(red, system, user, model)
-    parsed = c.safe_result(llm)
+    parsed = c.safe_result(llm, "assumptions")
     result = {
         "recommendations": _recommendations(parsed),
         "recommendation_keys": [k for k, _l, _b in RECOMMENDATIONS],

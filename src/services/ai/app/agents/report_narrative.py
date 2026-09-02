@@ -230,7 +230,7 @@ Write each section as 2-4 professional paragraphs using the actual figures above
 If a section's approach did not carry weight, say so briefly rather than padding."""
 
     llm = c.ask(red, system, user, model)
-    parsed = c.safe_result(llm)
+    parsed = c.safe_result(llm, "report_narrative")
     result = {
         "sections": _sections(parsed, spec),
         "section_keys": [k for k, _t, _g in spec],

@@ -260,7 +260,7 @@ Classify this engagement. Return JSON:
 Propose at most {MAX_TAGS} tags. Only tag what the material supports — a tag nobody can check is worse than a missing one, because the firm will filter on it. Where a category is marked "choose at most one" and the material genuinely does not settle the choice, you may return both and must say so in the rationale."""
 
     llm = c.ask(red, system, user, model)
-    parsed = c.safe_result(llm)
+    parsed = c.safe_result(llm, "tagging")
     doc = parsed if isinstance(parsed, dict) else {}
 
     tags, unknown = _tags(doc.get("tags"), index)

@@ -41,12 +41,12 @@ def said(content: str, *, finish_reason: str | None = None) -> LlmResult:
 
 class TestWhatComesBack:
     def test_an_object_is_the_contract_and_passes_through(self):
-        assert _safe_result(said('{"gaps": [], "notes": "fine"}')) == {"gaps": [], "notes": "fine"}
+        assert _safe_result(said('{"gaps": [], "notes": "fine"}'), "summarize") == {"gaps": [], "notes": "fine"}
 
     def test_prose_still_degrades_to_notes(self):
         """Unchanged, and the reason the refusals below are narrow: a model that
         wrote a sentence instead of JSON still hands the analyst what it said."""
-        out = _safe_result(said("I could not read these documents."))
+        out = _safe_result(said("I could not read these documents."), "summarize")
         assert out == {"notes": "I could not read these documents."}
 
     @pytest.mark.parametrize(
@@ -62,7 +62,7 @@ class TestWhatComesBack:
     )
     def test_a_non_object_answer_is_refused_and_names_what_arrived(self, content, kind):
         with pytest.raises(ValueError) as caught:
-            _safe_result(said(content))
+            _safe_result(said(content), "summarize")
         assert f"JSON {kind}" in str(caught.value)
         assert not isinstance(caught.value, TruncatedCompletionError)
 
@@ -70,16 +70,16 @@ class TestWhatComesBack:
         """The markdown fence is stripped before the parse, so the shape check
         has to sit after it rather than on the raw content."""
         with pytest.raises(ValueError):
-            _safe_result(said('```json\n[1, 2, 3]\n```'))
+            _safe_result(said('```json\n[1, 2, 3]\n```'), "summarize")
 
     def test_truncation_still_wins_when_both_are_true(self):
         """A cut-off array can close and parse. The truncation is the better
         explanation and the only one with an action attached, and its own type
         is what keeps `main` answering 422 instead of a retried 502."""
         with pytest.raises(TruncatedCompletionError):
-            _safe_result(said("[1, 2", finish_reason="length"))
+            _safe_result(said("[1, 2", finish_reason="length"), "summarize")
         with pytest.raises(TruncatedCompletionError):
-            _safe_result(said("[1, 2, 3]", finish_reason="length"))
+            _safe_result(said("[1, 2, 3]", finish_reason="length"), "summarize")
 
 
 class TestWhichCapWasHit:
@@ -94,7 +94,7 @@ class TestWhichCapWasHit:
     def test_an_openrouter_truncation_names_the_openrouter_cap(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "512")
         with pytest.raises(TruncatedCompletionError) as caught:
-            _safe_result(said("{", finish_reason="length"))
+            _safe_result(said("{", finish_reason="length"), "summarize")
         assert "OPENROUTER_MAX_TOKENS" in str(caught.value)
         assert "512" in str(caught.value)
 
@@ -107,7 +107,7 @@ class TestWhichCapWasHit:
             finish_reason="max_tokens",
         )
         with pytest.raises(TruncatedCompletionError) as caught:
-            _safe_result(cut)
+            _safe_result(cut, "summarize")
         assert "BEDROCK_MAX_TOKENS" in str(caught.value)
         assert "4096" in str(caught.value)
         assert "OPENROUTER_MAX_TOKENS" not in str(caught.value)

@@ -323,25 +323,51 @@ class TestATruncatedCompletion:
             finish_reason="length",
         )
         with pytest.raises(pipelines.TruncatedCompletionError) as caught:
-            pipelines._safe_result(llm)
+            pipelines._safe_result(llm, "summarize")
         assert "output cap" in str(caught.value)
 
     def test_it_is_a_value_error_so_the_old_catch_still_holds(self):
         llm = LlmResult(model="m", content="{ not json", finish_reason="length")
         with pytest.raises(ValueError):
-            pipelines._safe_result(llm)
+            pipelines._safe_result(llm, "summarize")
 
     def test_prose_that_simply_ignored_the_json_instruction_still_degrades(self):
         """The `notes` fallback earns its keep for a model that finished and
         wrote prose; only the cut-off case is refused."""
         llm = LlmResult(model="m", content="I think the company is worth a lot.", finish_reason="stop")
-        assert pipelines._safe_result(llm) == {"notes": "I think the company is worth a lot."}
+        assert pipelines._safe_result(llm, "summarize") == {"notes": "I think the company is worth a lot."}
+
+    def test_the_prose_degrade_leaves_a_line_behind_it(self, caplog):
+        """The degrade is right; being the only place it is recorded is not.
+
+        R344 (M5). "The analyst still gets what it said" holds for
+        `run_missing_data`, which reads `notes`. The other five pipelines ask
+        for their own keys, find none on a `notes` dict and fall to their empty
+        branch — `run_summarize` returns no summaries beside a full
+        `documents_reviewed` — and the job row says `succeeded`. Nothing logged,
+        so a model that has stopped honouring "respond ONLY with JSON" is
+        visible only by reading prompts.
+        """
+        llm = LlmResult(model="solo/model", content="It is worth a lot.", finish_reason="stop")
+        with caplog.at_level("WARNING"):
+            pipelines._safe_result(llm, "summarize")
+        [line] = [r for r in caplog.records if getattr(r, "event", None) == "llm_prose_fallback"]
+        # The two dimensions the question is asked in: which pipeline stopped
+        # getting JSON, and from which model.
+        assert (line.pipeline, line.model) == ("summarize", "solo/model")
+
+    def test_an_ordinary_json_answer_logs_nothing(self, caplog):
+        """Vacuity guard: the line above is a condition, not a constant."""
+        llm = LlmResult(model="m", content='{"summaries": []}', finish_reason="stop")
+        with caplog.at_level("WARNING"):
+            pipelines._safe_result(llm, "summarize")
+        assert not [r for r in caplog.records if getattr(r, "event", None) == "llm_prose_fallback"]
 
     def test_a_truncated_answer_that_is_nonetheless_parseable_is_kept(self):
         """Truncation is not by itself a reason to throw away a usable answer —
         only a reason not to invent one from the wreckage."""
         llm = LlmResult(model="m", content='{"summaries": []}', finish_reason="length")
-        assert pipelines._safe_result(llm) == {"summaries": []}
+        assert pipelines._safe_result(llm, "summarize") == {"summaries": []}
 
 
 # ── A completion the provider withheld ───────────────────────────────────────
@@ -383,7 +409,7 @@ class TestASuppressedCompletion:
             finish_reason="guardrail_intervened",
         )
         with pytest.raises(pipelines.SuppressedCompletionError) as caught:
-            pipelines._safe_result(llm)
+            pipelines._safe_result(llm, "summarize")
         assert "withheld" in str(caught.value)
 
     def test_it_is_refused_even_when_what_came_back_happens_to_parse(self):
@@ -392,12 +418,12 @@ class TestASuppressedCompletion:
         survived the filter, or text the model never wrote at all."""
         llm = LlmResult(model="m", content='{"summaries": []}', finish_reason="content_filter")
         with pytest.raises(pipelines.SuppressedCompletionError):
-            pipelines._safe_result(llm)
+            pipelines._safe_result(llm, "summarize")
 
     def test_it_is_a_value_error_so_the_old_catch_still_holds(self):
         llm = LlmResult(model="m", content="anything", finish_reason="content_filter")
         with pytest.raises(ValueError):
-            pipelines._safe_result(llm)
+            pipelines._safe_result(llm, "summarize")
 
 
 # ── Accounting, when the provider does not do it for us ──────────────────────

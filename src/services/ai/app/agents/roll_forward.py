@@ -124,7 +124,7 @@ Roll the valuation forward. Return JSON:
 Carry forward what the new data does not contradict; update what it does."""
 
     llm = c.ask(red, system, user, model)
-    parsed = c.safe_result(llm)
+    parsed = c.safe_result(llm, "roll_forward")
     result = {
         "material_changes": _changes(parsed),
         "assumption_dispositions": _dispositions(parsed),

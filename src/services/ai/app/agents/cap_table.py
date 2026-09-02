@@ -309,7 +309,7 @@ List every class of security. Return JSON:
 Only include values the documents actually contain."""
 
     first = c.ask(red, identify_system, identify_user, model)
-    identified_doc = c.safe_result(first)
+    identified_doc = c.safe_result(first, "cap_table")
     identified_raw = identified_doc.get("classes") if isinstance(identified_doc, dict) else None
     # A non-list here is a model answering off-contract, and `len(identified)` is
     # now load-bearing — a dict of classes would count its keys and reconcile
@@ -336,7 +336,7 @@ Keep every number identical to the input. 'preference' is the TOTAL preference
 in dollars. Lower seniority number = paid first. Do not add classes."""
 
     second = c.ask(red, _STRUCTURE_SYSTEM, structure_user, model)
-    structured = c.safe_result(second)
+    structured = c.safe_result(second, "cap_table")
     raw_classes = (
         structured.get("share_classes") if isinstance(structured, dict) else None
     ) or []

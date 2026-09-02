@@ -418,7 +418,7 @@ Only list gaps you can justify from the documents (e.g. a cap table with no
 preference amounts, projections without expenses). Maximum 10 gaps."""
 
     llm = _ask(red, system, user, model)
-    parsed = _safe_result(llm)
+    parsed = _safe_result(llm, "missing_data")
     gaps = parsed.get("gaps") if isinstance(parsed, dict) else None
     result = {
         "missing_documents": missing_docs,
@@ -468,7 +468,7 @@ Extract what is present. Return JSON:
 Use null for anything not found. ebitda may be negative."""
 
     llm = _ask(red, system, user, model)
-    parsed = _safe_result(llm)
+    parsed = _safe_result(llm, "extract")
     raw_inputs = parsed.get("engine_inputs") if isinstance(parsed, dict) else None
     engine_inputs: dict[str, float] = {}
     if isinstance(raw_inputs, dict):
@@ -521,7 +521,7 @@ Return JSON:
 5 to 8 comparables, ordered by relevance."""
 
     llm = _ask(red, system, user, model)
-    parsed = _safe_result(llm)
+    parsed = _safe_result(llm, "comparables")
     comparables = []
     if isinstance(parsed, dict) and isinstance(parsed.get("comparables"), list):
         for comp in parsed["comparables"][:10]:
@@ -572,7 +572,7 @@ One entry per document, in the order given. key_figures only for values
 actually present in that document (share counts, preferences, cash, revenue)."""
 
     llm = _ask(red, system, user, model)
-    parsed = _safe_result(llm)
+    parsed = _safe_result(llm, "summarize")
     summaries = []
     if isinstance(parsed, dict) and isinstance(parsed.get("summaries"), list):
         for entry in parsed["summaries"][:20]:
@@ -655,7 +655,7 @@ Review the calculation. Return JSON:
 "fail" only for defects that make the result indefensible. Maximum 10 findings."""
 
     llm = _ask(red, system, user, model)
-    parsed = _safe_result(llm)
+    parsed = _safe_result(llm, "qa")
     raw_findings = parsed.get("findings") if isinstance(parsed, dict) else None
     findings = []
     if isinstance(raw_findings, list):
@@ -741,7 +741,7 @@ Explain this valuation to the company's founder. Return JSON:
 Only include approaches that actually carried weight. Maximum 6 drivers."""
 
     llm = _ask(red, system, user, model)
-    parsed = _safe_result(llm)
+    parsed = _safe_result(llm, "explain")
     methodology = []
     if isinstance(parsed, dict) and isinstance(parsed.get("methodology"), list):
         for entry in parsed["methodology"][:6]:
@@ -818,7 +818,7 @@ def _truncated_error(llm: LlmResult) -> TruncatedCompletionError:
     )
 
 
-def _safe_result(llm: LlmResult) -> dict:
+def _safe_result(llm: LlmResult, pipeline: str) -> dict:
     """The model's JSON object, or its prose under `notes` when it wrote prose.
 
     The `notes` fallback is a deliberate degradation for a model that ignored
@@ -858,6 +858,40 @@ def _safe_result(llm: LlmResult) -> dict:
     except ValueError as exc:
         if llm.truncated:
             raise _truncated_error(llm) from exc
+        # And said out loud (R344, methodology M5). The degradation above is
+        # deliberate and stays; what it never had was a reader.
+        #
+        # "The analyst still gets what it said" is true of exactly one of the
+        # fifteen call sites this helper has: `run_missing_data` reads
+        # `parsed.get("notes")`. The other five pipelines and all nine agent
+        # calls ask for their own keys, a `notes` dict has none of them, and
+        # each falls to its written empty branch — `run_summarize` returns
+        # `summaries: []` beside a full `documents_reviewed`, which is the
+        # "document summary with no documents in it" this docstring describes,
+        # reached by the one door still open to it. The job row says
+        # `succeeded`, the AI tab renders the empty result, and the prose the
+        # model actually wrote is dropped on the floor.
+        #
+        # Not raised: a model writing prose is a prompt-following failure a
+        # retry often fixes, and refusing it here would take the one caller
+        # that *does* use the prose down with the fourteen that do not. A warn
+        # with the pipeline and the model on it is what makes "this model has
+        # stopped honouring `respond ONLY with JSON`" a line somebody can group
+        # on rather than a shape you would only find by reading prompts.
+        #
+        # `pipeline` is a required argument rather than a defaulted one: the
+        # label is the whole value of the line — which of fifteen prompts
+        # stopped getting JSON — and a default is the value a new call site
+        # ships with.
+        _log.warning(
+            "model answered in prose where the prompt asked for JSON",
+            extra={
+                "event": "llm_prose_fallback",
+                "pipeline": pipeline,
+                "model": llm.model,
+                "count": len(llm.content),
+            },
+        )
         return {"notes": llm.content[:1000]}
     if not isinstance(parsed, dict):
         # A cut-off array can still close and parse. When both are true the

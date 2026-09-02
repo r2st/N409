@@ -105,7 +105,7 @@ Prepare the audit-defense memo. Return JSON:
 Provide {MIN_CHALLENGES}-{MAX_CHALLENGES} challenges, ordered most to least likely."""
 
     llm = c.ask(red, system, user, model)
-    parsed = c.safe_result(llm)
+    parsed = c.safe_result(llm, "audit_defense")
     result = {
         "challenges": _challenges(parsed),
         "weaknesses": _weaknesses(parsed),
