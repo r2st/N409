@@ -269,9 +269,9 @@ export function EngagementTab() {
         </div>
         {view.durations_truncated && (
           <p role="alert" className="mt-3 text-xs text-amber-900">
-            Only part of this engagement’s stage trail could be read, so the hours below the cap are
-            missing from every stage after it — these timings, and the SLA verdicts on them,
-            understate the time actually spent.
+            Only part of this engagement’s stage trail could be read, so the hours below the cap are missing
+            from every stage after it — these timings, and the SLA verdicts on them, understate the time
+            actually spent.
           </p>
         )}
       </section>

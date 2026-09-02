@@ -396,7 +396,6 @@ describe.skipIf(!dbUp)('accounting routes', () => {
       // R350: the remedy names the panel the connect control is actually on.
       expect(body.detail).toContain('Documents → Accounting');
       expect(body.connection_status).toBe('absent');
-
     });
 
     it('pulls the P&L and writes revenue onto the valuation params', async () => {
@@ -599,9 +598,7 @@ describe.skipIf(!dbUp)('accounting routes', () => {
         expect((params!.engine_inputs as Record<string, unknown>).asset).toBeUndefined();
 
         // And an operator has a line to find it by.
-        const said = lines.find(
-          (l) => l.msg === 'accounting import completed without a balance sheet',
-        );
+        const said = lines.find((l) => l.msg === 'accounting import completed without a balance sheet');
         expect(said).toBeDefined();
         expect(said!.level).toBe('warn');
         expect(said!.reason).toMatch(/500/);

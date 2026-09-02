@@ -276,8 +276,7 @@ describe.skipIf(!dbUp)('comment notifications', () => {
 
       const said = lines.find(
         (l) =>
-          l.msg ===
-          'comment notification reached nobody — every intended recipient is closed or suspended',
+          l.msg === 'comment notification reached nobody — every intended recipient is closed or suspended',
       );
       expect(said).toBeDefined();
       expect(said!.valuationId).toBe(id);

@@ -201,9 +201,7 @@ describe('ProjectionPanel', () => {
     });
     panel();
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Adopt as the valuation’s cash flows' }),
-    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Adopt as the valuation’s cash flows' }));
 
     // The adoption still happened and still says so...
     expect(await screen.findByText(/Re-run the calculation/)).toBeInTheDocument();
