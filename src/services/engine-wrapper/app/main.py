@@ -477,10 +477,29 @@ def engine_compute(request: ComputeRequest) -> JSONResponse | dict:
     return result
 
 
+#: Problems the one-line summary names before it counts the rest. The same
+#: bound, for the same reason, as `describeIssues` in the Node estate's shared
+#: package: a message stops being read once it stops fitting where the UI puts
+#: it, and the full list is in `issues` for anything that reads structure.
+MAX_SUMMARISED_ISSUES = 3
+
+
 def _issue_summary(errors: list) -> str:
-    """One-line `detail` for clients that only read the string."""
-    head = errors[0].message
-    extra = len(errors) - 1
+    """One-line `detail` for clients that only read the string.
+
+    Three of them rather than one. The string is not a fallback for machines:
+    the valuation service composes it into "The calculation could not be run:
+    … Correct the inputs it names on the valuation's parameters and run the
+    calculation again", and several of the callers that reach that sentence —
+    the scenario preview among them — draw the `detail` and nothing else. A
+    remedy that says "the inputs it names" while naming one of four sends an
+    analyst back for a second refusal that was knowable at the first.
+    """
+    named = [issue.message for issue in errors[:MAX_SUMMARISED_ISSUES]]
+    # The count is of the problems *not* named, so it is directly the number
+    # still hidden rather than a total the reader has to subtract from.
+    extra = len(errors) - len(named)
+    head = "; ".join(named)
     return head if extra <= 0 else f"{head} (and {extra} more input problem{'s' if extra > 1 else ''})"
 
 

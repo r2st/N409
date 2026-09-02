@@ -418,7 +418,32 @@ def test_compute_rejects_a_bad_payload_with_issues_and_a_string_detail():
     # Legacy clients read `detail`; structured clients read `issues`.
     assert isinstance(body["detail"], str)
     assert len(body["issues"]) > 1
-    assert "more input problem" in body["detail"]
+    # Every problem up to the bound is named, not just the first: the callers
+    # that draw `detail` alone (the scenario preview) get one refusal per fix
+    # otherwise, and the remedy composed around this says "the inputs it names".
+    for issue in body["issues"][:3]:
+        assert issue["message"] in body["detail"]
+
+
+def test_the_detail_counts_the_problems_it_could_not_name():
+    # Five errors at once: three named, and the count is of the two left over
+    # rather than of the total, so a reader does not have to subtract.
+    res = client.post(
+        "/engine/v1/compute",
+        json={
+            "params": {"dlom": "x", "dloc": "y", "risk_free_rate": "z"},
+            "inputs": {"volatility": "w", "time_to_liquidity_years": "v"},
+        },
+    )
+    assert res.status_code == 422
+    body = res.json()
+    detail = body["detail"]
+    named = [i["message"] for i in body["issues"] if i["message"] in detail]
+    assert len(named) == 3
+    hidden = len(body["issues"]) - 3
+    assert hidden > 0
+    plural = "s" if hidden > 1 else ""
+    assert detail.endswith(f"(and {hidden} more input problem{plural})")
 
 
 def test_compute_returns_warnings_alongside_a_successful_result():
