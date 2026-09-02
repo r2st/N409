@@ -119,6 +119,56 @@ describe('sniffDelimiter — quoting in the header', () => {
     expect(sniffDelimiter('justoneheader')).toBe(',');
     expect(sniffDelimiter('')).toBe(',');
   });
+
+  /**
+   * R346, methodology M6: the header ends where the parser says it ends.
+   *
+   * The sniffer cut the header at the first newline in the *file*. A header
+   * whose own first cell is quoted and holds a line break — a two-line column
+   * title typed into a spreadsheet, the shape `capTableCsvParity` pins below as
+   * one real exports have — puts that newline inside the quotes, so the cut
+   * landed mid-quote and the scan spent the rest of the header believing it was
+   * quoted text. Every separator after it stopped counting, all three
+   * candidates came back zero, and the comma won by being first in the
+   * tie-break.
+   *
+   * Invisible on a comma file and exactly the failure this function exists to
+   * prevent on the other two: `parseCsvSheet` reads the header as one field, so
+   * the sheet has a single column named the whole header row, the mapping
+   * matches nothing, and the importer tells the client their file has no cap
+   * table in it.
+   */
+  it('reads past a line break inside a quoted header cell', () => {
+    const semi = '"Security\nClass";Shares;Price\nCommon;100;1.0\n';
+    expect(sniffDelimiter(semi)).toBe(';');
+    const tabbed = '"Security\nClass"\tShares\tPrice\nCommon\t100\t1.0\n';
+    expect(sniffDelimiter(tabbed)).toBe('\t');
+  });
+
+  it('agrees with the parser about which cells the header row has', () => {
+    // The two are readers of the same bytes and the bug was that they
+    // disagreed. Asserted together so a future change to either is measured
+    // against the other.
+    const semi = '"Security\nClass";Shares;Price\nCommon;100;1.0\n';
+    const sheet = parseCsvSheet(semi);
+    expect(sheet.headers).toEqual(['Security\nClass', 'Shares', 'Price']);
+    expect(sheet.rows).toEqual([{ 'Security\nClass': 'Common', Shares: '100', Price: '1.0' }]);
+  });
+
+  it('still stops at the header record rather than counting the whole file', () => {
+    // A data row with more separators than the header must not outvote it: a
+    // comma-delimited file whose first data cell is a quoted list of semicolons
+    // is still a comma file.
+    const commas = 'class,shares\n"a;b;c;d;e",100\n';
+    expect(sniffDelimiter(commas)).toBe(',');
+  });
+
+  it('does not run away on a header that opens a quote and never closes it', () => {
+    // The scan reads to the end of the input when the quote never closes, which
+    // is one pass rather than a hang — and answers the comma default, since
+    // nothing outside quotes voted.
+    expect(sniffDelimiter('"' + 'a;b\n'.repeat(5_000))).toBe(',');
+  });
 });
 
 describe('parseCsvSheet — rows that are not the shape of the header', () => {

@@ -454,26 +454,51 @@ const DELIMITERS = [',', ';', '\t'] as const;
  * has one. Guessing wrong is no worse than the single-column result assuming
  * always-comma already gives.
  *
- * Only the first line is inspected, and only separators outside quotes count,
- * so a quoted company name with a comma in it does not vote.
+ * Only the header *record* is inspected, and only separators outside quotes
+ * count, so a quoted company name with a comma in it does not vote.
+ *
+ * A record, not a line, and the distinction is the whole of a bug this had.
+ * `text.search(/[\r\n]/)` finds the first newline in the file, which is not
+ * the end of the header when the header's own first cell is quoted and holds a
+ * line break — a two-line column title typed into a spreadsheet, which is a
+ * shape `parseCsvSheet` explicitly supports and `capTableCsvParity` pins as one
+ * real exports have. Cutting there left the scan inside an unclosed quote, so
+ * every separator after it was read as quoted text and none of them voted: the
+ * count came back zero for all three candidates and the comma won by being
+ * first.
+ *
+ * For a comma file that is invisible. For the two this function exists for it
+ * is the failure it exists to prevent: a semicolon sheet out of a European
+ * Excel, or a tab-delimited paste, parsed as one column whose name is the whole
+ * header, mapping to nothing, reported to the client as a file with no cap
+ * table in it.
+ *
+ * So the header ends where `parseCsvSheet` says it ends — at the first newline
+ * *outside* quotes — and the two readers of the same bytes agree about which
+ * bytes the header is. One forward pass, tracking quotes once for all three
+ * candidates rather than re-scanning per delimiter.
  */
 export function sniffDelimiter(text: string): string {
-  const end = text.search(/[\r\n]/);
-  const header = end === -1 ? text : text.slice(0, end);
+  const counts = new Map<string, number>(DELIMITERS.map((d) => [d, 0]));
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"') {
+      // A doubled quote is an escaped quote, not a state change.
+      if (inQuotes && text[i + 1] === '"') i++;
+      else inQuotes = !inQuotes;
+      continue;
+    }
+    if (inQuotes) continue;
+    if (c === '\n' || c === '\r') break; // the header record ends here
+    const seen = counts.get(c);
+    if (seen !== undefined) counts.set(c, seen + 1);
+  }
 
   let best: string = DELIMITERS[0];
   let bestCount = 0;
   for (const delimiter of DELIMITERS) {
-    let count = 0;
-    let inQuotes = false;
-    for (let i = 0; i < header.length; i++) {
-      const c = header[i];
-      if (c === '"') {
-        // A doubled quote is an escaped quote, not a state change.
-        if (inQuotes && header[i + 1] === '"') i++;
-        else inQuotes = !inQuotes;
-      } else if (!inQuotes && c === delimiter) count++;
-    }
+    const count = counts.get(delimiter)!;
     if (count > bestCount) {
       best = delimiter;
       bestCount = count;
