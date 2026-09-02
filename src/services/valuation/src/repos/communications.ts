@@ -162,6 +162,27 @@ export async function updateCommunicationTemplate(
 }
 
 /** Refuses when a campaign still references the template (FK would fail anyway). */
+/**
+ * The campaigns that stop a template being deleted, by name.
+ *
+ * `deleteCommunicationTemplate` returns a boolean, and the 409 built from it
+ * used to say "Template is referenced by an auto email campaign" — the reason
+ * without the referent, on an installation that can hold dozens of campaigns
+ * and offers no way to filter them by template. The remedy is to go and detach
+ * them, so the message has to say which ones (round 374, M19).
+ */
+export async function campaignsUsingTemplate(pool: pg.Pool, id: string): Promise<string[]> {
+  const { rows } = await pool.query<{ name: string }>(
+    `SELECT a.name
+       FROM auto_emails a
+       JOIN communication_templates t ON t.key = a.template_key
+      WHERE t.id = $1
+      ORDER BY a.name`,
+    [id],
+  );
+  return rows.map((r) => r.name);
+}
+
 export async function deleteCommunicationTemplate(pool: pg.Pool, id: string): Promise<boolean> {
   const { rowCount } = await pool.query(
     `DELETE FROM communication_templates

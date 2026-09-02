@@ -196,14 +196,24 @@ describe.skipIf(!dbUp)('communication settings — refusals', () => {
       // The campaign references the template by key. Deleting it would leave a
       // campaign that fires and renders nothing, which is worse than a refusal
       // an operator has to think about.
-      const { template } = await createCampaign();
+      const { campaign, template } = await createCampaign();
       const res = await ctx.app.inject({
         method: 'DELETE',
         url: `/api/v1/admin/communication-templates/${template.id}`,
         headers: auth(),
       });
       expect(res.statusCode).toBe(409);
-      expect(res.json().detail).toMatch(/auto email campaign/i);
+      /*
+       * And it says *which* campaign (R374, M19). The refusal used to be
+       * "Template is referenced by an auto email campaign" — the reason with
+       * the referent left out, on a console that offers no listing of
+       * campaigns by template, so the operator's next move was to open every
+       * campaign in turn. The remedy is to go and detach them, which means
+       * naming them is the whole of the message.
+       */
+      const { detail } = res.json();
+      expect(detail).toContain(campaign.name);
+      expect(detail).toMatch(/before deleting this one/);
     });
 
     it('204s deleting a template nothing references', async () => {
@@ -319,7 +329,12 @@ describe.skipIf(!dbUp)('communication settings — refusals', () => {
         payload: { name: uniqueKey('c'), trigger_state: 'started', template_key: 'no_such_template' },
       });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/Unknown template_key/);
+      // Names the key it rejected and where the keys are (R374). It used to be
+      // the column name and the word "unknown", which sent the operator back to
+      // their own request with nothing to compare it against.
+      const { detail } = res.json();
+      expect(detail).toContain('no_such_template');
+      expect(detail).toMatch(/Communications/);
     });
 
     it('422s a campaign whose channel disagrees with its template', async () => {
@@ -433,8 +448,9 @@ describe.skipIf(!dbUp)('communication settings — refusals', () => {
         payload: { template_key: 'no_such_template' },
       });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/Unknown template_key/);
+      expect(res.json().detail).toContain('no_such_template');
     });
+
 
     it('204s a delete and then 404s the same id', async () => {
       const { campaign } = await createCampaign();

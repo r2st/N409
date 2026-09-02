@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { AdminEventType } from '../domain/auditTrail.js';
-import { isUlid, problems } from '@n409/shared';
+import { type ApiProblem, isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
 import {
@@ -19,6 +19,7 @@ import type { SupportEmailSource } from '../hooks/autoEmails.js';
 import { findValuationById } from '../repos/valuations.js';
 import { publicPartnerNameSql } from '../repos/branding.js';
 import {
+  campaignsUsingTemplate,
   createAutoEmail,
   createCommunicationTemplate,
   deleteAutoEmail,
@@ -40,6 +41,7 @@ import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { templateText } from '../domain/templateText.js';
 import { ulidField } from '../domain/ulidField.js';
+import { quoteForMessage } from '../domain/displayText.js';
 
 /**
  * Communication templates + auto email campaigns (409.ai §15.5/§15.6).
@@ -68,6 +70,35 @@ const TemplatePatch = TemplateBody.omit({ key: true, channel: true })
   .partial()
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'empty patch' });
+
+/**
+ * A campaign pointing at a template key nothing answers to (round 374, M19).
+ *
+ * Both sites used to answer `'Unknown template_key'`: the column name, the
+ * word "unknown", and nothing else — neither the key that was rejected nor
+ * where keys come from, on an endpoint whose caller has just typed one.
+ *
+ * The key is quoted through `quoteForMessage` for the reason
+ * `echoedRequestValueCensus` gives about path segments: this is by
+ * construction the value that matched nothing, so it is the caller's bytes,
+ * and the schema bounds its length but not its characters.
+ *
+ * The PATCH reaches this with `parsed.data.template_key ??
+ * existing.template_key`, so in principle it can complain about a key the
+ * request did not carry. It is left saying the same thing as the POST because
+ * that state is not reachable: `deleteCommunicationTemplate` refuses to remove
+ * a template any campaign references, and `TemplatePatch` omits `key`, so a
+ * campaign's stored key cannot go stale underneath it. A second sentence for a
+ * case no caller can be in is the vacuous check R180 wrote about, in a
+ * message.
+ */
+function unknownTemplate(key: string): ApiProblem {
+  return problems.unprocessable(
+    `No communication template has the key "${quoteForMessage(key)}". The Communications page ` +
+      'lists every template with its key; create the template first, or send one of the keys ' +
+      'shown there.',
+  );
+}
 
 const AutoEmailBody = z.object({
   name: z
@@ -241,8 +272,28 @@ export function registerCommunicationRoutes(
       if (!isUlid(id)) throw problems.notFound();
       const existing = await findTemplateById(deps.pool, id);
       if (!existing) throw problems.notFound();
-      if (!(await deleteCommunicationTemplate(deps.pool, id)))
-        throw problems.conflict('Template is referenced by an auto email campaign');
+      if (!(await deleteCommunicationTemplate(deps.pool, id))) {
+        /*
+         * Named, because the remedy is to go and detach them (round 374, M19).
+         * "Template is referenced by an auto email campaign" gave the reason
+         * and withheld the referent, and there is no listing filtered by
+         * template — so the operator's next move was to open every campaign in
+         * turn. The re-read is after the failed delete rather than before it:
+         * the delete is a single statement whose own `NOT EXISTS` is the
+         * decision, and asking first would be a second answer to a question
+         * that had already been settled.
+         */
+        const campaigns = await campaignsUsingTemplate(deps.pool, id);
+        throw problems.conflict(
+          campaigns.length > 0
+            ? `This template is sent by ${campaigns.length === 1 ? 'the campaign' : 'the campaigns'} ` +
+                `${campaigns.map((name) => `"${quoteForMessage(name)}"`).join(', ')}. Point ` +
+                `${campaigns.length === 1 ? 'it' : 'them'} at another template, or delete ` +
+                `${campaigns.length === 1 ? 'it' : 'them'}, before deleting this one.`
+            : 'This template could not be deleted. Nothing references it now, so a campaign was ' +
+              'pointed at it while the delete was running — try again.',
+        );
+      }
       await auditTemplate(principal.id, 'communication_template_deleted', existing);
       return reply.status(204).send();
     },
@@ -357,7 +408,7 @@ export function registerCommunicationRoutes(
     if (!parsed.success) throw invalidBody('Invalid campaign', parsed.error);
 
     const template = await findTemplateByKey(deps.pool, parsed.data.template_key);
-    if (!template) throw problems.unprocessable('Unknown template_key');
+    if (!template) throw unknownTemplate(parsed.data.template_key);
     if (template.channel !== parsed.data.channel)
       throw problems.unprocessable(
         `Template ${template.key} is a ${template.channel} template; the campaign channel must match`,
@@ -388,7 +439,7 @@ export function registerCommunicationRoutes(
     const templateKey = parsed.data.template_key ?? existing.template_key;
     const channel = parsed.data.channel ?? existing.channel;
     const template = await findTemplateByKey(deps.pool, templateKey);
-    if (!template) throw problems.unprocessable('Unknown template_key');
+    if (!template) throw unknownTemplate(templateKey);
     if (template.channel !== channel)
       throw problems.unprocessable(
         `Template ${template.key} is a ${template.channel} template; the campaign channel must match`,
