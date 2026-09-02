@@ -11745,3 +11745,88 @@
 #            a halved astral character becomes `U+FFFD` rather than failing the
 #            write — a display loss, not the `22P02` `textSlice.ts` documents for
 #            `jsonb`. No payload literal in this service cuts a string.
+
+# R391 — Fence audit (M6). The fence: a string this service did not write,
+#            crossing into a rendered deliverable. Two fixes at
+#            `da57c3ce..febd9905`, and a long census that mostly held.
+#
+#            96c22ae — a terms map with no bound, rendered one row per key.
+#            `POST /debt/instruments` took `params: z.record(z.unknown())` and
+#            persisted it to a jsonb column without the engine ever seeing it:
+#            `describe_unbindable` only runs on a *valuation*, so a key the
+#            engine would refuse is stored happily and never asked about.
+#            `navExhibits.instrumentExhibit` then renders that stored map into
+#            the deliverable as "Exhibit — Instrument Terms", `Object.entries`,
+#            one table row per key — and falls back to exactly this column for
+#            an instrument that has never been valued. Bounded by nothing but
+#            Fastify's 1 MB body on both axes that decide how big the exhibit
+#            gets. The rule was already written down twice in this service, for
+#            the same shape: `asc718.rsu_performance_conditions` and
+#            `params.market_custom_ranges` each cap a persisted jsonb map's key
+#            count, and `communications`' `vars` states the general form
+#            ("bounded on all three axes"). This was that map with a renderer
+#            attached. One `InstrumentParams` now carries the bound to create,
+#            update *and* the per-run `overrides` — the last because
+#            `instrumentExhibit` prefers the run's own inputs over the stored
+#            map, so overrides are what the exhibit renders once an instrument
+#            has been valued. The value axis is left open on purpose: the
+#            engine, not this schema, says what a parameter may be.
+#
+#            febd990 — a schedule key the exhibit did not write, printed as it
+#            was found. Two questions a render-time cell has to ask about a key
+#            out of `calculations.result`, and eight sites asking neither or
+#            one. `esc(MAP[key] ?? label(key))` consults `Object.prototype`, so
+#            `constructor`/`toString`/`valueOf`/`hasOwnProperty` never miss: the
+#            map answers with a function, `??` never reaches the fallback, and
+#            `esc` throws `replace is not a function` — the whole report render,
+#            not one cell, for as long as the row is stored. Six such lookups in
+#            specialtyExhibits, three in navExhibits (the last calling
+#            `.toLowerCase()` on the result, the same crash one step along). And
+#            `label()` emits raw markup: four call sites interpolated it
+#            unescaped into a table cell — the §1202 test names, both halves of
+#            the SDE normalization schedule, the Level 3 rollforward — while six
+#            others in the same module escaped. Nothing can put such a key there
+#            today, and that is the point: each vocabulary is bounded by the
+#            engine at its own door, one tier and one language away, and this
+#            side reads a `Record<string, unknown>` TypeScript can say nothing
+#            about. The same distance R211 found on the cap-table importer.
+#
+#            Walked and left alone, which is most of the round. The two copies
+#            of `sanitizeHtml` (web-frontend `lib/m2.ts`, valuation
+#            `domain/report.ts`) are byte-identical across all eleven of their
+#            parts — ALLOWED_TAGS, TAG_HEAD, HREF, URL_IGNORED, SAFE_URL,
+#            safeHref, stripComments, stripRawText, escapeText, filterTags,
+#            attrValue. `renderedHtmlSanitized.test.ts` derives its sink
+#            population by walking the tree, so a new `dangerouslySetInnerHTML`
+#            fails it. `email/mime.ts` escapes the body and linkifies over the
+#            raw text with a pattern admitting no quote, no angle bracket and no
+#            scheme but http(s). `export/csv.ts` and `domain/csv.ts` are one
+#            encoder with the DDE trigger set and the plain-negative exemption.
+#            `export/xlsx.ts` strips the control characters XML 1.0 forbids and
+#            caps a cell at Excel's own 32,767. The PDF renderer draws an `<a>`
+#            as underlined text and writes no link annotation. The role
+#            vocabulary is `z.enum(ROLE_KEYS)` at the admin doors and re-checked
+#            against `ROLE_KEYS` at both JIT doors (SAML, SCIM).
+#            `instrument_type` and `seniority` carry a CHECK constraint *and* a
+#            Zod enum. `evidence.ts` builds every ZIP entry name from a literal.
+#            `boardResolution.renderBoardResolution` escapes all six of its
+#            substituted values.
+#
+#            gap: nothing keeps the two `sanitizeHtml` copies together. They
+#            agree today across eleven parts and there is no module path between
+#            the packages (web-frontend has no `@n409/shared` dependency), so
+#            the guard would be a source-reading parity test of the kind
+#            `test_display_text.py` already is for the TS/Python pair.
+#            gap: `debt.ts`'s bound is on the count and the key; a single
+#            parameter *value* is still whatever fits in the body, and
+#            `paramValue` renders a non-scalar through `esc(String(value))`.
+#            The engine is the authority on the value, which is why the axis was
+#            left, but nothing states that where the exhibit reads it.
+#            gap: the `label()`/`mapped()` rule is applied but not asserted. A
+#            source scan over the exhibit modules — no `label(` outside `esc(`,
+#            `mapped(` or an already-escaped argument, no bare `*_LABELS[` — is
+#            the census this round did by hand and did not leave behind.
+#            gap: `capTable.ts`'s import body is `z.array(z.record(z.string(),
+#            z.unknown())).max(MAX_CAP_TABLE_ENTRIES)` — the row count is
+#            bounded and the per-row key set is not, the same shape as the debt
+#            map without a confirmed renderer behind it.
