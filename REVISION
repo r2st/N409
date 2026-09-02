@@ -8894,3 +8894,81 @@
 #            red on main since the page's fallback wording changed. Fixed here
 #            because the file was open; nothing checks that a suite named in no
 #            round's diff is still green, which is how it stayed red.
+#
+# R363 — Computation & arithmetic (M2). One finding, no migration, 3 new tests.
+#            The round read the engine's *rate* handling rather than its
+#            formulas, on the ground that R355 had already fuzzed the allocation
+#            and reconciled the closed forms: what is left is the layer that
+#            decides what a number the caller typed means. Fuzzing the OPM
+#            waterfall against the deterministic one in the σ→0 limit over three
+#            thousand randomised cap tables found no disagreement, and two
+#            thousand more at ordinary volatilities conserved value and stayed
+#            monotone in equity value per class; the Hamada levering, the DLOC
+#            premium inversion, the §1202 holding-period tiers and per-issuer
+#            cap, the Schedule 4/5 limits, the Rev. Rul. 59-60 discount chain,
+#            the ASC 350/360 impairment tests, PWERM, the CVM, the SAFE
+#            conversion legs, the bond schedule with its duration and convexity,
+#            and IFRS 2's graded attribution all reconcile against their
+#            published forms.
+#
+#            **A tax rate of 1 was valued at one percent.** `intangibles._tax`
+#            accepts both spellings of a rate — 0.21 and 21 — which is the
+#            module's own convention and is right. What it had that `_rate`, two
+#            functions up, does not is no ambiguity band: *everything* at or
+#            above 1.0 was divided by 100. So `tax_rate: 1` — 100%, and the
+#            exact top of the range the IP questionnaire declares for the field,
+#            since `intakeKinds`'s `rate` rule is `{min: 0, max: 1}` — came out
+#            as 0.01. Nothing downstream could see it: the coerced figure is the
+#            one echoed back under `assumptions.tax_rate`, so the exhibit
+#            printed 0.01 as the rate that had been asked for, and the after-tax
+#            royalty saving, the MEEM excess earnings and the TAB step-up were
+#            all struck a hundredfold light on a schedule that reconciles to
+#            itself. The `tax_rate must be below 100%` refusal that would have
+#            named the field was unreachable for every value that could reach
+#            it, because the division always landed the rate under the ceiling
+#            first. `_rate` already settles the rule and is tested on it —
+#            convert what is unambiguously a percentage, refuse the overlap
+#            rather than pick a reading — so [1, 2) is now a 422 naming the
+#            field, `>= 2` converts as before, and a converted rate at or above
+#            100% keeps its own refusal. Every existing spelling is unchanged.
+#
+#            gap: `fund_valuation.classify_level` returns Level 1 for any
+#            position carrying a `quoted_price`, whatever method marked it, so a
+#            holding carried at cost or at a calibrated model value with a quote
+#            beside it would land in the Level 1 row of the ASC 820 hierarchy
+#            table. Not reachable from the service: `routes/funds.ts` copies
+#            only the chosen method's own figure into `inputs`, and the NAV
+#            rollup replays those stored inputs, so no non-`market` position has
+#            ever carried the key. It is a hole in `/engine/v1/fund-valuation`'s
+#            own contract rather than a live defect, and the reason it is worth
+#            writing down is that the level is recomputed by the engine on every
+#            NAV rather than read from the stored `fund_marks.level`.
+#            gap: `lp_waterfall` reports `gp_carry_entitled` as
+#            `carry × total_profit` and measures the clawback against it, while
+#            `gp_distribution` on the same response is `carry × (profit − pref)`
+#            whenever `gp_catch_up` is false. The two figures disagree by
+#            `carry × pref` on one schedule, and the clawback — the one number
+#            an LPAC acts on — is understated by that amount. It is deliberate
+#            and pinned (`test_waterfall_clawback_measures_a_no_catch_up_gp_
+#            against_the_same_ceiling`), so this round left it: but an LPA that
+#            switches the catch-up off is an LPA saying the GP is not entitled
+#            to carry on the preferred return, and the ceiling should follow the
+#            tiering it is a true-up of.
+#            gap: `comparables._screen_out_reason` names the dimension with the
+#            lowest *raw* proximity score, not the one that cost the candidate
+#            the most weight. Industry carries 0.40 of the default weighting and
+#            profitability 0.15, so a comp sunk by a 0.15 industry score is
+#            printed as "margin profile too different" whenever its
+#            profitability score is lower still. Only the sentence in the
+#            screened-out table is affected; the ranking is unchanged.
+#            gap: `pdf.renderWaterfallChart` scales off `max(0, ...tops)` and
+#            never reads `bottom`, so a step carrying the running total below
+#            zero draws below the baseline and out of the plot. `discountChart`
+#            is the only producer and its running total is bounded below by the
+#            concluded FMV, so it is unreachable today — the same shape, and the
+#            same reason for recording it, as R355's `DonutChart` note.
+#            gap: R355's `checkWorkingCapital` note — that a quarterly or
+#            monthly column would be described in days out by the period length
+#            — does not apply. `workbook.FISCAL_PERIODS` is five fiscal *years*
+#            and is the only column set either statement sheet has, so ×365 is
+#            right for every column the check can be handed.
