@@ -383,18 +383,21 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
 
   // ── Method defaults ───────────────────────────────────────────────────────
   describe('mark defaults', () => {
-    it('falls back to the position quantity and a zero price per method', async () => {
-      // Each `?? ` in the method dispatch, exercised by omitting the field it
-      // defends. A mark that omits its price is worth zero, not NaN — the
-      // difference between a figure an analyst can see is wrong and one that
-      // poisons every total downstream of it.
+    it('refuses a mark that omits the figure its own method is struck from', async () => {
+      // The price column each method reads has no fallback: a mark posted
+      // without it used to be recorded as a fair value of zero, which is a
+      // measurement — the holding is worthless — rather than the absence of
+      // one. Downstream nothing can tell the two apart: the ASC 820 hierarchy
+      // counts the position at nil in its method's level, the portfolio
+      // schedule prints an unrealized loss of the whole cost basis, and NAV is
+      // short by the holding. R339's blank PWERM exit value, one surface along.
       const id = await createFund();
-      const cases: [string, Record<string, unknown>][] = [
-        ['market', { quantity: 1000, quoted_price: 0 }],
-        ['last_round', { quantity: 1000, round_price_per_share: 0 }],
-        ['calibrated_opm', { model_value: 0 }],
+      const cases: [string, string][] = [
+        ['market', 'quoted_price'],
+        ['last_round', 'round_price_per_share'],
+        ['calibrated_opm', 'model_value'],
       ];
-      for (const [method, expected] of cases) {
+      for (const [method, field] of cases) {
         const pid = await addPosition(id, { company_name: `Default-${method}` });
         const res = await app.inject({
           method: 'POST',
@@ -402,10 +405,47 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
           headers: opsAuth(),
           payload: { measurement_date: '2026-03-31', method },
         });
-        expect(res.statusCode, method).toBe(201);
-        expect(Number(res.json().mark.fair_value), method).toBe(0);
-        expect(res.json().mark.inputs, method).toEqual(expected);
+        expect(res.statusCode, method).toBe(422);
+        // The refusal names the box to fill in, not just the row it is on.
+        expect(res.json().detail, method).toContain(field);
+        // And nothing was written: the holding still reports no mark at all.
+        const marks = await app.inject({
+          method: 'GET',
+          url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+          headers: opsAuth(),
+        });
+        expect(marks.json().marks, method).toHaveLength(0);
       }
+    });
+
+    it('still falls back to the position quantity, which the holding carries', async () => {
+      // `quantity` keeps its fallback where the price columns lost theirs: the
+      // holding's own share count is a real answer the row already states, and
+      // omitting it means "all of them" rather than "none".
+      const id = await createFund();
+      const pid = await addPosition(id, { company_name: 'Quantity-fallback' });
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+        headers: opsAuth(),
+        payload: { measurement_date: '2026-03-31', method: 'market', quoted_price: 2 },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().mark.inputs).toEqual({ quantity: 1000, quoted_price: 2 });
+      expect(Number(res.json().mark.fair_value)).toBe(2000);
+    });
+
+    it('accepts an explicit zero price, which is a measurement someone made', async () => {
+      const id = await createFund();
+      const pid = await addPosition(id, { company_name: 'Written-off' });
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+        headers: opsAuth(),
+        payload: { measurement_date: '2026-03-31', method: 'last_round', round_price_per_share: 0 },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(Number(res.json().mark.fair_value)).toBe(0);
     });
 
     it('dates a recorded roll-forward as today when the body omits the date', async () => {

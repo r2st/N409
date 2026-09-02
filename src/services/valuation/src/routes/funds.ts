@@ -104,14 +104,56 @@ const PositionPatchBody = z
   .partial()
   .strict();
 
-const MarkBody = z.object({
-  measurement_date: DateStr,
-  method: z.enum(['market', 'last_round', 'calibrated_opm', 'cost']),
-  quantity: z.number().min(0).max(1e15).optional(),
-  quoted_price: z.number().min(0).max(1e12).optional(),
-  round_price_per_share: z.number().min(0).max(1e12).optional(),
-  model_value: z.number().min(0).max(1e15).optional(),
-});
+/**
+ * The figure each marking method is actually struck from.
+ *
+ * `cost` is absent on purpose: it reads the holding's stored `cost_basis` and
+ * asks the caller for nothing.
+ */
+const MARK_FIGURE: Record<Exclude<MarkMethod, 'cost'>, 'quoted_price' | 'round_price_per_share' | 'model_value'> =
+  {
+    market: 'quoted_price',
+    last_round: 'round_price_per_share',
+    calibrated_opm: 'model_value',
+  };
+
+const MarkBody = z
+  .object({
+    measurement_date: DateStr,
+    method: z.enum(['market', 'last_round', 'calibrated_opm', 'cost']),
+    quantity: z.number().min(0).max(1e15).optional(),
+    quoted_price: z.number().min(0).max(1e12).optional(),
+    round_price_per_share: z.number().min(0).max(1e12).optional(),
+    model_value: z.number().min(0).max(1e15).optional(),
+  })
+  /*
+   * The figure the chosen method reads is required, not defaulted.
+   *
+   * `inputs.quoted_price = b.quoted_price ?? 0` below used to stand in for the
+   * refusal, on the reasoning that a mark worth zero beats a mark worth NaN.
+   * Both are true and neither is the answer: a fair value of zero is a
+   * measurement — it says the holding is worthless — and it is the one reading
+   * the analyst who left the box empty did not make. It is then indistinguishable
+   * from a genuine write-off everywhere it goes: the Fair Value Hierarchy table
+   * counts it as a Level 1 holding measured at nil, the Portfolio Schedule
+   * prints an unrealized loss of the whole cost basis, and NAV is short by the
+   * position. The same shape as R339's blank PWERM exit value, which crossed the
+   * wire as a total-loss scenario for the same reason.
+   *
+   * `quantity` keeps its fallback: absent, it means "the holding's own count",
+   * which is a real answer the row already carries. No price column has one.
+   */
+  .superRefine((body, ctx) => {
+    if (body.method === 'cost') return;
+    const key = MARK_FIGURE[body.method];
+    if (body[key] === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key} is required for the ${body.method} method`,
+      });
+    }
+  });
 
 const LpTermsBody = z.object({
   committed_capital: z.number().min(0).max(1e15).default(0),
