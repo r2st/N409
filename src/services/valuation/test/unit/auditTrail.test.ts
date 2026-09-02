@@ -674,7 +674,7 @@ describe('fieldHistory', () => {
 
 describe('changeLogCsv', () => {
   const header =
-    'occurred_at,seq,event_type,event,category,severity,actor_type,actor_id,source,field,field_label,from,to';
+    'occurred_at,seq,event_type,event,category,severity,actor_type,actor_id,source,field,field_label,from,to,note';
 
   it('emits a header even with no entries', () => {
     expect(changeLogCsv([]).trim()).toBe(header);
@@ -693,6 +693,32 @@ describe('changeLogCsv', () => {
     expect(rows).toHaveLength(3); // header + two changes
     expect(rows[1]).toContain('dlom');
     expect(rows[2]).toContain('dloc');
+  });
+
+  it('carries the circumstance into the file, not only onto the screen', () => {
+    // The export is where an auditor asks the question the note answers, and
+    // it was the surface that could not answer it: this change list and the
+    // one below are identical.
+    const dissolved = describeEvent(
+      event({
+        type: 'portfolio_membership_changed',
+        payload: {
+          changes: { organization_id: { from: '01H8XYZ', to: null } },
+          organization_deleted: true,
+        },
+      }),
+    );
+    const detached = describeEvent(
+      event({
+        type: 'portfolio_membership_changed',
+        payload: { changes: { organization_id: { from: '01H8XYZ', to: null } } },
+      }),
+    );
+    const rows = changeLogCsv([dissolved, detached]).trim().split('\r\n');
+    expect(rows[1]).toContain(
+      ',The organization was deleted; every engagement it held returned to standalone.',
+    );
+    expect(rows[2]!.endsWith(',')).toBe(true);
   });
 
   it('skips events that changed nothing', () => {

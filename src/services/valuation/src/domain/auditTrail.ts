@@ -1118,6 +1118,16 @@ export function fieldHistory(
  * events.json is the authoritative record but it is nested JSON; an auditor
  * scanning for "when did the DLOM change and who signed off?" wants a table
  * they can open in Excel and sort. Same data, readable shape.
+ *
+ * `note` last (round 389, methodology M4). The circumstance was reaching the
+ * tab and not the file: an auditor working in the export saw
+ * `organization_id | 01H… | —` and could not tell a dissolved holding company
+ * from one engagement detached by hand, which is the single question
+ * `eventNote` exists to answer and the export is the surface it is asked on. A
+ * column rather than a row, so the objection `AuditTrailTab` records about the
+ * truncation warning — "a CSV has no comment syntax, so a note row would be
+ * read as data" — does not apply; it repeats per row of an event exactly as
+ * `label`, `category` and `severity` already do.
  */
 export function changeLogCsv(entries: readonly AuditEntry[]): string {
   const rows = entries.flatMap((entry) =>
@@ -1135,6 +1145,7 @@ export function changeLogCsv(entries: readonly AuditEntry[]): string {
       humanizeField(change.field),
       formatAuditValue(change.from),
       formatAuditValue(change.to),
+      entry.note ?? '',
     ]),
   );
   return toCsv(
@@ -1152,6 +1163,7 @@ export function changeLogCsv(entries: readonly AuditEntry[]): string {
       'field_label',
       'from',
       'to',
+      'note',
     ],
     rows,
   );
