@@ -373,6 +373,186 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
     expect(rows[0]?.parent_valuation_id).toBeNull();
   });
 
+  /*
+   * The structure that moves the roll-up, on the record (R384, methodology M11).
+   *
+   * `organization_id`, `entity_type` and `parent_valuation_id` are the three
+   * columns `consolidate` reads, and until this round none of the four doors
+   * that write them touched `valuation_events`. R380 is the reason it is worth
+   * a suite of its own: it found this exact door writing half the relationship,
+   * and the fix stops the double-count recurring without saying anything about
+   * the engagements it had already happened to.
+   *
+   * Asserted as before/after rather than as row counts: a payload naming only
+   * the fields that moved cannot answer what the membership *was*, and the row
+   * itself now holds only the new value.
+   */
+  describe('portfolio structure changes are on the audit spine', () => {
+    const spine = async (valuationId: string, type: string) => {
+      const { rows } = await ctx.pool.query<{ payload: Record<string, unknown>; actor_id: string | null }>(
+        `SELECT payload, actor_id FROM valuation_events
+          WHERE valuation_id = $1 AND type = $2 ORDER BY seq`,
+        [valuationId, type],
+      );
+      return rows;
+    };
+
+    it('records an assignment, a retype and a removal with what each one changed', async () => {
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/organizations',
+        headers: authHeader(owner.token),
+        payload: { name: 'Audited Holdings', entity_type: 'holding_company' },
+      });
+      const orgId = created.json().organization.id as string;
+      const sub = await seedValuation(owner, 'Audited Sub', 5_000_000);
+
+      const assign = (entityType: string) =>
+        ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/organizations/${orgId}/entities`,
+          headers: authHeader(owner.token),
+          payload: { valuation_id: sub.id, entity_type: entityType },
+        });
+      expect((await assign('subsidiary')).statusCode).toBe(204);
+      // The retype R380 was about: `subsidiary` to `standalone` through this
+      // door, which is what stops the elimination and doubles the total.
+      expect((await assign('standalone')).statusCode).toBe(204);
+      expect(
+        (
+          await ctx.app.inject({
+            method: 'DELETE',
+            url: `/api/v1/organizations/${orgId}/entities/${sub.id}`,
+            headers: authHeader(owner.token),
+          })
+        ).statusCode,
+      ).toBe(204);
+
+      const rows = await spine(sub.id, 'portfolio_membership_changed');
+      expect(rows.length).toBe(3);
+      expect(rows.every((r) => r.actor_id === owner.id)).toBe(true);
+      expect(rows[0]?.payload).toMatchObject({
+        organization_id: orgId,
+        previous_organization_id: null,
+        entity_type: 'subsidiary',
+        previous_entity_type: 'standalone',
+      });
+      expect(rows[1]?.payload).toMatchObject({
+        entity_type: 'standalone',
+        previous_entity_type: 'subsidiary',
+      });
+      expect(rows[2]?.payload).toMatchObject({
+        organization_id: null,
+        previous_organization_id: orgId,
+      });
+    });
+
+    it('says nothing when the request changes nothing', async () => {
+      // A repeat of an ordinary request, on `disableMonitor`'s reading: the
+      // caller asked for a state the engagement is already in, the route still
+      // answers 204, and the trail does not report a membership starting twice.
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/organizations',
+        headers: authHeader(owner.token),
+        payload: { name: 'Idempotent Holdings', entity_type: 'holding_company' },
+      });
+      const orgId = created.json().organization.id as string;
+      const sub = await seedValuation(owner, 'Idempotent Sub', 1_000_000);
+      for (let i = 0; i < 3; i++) {
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/organizations/${orgId}/entities`,
+          headers: authHeader(owner.token),
+          payload: { valuation_id: sub.id, entity_type: 'subsidiary' },
+        });
+      }
+      expect((await spine(sub.id, 'portfolio_membership_changed')).length).toBe(1);
+    });
+
+    it('records the inter-company link being set and cleared', async () => {
+      const parent = await seedValuation(owner, 'Linked Parent', 8_000_000);
+      const child = await seedValuation(owner, 'Linked Child', 2_000_000);
+      const patch = (payload: Record<string, unknown>) =>
+        ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${child.id}/entity`,
+          headers: authHeader(owner.token),
+          payload,
+        });
+      expect((await patch({ entity_type: 'subsidiary', parent_valuation_id: parent.id })).statusCode).toBe(
+        200,
+      );
+      // The clearing branch, which used to write on the pool rather than in a
+      // transaction — detaching moves the consolidated total as much as
+      // attaching does.
+      expect((await patch({ entity_type: 'standalone' })).statusCode).toBe(200);
+
+      const rows = await spine(child.id, 'entity_relationship_changed');
+      expect(rows.length).toBe(2);
+      expect(rows[0]?.payload).toMatchObject({
+        entity_type: 'subsidiary',
+        previous_entity_type: 'standalone',
+        parent_valuation_id: parent.id,
+        previous_parent_valuation_id: null,
+      });
+      expect(rows[1]?.payload).toMatchObject({
+        entity_type: 'standalone',
+        parent_valuation_id: null,
+        previous_parent_valuation_id: parent.id,
+      });
+    });
+
+    it('writes one row per engagement when the whole organization goes', async () => {
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/organizations',
+        headers: authHeader(owner.token),
+        payload: { name: 'Wound Up Holdings', entity_type: 'holding_company' },
+      });
+      const orgId = created.json().organization.id as string;
+      const a = await seedValuation(owner, 'Wound Up A', 4_000_000);
+      const b = await seedValuation(owner, 'Wound Up B', 1_000_000);
+      for (const [v, type] of [
+        [a, 'parent'],
+        [b, 'subsidiary'],
+      ] as const) {
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/organizations/${orgId}/entities`,
+          headers: authHeader(owner.token),
+          payload: { valuation_id: v.id, entity_type: type },
+        });
+      }
+      expect(
+        (
+          await ctx.app.inject({
+            method: 'DELETE',
+            url: `/api/v1/organizations/${orgId}?detach=true`,
+            headers: authHeader(owner.token),
+          })
+        ).statusCode,
+      ).toBe(200);
+
+      for (const [v, was] of [
+        [a, 'parent'],
+        [b, 'subsidiary'],
+      ] as const) {
+        const rows = await spine(v.id, 'portfolio_membership_changed');
+        const last = rows[rows.length - 1];
+        expect(last?.payload).toMatchObject({
+          organization_id: null,
+          previous_organization_id: orgId,
+          entity_type: 'standalone',
+          previous_entity_type: was,
+          // The half the before/after pair cannot say: the roll-up ceased to
+          // exist rather than this engagement being taken out of it.
+          organization_deleted: true,
+        });
+      }
+    });
+  });
+
   it('refuses a standalone entity with a parent', async () => {
     const parent = await seedValuation(owner, 'Contradiction Parent', 1_000_000);
     const child = await seedValuation(owner, 'Contradiction Child', 1_000_000);

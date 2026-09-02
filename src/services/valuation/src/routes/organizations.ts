@@ -21,6 +21,7 @@ import {
 import { findValuationById } from '../repos/valuations.js';
 import { buildEntityTree, consolidate, labelEntities } from '../domain/portfolio.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { ulidField } from '../domain/ulidField.js';
@@ -31,6 +32,16 @@ import { flagParam } from '../domain/queryFlag.js';
  * or fund) groups valuations-as-businesses; the portfolio + consolidated views
  * roll them up. Organizations are owned by a user; ops see and manage all.
  */
+
+/**
+ * The person on the spine. Every write in this file changes how an engagement
+ * is counted in a roll-up, and R384 put all four of them on the audit trail —
+ * see `portfolio_membership_changed` in `domain/auditTrail.ts`.
+ */
+const actorOf = (principal: Principal): EventActor => ({
+  actorType: 'human',
+  actorId: principal.id,
+});
 
 const OrgTypeEnum = z.enum(['holding_company', 'fund', 'operating_group']);
 const EntityTypeEnum = z.enum(['standalone', 'parent', 'subsidiary', 'portfolio_company']);
@@ -217,7 +228,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
           '?detach=true to go ahead.',
       );
     }
-    const result = await deleteOrganization(deps.pool, id);
+    const result = await deleteOrganization(deps.pool, id, actorOf(principal));
     return reply.status(200).send({
       deleted: result.deleted,
       detached_entities: result.detachedEntities,
@@ -254,7 +265,13 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     // only that one refused. Withdrawn work could still be added to a
     // consolidation group and counted into a roll-up from here.
     refuseIfRetired(await loadEditableValuation(principal, parsed.data.valuation_id), 'accepting changes');
-    await assignValuationToOrg(deps.pool, parsed.data.valuation_id, org.id, parsed.data.entity_type);
+    await assignValuationToOrg(
+      deps.pool,
+      parsed.data.valuation_id,
+      org.id,
+      parsed.data.entity_type,
+      actorOf(principal),
+    );
     return reply.status(204).send();
   });
 
@@ -295,7 +312,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       const valuation = await loadEditableValuation(principal, valuationId);
       if (valuation.organization_id !== org.id)
         throw problems.notFound('That engagement is not part of this organization.');
-      await assignValuationToOrg(deps.pool, valuationId, null);
+      await assignValuationToOrg(deps.pool, valuationId, null, undefined, actorOf(principal));
       return reply.status(204).send();
     },
   );
@@ -329,6 +346,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       id,
       parsed.data.entity_type,
       parsed.data.parent_valuation_id ?? null,
+      actorOf(principal),
     ).catch((err: unknown) => {
       if (err instanceof HierarchyCycleError) {
         throw problems.unprocessable(

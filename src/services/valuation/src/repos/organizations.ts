@@ -3,6 +3,7 @@ import { newUlid } from '@n409/shared';
 import type { EntityType, PortfolioEntity } from '../domain/portfolio.js';
 import { invalidateValuation } from './valuations.js';
 import { withTransaction, type Queryable } from '../db/pool.js';
+import { recordEvent, recordEvents, type EventActor } from '../events/record.js';
 
 /**
  * Lock class for the two single-parent hierarchies. Distinct from every other
@@ -254,7 +255,11 @@ export interface DeleteOrganizationResult {
  *     null. A holdco tree that loses a middle node should close up, not
  *     scatter; SET NULL was the database's default answer, not a decision.
  */
-export async function deleteOrganization(pool: pg.Pool, id: string): Promise<DeleteOrganizationResult> {
+export async function deleteOrganization(
+  pool: pg.Pool,
+  id: string,
+  actor: EventActor,
+): Promise<DeleteOrganizationResult> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -266,12 +271,51 @@ export async function deleteOrganization(pool: pg.Pool, id: string): Promise<Del
       await client.query('ROLLBACK');
       return { deleted: false, detachedEntities: [], reparentedOrganizations: [] };
     }
+    /*
+     * Read before the write, because the event has to say what the membership
+     * *was*: `UPDATE … RETURNING` hands back the row as it now is, and the
+     * whole content of this event is the three columns this statement is about
+     * to overwrite. Bounded by the same thing the `UPDATE` below is — how many
+     * engagements one organization holds — so it adds a round trip rather than
+     * a new ceiling.
+     */
+    const members = await client.query<{ id: string } & StructureRow>(
+      `SELECT id, organization_id, entity_type, parent_valuation_id
+         FROM valuations WHERE organization_id = $1 FOR UPDATE`,
+      [id],
+    );
     const detached = await client.query<{ id: string }>(
       `UPDATE valuations
           SET organization_id = NULL, entity_type = 'standalone', parent_valuation_id = NULL
         WHERE organization_id = $1
         RETURNING id`,
       [id],
+    );
+    /*
+     * One row per engagement rather than one per organization: the spine is
+     * keyed on `valuation_id`, and "this engagement left a roll-up" is the
+     * question asked of an engagement's own trail. `recordEvents` writes the
+     * batch in one statement, which is what it exists for — a holding company
+     * being wound up detaches its whole book at once.
+     */
+    await recordEvents(
+      client,
+      members.rows.map((row) => ({
+        valuationId: row.id,
+        type: 'portfolio_membership_changed' as const,
+        actor,
+        payload: {
+          ...structureChange(row, {
+            organization_id: null,
+            entity_type: 'standalone',
+            parent_valuation_id: null,
+          }),
+          // Why the membership ended, which the before/after pair cannot say:
+          // this is not somebody removing one engagement from a roll-up, it is
+          // the roll-up ceasing to exist.
+          organization_deleted: true,
+        },
+      })),
     );
     const reparented = await client.query<{ id: string }>(
       'UPDATE organizations SET parent_org_id = $2 WHERE parent_org_id = $1 RETURNING id',
@@ -340,61 +384,139 @@ export async function assignValuationToOrg(
   pool: pg.Pool,
   valuationId: string,
   orgId: string | null,
-  entityType?: EntityType,
+  entityType: EntityType | undefined,
+  actor: EventActor,
 ): Promise<void> {
-  if (orgId === null) {
-    await pool.query(
-      `UPDATE valuations
-          SET organization_id = NULL, entity_type = 'standalone', parent_valuation_id = NULL
-        WHERE id = $1`,
+  await withTransaction(pool, async (client) => {
+    const { rows } = await client.query<StructureRow>(
+      `SELECT organization_id, entity_type, parent_valuation_id
+         FROM valuations WHERE id = $1 FOR UPDATE`,
       [valuationId],
     );
-  } else if (entityType === 'standalone') {
-    await pool.query(
+    const before = rows[0];
+    if (!before) return;
+
+    // The four branches this used to be, as the triple each of them wrote.
+    // `standalone` clears the link for the reason the header gives; an
+    // assignment that names no type leaves the relationship alone.
+    const after: StructureRow =
+      orgId === null
+        ? { organization_id: null, entity_type: 'standalone', parent_valuation_id: null }
+        : entityType === 'standalone'
+          ? { organization_id: orgId, entity_type: 'standalone', parent_valuation_id: null }
+          : {
+              organization_id: orgId,
+              entity_type: entityType ?? before.entity_type,
+              parent_valuation_id: before.parent_valuation_id,
+            };
+    if (unchanged(before, after)) return;
+
+    await client.query(
       `UPDATE valuations
-          SET organization_id = $2, entity_type = 'standalone', parent_valuation_id = NULL
+          SET organization_id = $2, entity_type = $3, parent_valuation_id = $4
         WHERE id = $1`,
-      [valuationId, orgId],
+      [valuationId, after.organization_id, after.entity_type, after.parent_valuation_id],
     );
-  } else if (entityType) {
-    await pool.query('UPDATE valuations SET organization_id = $2, entity_type = $3 WHERE id = $1', [
+    await recordEvent(client, {
       valuationId,
-      orgId,
-      entityType,
-    ]);
-  } else {
-    await pool.query('UPDATE valuations SET organization_id = $2 WHERE id = $1', [valuationId, orgId]);
-  }
+      type: 'portfolio_membership_changed',
+      actor,
+      payload: structureChange(before, after),
+    });
+  });
   invalidateValuation(valuationId);
 }
 
-/** Set the inter-company relationship (entity type + parent valuation). */
+/**
+ * The three columns `domain/portfolio.ts` reads to decide how an engagement is
+ * counted in a roll-up. They move together and they are recorded together.
+ */
+interface StructureRow {
+  organization_id: string | null;
+  entity_type: EntityType;
+  parent_valuation_id: string | null;
+}
+
+const unchanged = (a: StructureRow, b: StructureRow): boolean =>
+  a.organization_id === b.organization_id &&
+  a.entity_type === b.entity_type &&
+  a.parent_valuation_id === b.parent_valuation_id;
+
+/**
+ * Before and after, side by side, rather than the names of the fields that
+ * moved.
+ *
+ * `{ fields: [...] }` is a payload shape this estate has written before and it
+ * cannot answer the question the trail is read for — a roll-up that changed by
+ * one engagement being retyped needs to say *what it was*, because the row
+ * itself now holds only the new value. Nulls are kept rather than dropped:
+ * "left the organization" and "no organization named" are the same JSON once a
+ * null is elided.
+ */
+function structureChange(before: StructureRow, after: StructureRow): Record<string, unknown> {
+  return {
+    organization_id: after.organization_id,
+    previous_organization_id: before.organization_id,
+    entity_type: after.entity_type,
+    previous_entity_type: before.entity_type,
+    parent_valuation_id: after.parent_valuation_id,
+    previous_parent_valuation_id: before.parent_valuation_id,
+  };
+}
+
+/**
+ * Set the inter-company relationship (entity type + parent valuation).
+ *
+ * Both branches run in a transaction now, where the clearing one used to write
+ * on the pool: the event belongs in the same transaction as the change it
+ * describes (`events/record.ts`), and detaching a subsidiary from its parent
+ * moves the consolidated total exactly as much as attaching one does.
+ */
 export async function setEntityRelationship(
   pool: pg.Pool,
   valuationId: string,
   entityType: EntityType,
   parentValuationId: string | null,
+  actor: EventActor,
 ): Promise<void> {
-  const write = (db: Queryable) =>
-    db.query('UPDATE valuations SET entity_type = $2, parent_valuation_id = $3 WHERE id = $1', [
+  const write = async (client: pg.PoolClient) => {
+    const { rows } = await client.query<StructureRow>(
+      `SELECT organization_id, entity_type, parent_valuation_id
+         FROM valuations WHERE id = $1 FOR UPDATE`,
+      [valuationId],
+    );
+    const before = rows[0];
+    if (!before) return;
+    const after: StructureRow = {
+      organization_id: before.organization_id,
+      entity_type: entityType,
+      parent_valuation_id: parentValuationId,
+    };
+    if (unchanged(before, after)) return;
+    await client.query('UPDATE valuations SET entity_type = $2, parent_valuation_id = $3 WHERE id = $1', [
       valuationId,
       entityType,
       parentValuationId,
     ]);
+    await recordEvent(client, {
+      valuationId,
+      type: 'entity_relationship_changed',
+      actor,
+      payload: structureChange(before, after),
+    });
+  };
   // Same rule as `updateOrganization`: the loop check belongs on the
   // transaction that writes the edge, not on a reading the caller took earlier.
   // Clearing the parent cannot close anything, so it skips the lock.
-  if (parentValuationId) {
-    await withTransaction(pool, async (client) => {
+  await withTransaction(pool, async (client) => {
+    if (parentValuationId) {
       await client.query('SELECT pg_advisory_xact_lock($1, $2)', [HIERARCHY_LOCK, ENTITY_TREE]);
       if (await wouldCycle(client, 'valuations', 'parent_valuation_id', valuationId, parentValuationId)) {
         throw new HierarchyCycleError();
       }
-      await write(client);
-    });
-  } else {
-    await write(pool);
-  }
+    }
+    await write(client);
+  });
   invalidateValuation(valuationId);
 }
 

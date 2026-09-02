@@ -195,6 +195,37 @@ export const EVENT_CATALOG = {
   measurement_subject_linked: D('Measurement subject linked', 'data', 'critical'),
   measurement_subject_unlinked: D('Measurement subject detached', 'data', 'critical'),
 
+  /*
+   * The portfolio structure, which moves the consolidated figure and recorded
+   * nothing (round 384, methodology M11).
+   *
+   * `entity_type`, `parent_valuation_id` and `organization_id` are what
+   * `domain/portfolio.ts` reads to decide whether an engagement is counted in a
+   * roll-up in full, eliminated into its parent, or listed as unanchored. Three
+   * doors write them — `POST`/`DELETE /organizations/:id/entities` and `PATCH
+   * /valuations/:id/entity` — plus the bulk detach `deleteOrganization`
+   * performs, and not one of them touched the spine. So a holding company's
+   * consolidated equity could change by an engagement being typed
+   * `portfolio_company` instead of `subsidiary`, and the trail said only that
+   * the number used to be different.
+   *
+   * R380 is why the omission is worth its own entry rather than a note. It
+   * found `assignValuationToOrg` writing half of the relationship — the type
+   * without the link — which had left engagements double-counted in the
+   * consolidated total for as long as that door existed. The fix stops it
+   * happening again; nothing on the record says which engagements it had
+   * already happened to, because nothing was ever written down.
+   *
+   * `critical` on the reading the severity is defined by: these change the
+   * concluded value of the roll-up an auditor is handed. `client`-visible
+   * because the organization is the client's own, they are usually the one
+   * pressing the control, and the payload is three ids and two enum words
+   * rather than any model internals — the distinction the measurement family
+   * next door is internal for.
+   */
+  portfolio_membership_changed: D('Portfolio membership changed', 'data', 'critical', 'client'),
+  entity_relationship_changed: D('Inter-company relationship changed', 'data', 'critical', 'client'),
+
   // ── Analysis & automation ───────────────────────────────────────────────
   calculation_completed: D('Calculation completed', 'analysis', 'critical', 'client'),
   ai_job_completed: D('AI job completed', 'analysis', 'info'),
