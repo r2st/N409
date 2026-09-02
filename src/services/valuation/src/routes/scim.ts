@@ -391,18 +391,40 @@ export function registerScimRoutes(
 
         const existing = await findUserByEmail(deps.pool, parsed.email);
         if (existing) {
-          return reply
-            .status(409)
-            .header('content-type', CT)
-            .send(
-              scimError(
-                409,
-                'A user with that userName already exists on this platform. It was not created by ' +
-                  'this directory, so it has not been linked — match the existing account or change ' +
-                  'the userName in the directory.',
-                'uniqueness',
-              ),
-            );
+          /*
+           * Which account it collided with decides what the admin can do next,
+           * and the one sentence this used to send asserted the case it is
+           * least often (round 374, M19).
+           *
+           * `findUserByEmail` does not filter `deleted_at` or
+           * `provisioned_by`, so "it was not created by this directory, so it
+           * has not been linked" was also said about accounts this directory
+           * itself provisioned and then deprovisioned. That is the rehire: the
+           * IdP mints a new externalId, POSTs, is told the account is somebody
+           * else's, and the directory admin is left with no move — while the
+           * relink is entirely on their side of the wire, two calls away
+           * (`GET /Users?filter=userName eq …` returns the row, deleted or
+           * not, and `PATCH … {active: true}` restores it).
+           *
+           * The id is named only for an account this directory manages, which
+           * is the same row the filtered GET above already hands this token.
+           * A local account stays as it was — no id, no state, nothing but
+           * that the address is taken here.
+           */
+          const managed = managedByDirectory(existing);
+          const detail = !managed
+            ? 'A user with that userName already exists on this platform. It was not created by ' +
+              'this directory, so it has not been linked — match the existing account or change ' +
+              'the userName in the directory.'
+            : existing.deleted_at
+              ? `That userName belongs to ${existing.id}, an account this directory provisioned and ` +
+                'later deprovisioned. Reactivate it — PATCH /scim/v2/Users/' +
+                `${existing.id} with active: true — rather than creating a second account; a new ` +
+                'externalId on a rehire does not make a new person.'
+              : `That userName belongs to ${existing.id}, an account this directory already ` +
+                'provisioned and is still managing. PATCH that user rather than creating it again; ' +
+                'GET /scim/v2/Users?filter=userName eq "…" returns it with its current externalId.';
+          return reply.status(409).header('content-type', CT).send(scimError(409, detail, 'uniqueness'));
         }
         const user = await createProvisionedUser(deps.pool, {
           email: parsed.email,

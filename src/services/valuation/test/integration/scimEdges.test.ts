@@ -106,6 +106,24 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
    * import.
    */
   describe('scimType', () => {
+    /**
+     * Round 374 (M19). All three of these were one sentence, and it was the
+     * one that fits the *third* case: "it was not created by this directory,
+     * so it has not been linked — match the existing account or change the
+     * userName in the directory."
+     *
+     * `findUserByEmail` filters neither `provisioned_by` nor `deleted_at`, so
+     * that was said about accounts this directory had provisioned itself, and
+     * about ones it had provisioned and then deprovisioned. The second is the
+     * rehire — the IdP mints a fresh externalId and POSTs — and the admin was
+     * told the address belongs to somebody else and given a remedy ("match the
+     * existing account") that names nothing they can do, while the relink was
+     * two calls away on their own side of the wire.
+     *
+     * That the case is reachable is not hypothetical: the assertion this
+     * replaces created the account through this directory and then asserted
+     * the sentence saying it had not been.
+     */
     it('classifies a userName that already has an account as uniqueness', async () => {
       const first = await scim('POST', '/scim/v2/Users', { userName: 'dup@corp.example' });
       expect(first.statusCode).toBe(201);
@@ -113,9 +131,47 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
       expect(again.statusCode).toBe(409);
       const body = again.json();
       expect(body.scimType).toBe('uniqueness');
-      // And the prose says what to do about it, which the two words it replaced
-      // did not.
-      expect(body.detail).toMatch(/match the existing account|change the userName/i);
+      // This directory provisioned it and still manages it, so the remedy is
+      // the id and the verb that reaches it.
+      expect(body.detail).toContain(first.json().id);
+      expect(body.detail).toMatch(/PATCH/);
+    });
+
+    it('tells a rehire’s POST that the account is its own, deactivated', async () => {
+      const created = await scim('POST', '/scim/v2/Users', { userName: 'rehire@corp.example' });
+      expect(created.statusCode).toBe(201);
+      const id = created.json().id;
+      expect((await scim('DELETE', `/scim/v2/Users/${id}`)).statusCode).toBe(204);
+
+      // The IdP has minted a new externalId for the returning employee, so it
+      // creates rather than patches.
+      const again = await scim('POST', '/scim/v2/Users', {
+        userName: 'rehire@corp.example',
+        externalId: 'new-hire-record',
+      });
+      expect(again.statusCode).toBe(409);
+      const { detail } = again.json();
+      expect(detail).toContain(id);
+      expect(detail).toMatch(/deprovisioned/i);
+      // And the remedy is one the directory admin can actually perform.
+      expect(detail).toMatch(/active: true/);
+      const relinked = await scim('PATCH', `/scim/v2/Users/${id}`, {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [{ op: 'replace', path: 'active', value: true }],
+      });
+      expect(relinked.statusCode).toBe(200);
+      expect(relinked.json().active).toBe(true);
+    });
+
+    it('says nothing about a local account beyond the address being taken', async () => {
+      const local = await seedUser(ctx, { roles: ['valuation_user'] });
+      const res = await scim('POST', '/scim/v2/Users', { userName: local.email });
+      expect(res.statusCode).toBe(409);
+      const { detail } = res.json();
+      expect(detail).toMatch(/not created by this directory/);
+      // The id of an account this bearer may not touch is not this endpoint's
+      // to hand out — `loadManaged` 404s for exactly the same reason.
+      expect(detail).not.toContain(local.id);
     });
 
     it('classifies a refused field as invalidValue, naming the field', async () => {
