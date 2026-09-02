@@ -34,7 +34,13 @@ import { problems, type ApiProblem } from '@n409/shared';
  * `reviewer` rather than `data`, so a message that named the specific role
  * would be naming a distinction the code does not make.
  */
-export type AccessKind = 'ops' | 'user-admin' | 'working-data' | 'own-record' | 'partner-token';
+export type AccessKind =
+  | 'ops'
+  | 'user-admin'
+  | 'working-data'
+  | 'own-record'
+  | 'partner-token'
+  | 'ops-managed-field';
 
 interface AccessCopy {
   /** Why the request was refused, in the caller's terms. */
@@ -69,6 +75,24 @@ const ACCESS: Readonly<Record<AccessKind, AccessCopy>> = {
   'own-record': {
     because: 'it was created by someone else',
     remedy: 'You can only change records you created. Ask operations staff if this one needs to change.',
+  },
+  /*
+   * The client's own engagement, and a field on it their analyst owns.
+   *
+   * Distinct from `ops` rather than a spelling of it, because the two audiences
+   * are different people and `ops`'s remedy — "ask an administrator to grant
+   * you an operations role" — is advice a client must never be given: they are
+   * not staff, the role will not be granted, and the sentence reads as though
+   * the product is misconfigured rather than as though the field is somebody
+   * else's to set. The only caller is the valuation PATCH, whose `denied` list
+   * is reached by the engagement's owner and by nobody with an ops role, since
+   * `OPS_PATCH_FIELDS` is a superset of every key `PatchBody` admits.
+   */
+  'ops-managed-field': {
+    because: 'your analyst sets it rather than you',
+    remedy:
+      'The rest of your patch was not applied either — send it again without that field. If it ' +
+      'needs to change, say so on the engagement and your analyst will make the change.',
   },
   'partner-token': {
     because: 'it is reachable only with a partner API key',

@@ -156,6 +156,40 @@ describe.skipIf(!dbUp)('error messages a caller can act on', () => {
       }
     });
 
+    /**
+     * The valuation PATCH's field-level 403 (R350).
+     *
+     * `Not allowed to update: state, due_date` is a list of column names and
+     * nothing else — no reason, no remedy, no `required_access`. It escaped
+     * R180's sweep of the bare `problems.forbidden()` calls by already having
+     * a string, which is why the shape survived on the one 403 an ordinary
+     * client is most likely to see.
+     */
+    it('says whose the field is when a client patches one their analyst owns', async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(clientToken),
+        payload: { kind: '409a', company_name: 'PatchCo' },
+      });
+      expect(created.statusCode).toBe(201);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${created.json().valuation.id}`,
+        headers: authHeader(clientToken),
+        payload: { due_date: '2027-01-01T00:00:00.000Z' },
+      });
+      expect(res.statusCode).toBe(403);
+      const { detail, required_access } = res.json();
+      expect(detail).toContain('due_date'); // which part of the patch
+      expect(detail).toContain('your analyst'); // whose it is
+      expect(detail).toMatch(/send it again without/i); // what to do now
+      // Never this: a client cannot be granted an operations role, and telling
+      // them to ask for one reads as the product being misconfigured.
+      expect(detail).not.toMatch(/operations role/i);
+      expect(required_access).toBe('ops-managed-field');
+    });
+
     it('distinguishes working data from access the caller could be granted', async () => {
       // "Ask an administrator" is the wrong instruction here: no role a client
       // can be given makes the model internals visible to them, so the remedy

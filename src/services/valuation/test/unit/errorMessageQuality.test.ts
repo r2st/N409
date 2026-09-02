@@ -47,9 +47,19 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+/**
+ * Comments stripped, for the reason the frontend twin already has to special-
+ * case `lib/api.ts`: a census whose subject is a *shape* reads its own
+ * explanation of that shape as an instance of it. R350 quoted
+ * `problems.forbidden()` in a comment saying why the call below it no longer
+ * takes the default, and the 403 assertion reported the fix as the bug.
+ */
+const stripComments = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
 const routeSources = sourceFiles(ROUTES).map((file) => ({
   rel: path.relative(path.resolve(HERE, '../..'), file).split(path.sep).join('/'),
-  text: readFileSync(file, 'utf8'),
+  text: stripComments(readFileSync(file, 'utf8')),
 }));
 
 /**

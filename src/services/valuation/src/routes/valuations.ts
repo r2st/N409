@@ -517,7 +517,33 @@ export function registerValuationRoutes(
     const requested = Object.keys(parsed.data);
     const denied = requested.filter((f) => !allowed.has(f));
     if (denied.length > 0) {
-      throw problems.forbidden(`Not allowed to update: ${denied.join(', ')}`);
+      /*
+       * A 403 that names the fields *and* says whose they are (R350).
+       *
+       * `Not allowed to update: state, due_date` is a list of column names and
+       * nothing else: no reason, no remedy, and no `required_access` token —
+       * the three things `accessProblem` exists to put on every 403, and which
+       * R180 gave to twenty-nine bare `problems.forbidden()` calls. This one
+       * escaped that sweep by already having a string.
+       *
+       * Two audiences reach it and they need different sentences.
+       * `patchableFields` returns the empty set for a principal who may read
+       * the engagement but does not own it, so *every* key is denied and the
+       * list says nothing; that is `own-record`. The other is the owner asking
+       * for a field their analyst owns — a client, who must not be told to ask
+       * for an operations role, which is why that has a kind of its own.
+       *
+       * The field names stay in the message either way. They are the caller's
+       * own keys, echoed back the way `validationDetail` echoes a rejected
+       * field, and on a whole-form PATCH they are the only thing saying which
+       * part of the form to leave alone.
+       */
+      throw forbidden(
+        allowed.size === 0
+          ? 'Editing this engagement'
+          : `Setting ${denied.join(', ')} on this engagement`,
+        allowed.size === 0 ? 'own-record' : 'ops-managed-field',
+      );
     }
     if (requested.length === 0) {
       reply.header('ETag', versionEtag(valuation.version));
