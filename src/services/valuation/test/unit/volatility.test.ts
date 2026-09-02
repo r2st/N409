@@ -234,6 +234,49 @@ describe('volatilityExhibit', () => {
     expect(s?.html).not.toContain('not been adopted');
   });
 
+  /*
+   * R387, methodology M19. The lead paragraph asserted the median — "taken at
+   * the median, which is robust to a single outlier peer" — for every run,
+   * including one the appraiser pinned. The footer under the peer table has
+   * said `Analyst selection` for that case since it was written, and `Estimator`
+   * reads `Analyst-selected`, so the exhibit's own opening sentence contradicted
+   * two rows of its own table. R386 sharpens it: with a pinned figure over comps
+   * with no measurable movement, the median claimed is the median of an empty
+   * set, and the distribution table is dropped for exactly that reason.
+   */
+  it('does not claim the median for a figure the appraiser selected', () => {
+    const s = volatilityExhibit(
+      {
+        ...CTX,
+        volatility: estimate({
+          method: 'manual',
+          confidence: 'manual',
+          manual_override: 0.6412,
+          median_vol: null,
+          mean_vol: null,
+          min_vol: null,
+          max_vol: null,
+          coefficient_of_variation: null,
+          companies: [{ ticker: 'AAA', volatility: 0, used: false }],
+        }),
+      },
+      RESULTS,
+    );
+    expect(s?.html).toContain('selected by the appraiser');
+    expect(s?.html).not.toContain('taken at the median');
+    // The footer and the estimator row already said so; the paragraph now agrees.
+    expect(s?.html).toContain('Analyst selection');
+    expect(s?.html).toContain('Analyst-selected');
+    // And the distribution table is gone with its figures, not printed as dashes.
+    expect(s?.html).not.toContain('Cross-sectional distribution');
+  });
+
+  it('still says the median is what a measured run was taken at', () => {
+    const s = volatilityExhibit({ ...CTX, volatility: estimate() }, RESULTS);
+    expect(s?.html).toContain('taken at the median');
+    expect(s?.html).not.toContain('selected by the appraiser');
+  });
+
   it('escapes a ticker that could close a cell', () => {
     const s = volatilityExhibit(
       {

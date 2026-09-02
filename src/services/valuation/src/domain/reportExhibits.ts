@@ -2124,13 +2124,41 @@ export function volatilityExhibit(
           )
         : null;
 
+  /*
+   * The lead paragraph has to describe the run under it (round 387, M19).
+   *
+   * One sentence for both was written when a run was always a measurement, and
+   * it asserts the median: "taken at the median, which is robust to a single
+   * outlier peer". A `manual` run is not taken at the median of anything — the
+   * figure is the analyst's, the footer under the peer table already says
+   * `Analyst selection`, and `Estimator` two rows up already reads
+   * `Analyst-selected`. So the exhibit's opening sentence contradicted its own
+   * table on the same page, in a signed deliverable, and did it in the
+   * direction that claims more support for the number than exists. R386 makes
+   * it worse rather than introducing it: with a pinned figure over comps that
+   * had no measurable movement, the median the paragraph claims is the median
+   * of an empty set, and the distribution table below is dropped entirely for
+   * exactly that reason.
+   */
+  const lead =
+    row.method === 'manual'
+      ? P(
+          'The expected volatility applied in the allocation is not an assumption of the subject ' +
+            'company directly — a private company has no traded price series to measure. The figure ' +
+            'below was selected by the appraiser rather than taken from the guideline companies; the ' +
+            'peer measurements are set out beneath it as the corroboration the selection was made ' +
+            'against.',
+        )
+      : P(
+          'The expected volatility applied in the allocation is not an assumption of the subject ' +
+            'company directly — a private company has no traded price series to measure. It is ' +
+            'estimated from the observed return volatility of the guideline public companies, ' +
+            'measured over the window below and taken at the median, which is robust to a single ' +
+            'outlier peer.',
+        );
+
   return section(SCHEDULE['F-1'], [
-    P(
-      'The expected volatility applied in the allocation is not an assumption of the subject company ' +
-        'directly — a private company has no traded price series to measure. It is estimated from the ' +
-        'observed return volatility of the guideline public companies, measured over the window below ' +
-        'and taken at the median, which is robust to a single outlier peer.',
-    ),
+    lead,
     table({ head: ['Basis of estimate', 'Value'], rows: basis }),
     peerRows.length > 0
       ? table({
