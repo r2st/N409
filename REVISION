@@ -11423,3 +11423,110 @@
 #            gap: `EVENT_NOTES` has one entry, and nothing walks the payloads
 #            repos actually write looking for the next flag beside `changes`.
 #            The census that would find it does not exist.
+#
+# R388 — State machine / lifecycle audit (M3). Four fixes across three
+#            lifecycles, no SQL, no migration, no template version, 13 tests,
+#            at `d285e00b..2a14f3d1`.
+#
+#            One shape ran through three of the four: a rule stated in a
+#            comment, applied by a statement that reads a different population
+#            than the rule is about.
+#
+#            b414833 — the three "tool run" families. R304 established what
+#            `findCurrentVolatilityEstimate`, `findCurrentProjection` and
+#            `findAppliedRollforwardRun` answer: which run is the calculation
+#            carrying is the one adopted *last*, because adopting is a POST on
+#            any row of the history by id and going back is ordinary work. All
+#            three order by `applied_at` for it. `markApplied` did not write
+#            that column on the way back — `WHERE applied_at IS NULL` made a
+#            second adoption of an already-adopted run a no-op, on the reading
+#            that the first adoption is when the figure was chosen, and the two
+#            readings cannot both hold. Adopt A, adopt B, return to A:
+#            `upsertOverwrite` and `applyEngineInputs` both move to A, A's
+#            timestamp stays behind B, and all three lookups name B — the
+#            superseded row R304 stopped the exhibits from describing, one more
+#            click away. Exhibit F-1 then prints B's window, peers and median
+#            and adds "the valuation applies 71.0%, which departs from the
+#            derived 64.0%" over no departure at all. R304's own cases adopt a
+#            *fresh* row second, which is the only shape in which the two
+#            readings agree, so the census was written around the case.
+#            `applied_at` is now the last adoption; nothing reads it as a first
+#            one, and every adoption still writes its own admin event.
+#
+#            69dfe9c — signatures. `valuation_signatures` holds one row per
+#            role, which answers "who is certifying this engagement now" and
+#            nothing else. `upsertSignature` writes the new signatory over the
+#            old one, `deleteSignature` removes the row, and neither wrote an
+#            event: signed by one reviewer, re-signed by another and published
+#            left no record the first certification was ever given, and a
+#            withdrawal left nothing at all. Withdrawal is sanctioned —
+#            `assertPublishGate`'s refusal for a stale second signature tells
+#            the operator to "have the second signatory re-sign, or remove their
+#            signature on the Signatures panel, before publishing" — and it was
+#            the one step on the way to delivery with no trace, beside
+#            `qa_review_completed`, `changes_requested`,
+#            `board_signoff_recorded` and `report_rendered`. Both events are in
+#            the transaction that changes the row, under the gate lock; the
+#            re-sign reads the prior row and names whom it wrote over, the
+#            delete becomes `RETURNING *` so it can name whose attestation went.
+#
+#            749385a — organization dissolution. `DELETE /organizations/:id`
+#            keeps "delete an empty container" and "dissolve a holding company"
+#            apart, and the 409 asking for `?detach=true` names the counts.
+#            `organizationContents` counted live members; the detach behind it
+#            has no `archived_at` predicate and rewrites every member, retired
+#            ones included. A roll-up of nothing but withdrawn work reported
+#            itself empty and went on the first press; two live and five retired
+#            said "2 engagements" and rewrote seven. Retirement is reversible,
+#            so what `restoreValuations` brings back is a standalone with its
+#            membership and inter-company link gone — the `ON DELETE SET NULL`
+#            this route exists to stop, arrived at from the other side. Counted
+#            apart rather than summed: live members are work in flight, retired
+#            ones are a reason to think about what a restore will find.
+#
+#            2a14f3d — the board's adoption, stamped by a DELETE.
+#            `refreshResolutionStatusTx` recomputes from the sign-offs that
+#            remain, and its own note reads a removal as the undoing of a
+#            decision — "the rejecting director of a rejected one" — landing on
+#            'pending'. With every *other* director signed, the same DELETE
+#            recomputes to 'approved': `approved_at`, the safe-harbor moment
+#            under §1.409A-1(b)(5)(iv)(B), stamped by a deletion, the spine's
+#            last word `board_resolution_approved` with the operator who pressed
+#            remove as its actor, and no board member having done anything at
+#            that moment. A sign-off is write-once, so that was the only route
+#            from a recorded rejection to an approval. The transition is refused
+#            and the removal is not: taking an approved resolution back to
+#            'pending' discards a decision rather than manufacturing one, and
+#            the remedy named — regenerate, which reopens and discards the
+#            sign-offs — is the path on which a board adopts on the record.
+#            `boardResolutionReopened.test.ts` had steered around this: its
+#            rejection case adds a second director "who never decides, so
+#            removing the first leaves the resolution genuinely undecided".
+#
+#            Probed and left alone. `WORKFLOW_TRANSITIONS` and the publish gate
+#            were swept by R212 and R291 and the fifteen states still hold;
+#            `deleteOrganization`'s detach, `assignValuationToOrg`'s two halves
+#            and `setEntityRelationship` are R380/R384's and remain consistent.
+#            SCIM provisioning, `setUserActive` and `resolveApiToken` all refuse
+#            a closed account at every door. The pipeline run states are R268's.
+#
+#            gap: engine inputs are freely writable on a `published`
+#            engagement — `POST /volatility/:id/apply` and the projection and
+#            roll-forward adopt routes all guard `archived_at` and not `state` —
+#            so a delivered engagement's sigma can move after the fact. R212
+#            found the same about the report body, called post-publication
+#            amendment deliberate, and recorded that an amendment passes no QA
+#            gate. Policy, and unchanged here.
+#            gap: `upsertResolution`'s `discarded_signoffs` is a list of ids of
+#            rows it has just deleted. `board_member_removed` keeps the
+#            director's address for exactly that reason — "after this statement
+#            `signoff_id` resolves to nothing" — and `board_member_added` keeps
+#            only the id, so a regeneration's discarded signatures resolve to
+#            nobody. `piiInventory.test.ts` pins one address site; making this a
+#            second is a PII decision, not a repair.
+#            gap: nothing pins `markApplied` to the reader it feeds. The three
+#            statements agree with `findCurrent…` by hand, which is how they
+#            came to disagree; a census over "a column an ordering depends on,
+#            written conditionally" does not exist.
+#            gap: `organizationContents` and the detach still read two
+#            statements. They agree now by hand.
