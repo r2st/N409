@@ -161,6 +161,7 @@ describe.skipIf(!dbUp)('enterprise SSO — SCIM + admin config (feature 9)', () 
         idp_cert: 'MIIC-fake-cert-body',
         allowed_domain: 'corp.com',
         default_role: 'valuation_user',
+        current_password: SEEDED_PASSWORD,
       },
     });
     expect(put.statusCode).toBe(200);
@@ -188,6 +189,7 @@ describe.skipIf(!dbUp)('enterprise SSO — SCIM + admin config (feature 9)', () 
         enabled: true,
         idp_sso_url: 'http://idp.example.com/sso',
         idp_cert: 'MIIC-fake-cert-body',
+        current_password: SEEDED_PASSWORD,
       },
     });
     expect(res.statusCode).toBe(422);
@@ -198,8 +200,78 @@ describe.skipIf(!dbUp)('enterprise SSO — SCIM + admin config (feature 9)', () 
       method: 'PUT',
       url: '/api/v1/admin/sso/saml',
       headers: authHeader(admin.token),
-      payload: { enabled: true },
+      payload: { enabled: true, current_password: SEEDED_PASSWORD },
     });
     expect(res.statusCode).toBe(422);
+  });
+
+  /**
+   * The IdP is a credential, one PUT wide (round 359, methodology M4).
+   *
+   * This file's own docstring says repointing `saml_config` "hands that IdP the
+   * ability to assert any employee's address and be believed — and the JIT
+   * provisioning on the other side will mint the account". It carried neither
+   * of the two guards the token mints beside it carry.
+   */
+  describe('changing the identity provider', () => {
+    const put = (token: string, payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/sso/saml',
+        headers: authHeader(token),
+        payload,
+      });
+
+    it('refuses without the current password, and names the field', async () => {
+      const res = await put(admin.token, { enabled: false });
+      expect(res.statusCode, res.body).toBe(422);
+      const body = res.json() as { detail: string; errors?: Array<{ path: string[] }> };
+      expect(body.detail).toContain('current password');
+      expect(body.errors?.[0]?.path).toEqual(['current_password']);
+    });
+
+    it('refuses a wrong password, and leaves the provider where it was', async () => {
+      const before = (await ctx.app
+        .inject({
+          method: 'GET',
+          url: '/api/v1/admin/sso/saml',
+          headers: authHeader(admin.token),
+        })
+        .then((r) => r.json())) as { config: { idp_sso_url: string } | null };
+
+      const res = await put(admin.token, {
+        enabled: true,
+        idp_sso_url: 'https://attacker.example.com/sso',
+        idp_cert: 'MIIC-attacker',
+        current_password: `${SEEDED_PASSWORD}-wrong`,
+      });
+      expect(res.statusCode, res.body).toBe(400);
+
+      const after = (await ctx.app
+        .inject({
+          method: 'GET',
+          url: '/api/v1/admin/sso/saml',
+          headers: authHeader(admin.token),
+        })
+        .then((r) => r.json())) as { config: { idp_sso_url: string } | null };
+      expect(after.config?.idp_sso_url).toBe(before.config?.idp_sso_url);
+    });
+
+    it('refuses an API key repointing it, whatever password it carries', async () => {
+      const key = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/me/tokens',
+        headers: authHeader(admin.token),
+        payload: { name: 'saml key', current_password: SEEDED_PASSWORD },
+      });
+      expect(key.statusCode, key.body).toBe(201);
+
+      const res = await put(key.json().secret as string, {
+        enabled: false,
+        current_password: SEEDED_PASSWORD,
+      });
+      expect(res.statusCode, res.body).toBe(403);
+      expect(res.json().detail).toContain('cannot change the identity provider');
+    });
   });
 });

@@ -62,6 +62,13 @@ export function AdminSsoPage() {
   const { user } = useAuth();
   const needsPassword = hasPassword(user);
   const [scimPassword, setScimPassword] = useState('');
+  /*
+   * And the same in front of the SAML row, which is the credential this page
+   * really hands out: it decides which identity provider every future sign-in
+   * is delegated to, so repointing it hands that IdP the ability to assert any
+   * employee's address and be believed.
+   */
+  const [samlPassword, setSamlPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const { token, retryProps } = useRetry(() => setError(null));
   const [saved, setSaved] = useState(false);
@@ -94,6 +101,10 @@ export function AdminSsoPage() {
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
+    if (needsPassword && !samlPassword) {
+      setError('Your current password is required to change the identity provider.');
+      return;
+    }
     setError(null);
     setSaved(false);
     setBusy(true);
@@ -108,9 +119,12 @@ export function AdminSsoPage() {
           sp_entity_id: config.sp_entity_id || null,
           allowed_domain: config.allowed_domain || null,
           default_role: config.default_role,
+          current_password: samlPassword,
         },
       });
       setConfig({ ...empty, ...c });
+      // Never leave a password sitting in a form that stays on screen.
+      setSamlPassword('');
       setSaved(true);
     } catch (err) {
       setError(describeActionFailure(err, 'Could not save SAML config.'));
@@ -212,8 +226,22 @@ export function AdminSsoPage() {
             onChange={(e) => set('sp_entity_id')(e.target.value)}
           />
         </Field>
+        {needsPassword && (
+          <Field
+            label="Your current password"
+            hint="Repointing the identity provider is a credential-level change, so it is confirmed."
+          >
+            <TextInput
+              aria-label="Your current password"
+              type="password"
+              autoComplete="current-password"
+              value={samlPassword}
+              onChange={(e) => setSamlPassword(e.target.value)}
+            />
+          </Field>
+        )}
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy || (needsPassword && !samlPassword)}>
             {busy ? 'Saving…' : 'Save SAML config'}
           </Button>
           <a
@@ -231,7 +259,7 @@ export function AdminSsoPage() {
           <div className="flex flex-wrap items-center gap-2">
             {needsPassword && (
               <TextInput
-                aria-label="Your current password"
+                aria-label="Your current password, to mint a SCIM token"
                 type="password"
                 autoComplete="current-password"
                 placeholder="Your current password"

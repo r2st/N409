@@ -65,6 +65,8 @@ const ScimTokenBody = z
 
 const SamlBody = z.object({
   enabled: z.boolean(),
+  /** The re-authentication prompt — see the PUT route for why it is here. */
+  current_password: z.string().min(1).optional(),
   idp_entity_id: z.string().trim().max(500).nullable().optional(),
   idp_sso_url: httpsUrl(1000).nullable().optional(),
   idp_cert: z.string().trim().max(20000).nullable().optional(),
@@ -85,12 +87,45 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
     return { config: await getSamlConfig(deps.pool) };
   });
 
+  /**
+   * Point the platform's sign-in at an identity provider.
+   *
+   * Behind the same two guards as the SCIM mint below, and for the reason
+   * already written at the top of this file: this row "decides which identity
+   * provider every future sign-in is delegated to, so repointing it at another
+   * IdP hands that IdP the ability to assert any employee's address and be
+   * believed — and the JIT provisioning on the other side will mint the
+   * account." That is not a configuration change with a security consequence;
+   * it is the issuing of a credential, one PUT wide, over every account in the
+   * tenant at once. It is only spelled differently from a mint.
+   *
+   * So: not from an API token — a leaked key must not be able to arrange its
+   * own way back in after being revoked — and not without the caller's own
+   * password, because a borrowed administrator session is exactly the case
+   * `auth/reauth.ts` exists for. Skipped when the account has no digest, as
+   * every other prompt on this platform skips it.
+   */
   app.put('/api/v1/admin/sso/saml', { preHandler: app.authenticate }, async (req) => {
     const principal = requireAdmin(req);
+    if (req.apiToken)
+      throw problems.forbidden(
+        'An API token cannot change the identity provider — do it from the SSO settings page while signed in',
+      );
     const parsed = SamlBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid SAML config', parsed.error);
     if (parsed.data.enabled && (!parsed.data.idp_sso_url || !parsed.data.idp_cert)) {
       throw problems.unprocessable('An IdP SSO URL and signing certificate are required to enable SAML');
+    }
+
+    const self = await findUserById(deps.pool, principal.id);
+    if (!self) throw problems.unauthorized();
+    if (self.password_digest) {
+      if (!parsed.data.current_password)
+        throw problems.unprocessable('Your current password is required to change the identity provider', {
+          errors: [{ path: ['current_password'] }],
+        });
+      if (!(await verifyReauthPassword(self.id, parsed.data.current_password, self.password_digest)))
+        throw problems.badRequest('Current password is incorrect');
     }
     const config = await upsertSamlConfig(deps.pool, {
       enabled: parsed.data.enabled,

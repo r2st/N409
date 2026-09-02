@@ -122,6 +122,7 @@ describe('AdminSsoPage', () => {
 
     await userEvent.click(screen.getByRole('checkbox', { name: /Enabled/i }));
     await userEvent.type(screen.getByLabelText(/^Allowed email domain/), 'newco.com');
+    await userEvent.type(screen.getByLabelText(/^Your current password$/), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /Save SAML config/i }));
 
     await waitFor(() => expect(body).not.toBeNull());
@@ -142,6 +143,7 @@ describe('AdminSsoPage', () => {
     renderPage();
     await loaded();
 
+    await userEvent.type(screen.getByLabelText(/^Your current password$/), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /Save SAML config/i }));
     await screen.findByText('idp_cert is not valid base64');
     expect(screen.queryByText('SAML configuration saved.')).not.toBeInTheDocument();
@@ -152,7 +154,7 @@ describe('AdminSsoPage', () => {
     renderPage();
     await loaded();
 
-    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2');
+    await userEvent.type(screen.getByLabelText('Your current password, to mint a SCIM token'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /New token/i }));
     await screen.findByText('scim_live_9f2c');
     expect(screen.getByText(/won't be shown again/i)).toBeInTheDocument();
@@ -173,7 +175,7 @@ describe('AdminSsoPage', () => {
     await loaded();
 
     expect(screen.getByRole('button', { name: /New token/i })).toBeDisabled();
-    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2');
+    await userEvent.type(screen.getByLabelText('Your current password, to mint a SCIM token'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /New token/i }));
 
     await screen.findByText('scim_live_9f2c');
@@ -189,7 +191,7 @@ describe('AdminSsoPage', () => {
     renderPage();
     await loaded();
 
-    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2');
+    await userEvent.type(screen.getByLabelText('Your current password, to mint a SCIM token'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /New token/i }));
     await screen.findByText('SSO is not licensed for this tenant');
   });
@@ -263,9 +265,15 @@ describe('AdminSsoPage', () => {
     renderPage();
     await loaded();
 
+    await userEvent.type(screen.getByLabelText(/^Your current password$/), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /Save SAML config/i }));
     expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled();
     release!();
+    await screen.findByRole('button', { name: /Save SAML config/i });
+    // The confirmation box is emptied on success — a password must not sit in a
+    // form that stays on screen — so the next save asks for it again.
+    expect(screen.getByLabelText(/^Your current password$/)).toHaveValue('');
+    await userEvent.type(screen.getByLabelText(/^Your current password$/), 'hunter2');
     await waitFor(() => expect(screen.getByRole('button', { name: /Save SAML config/i })).toBeEnabled());
   });
 });
