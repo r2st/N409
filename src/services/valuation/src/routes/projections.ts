@@ -5,6 +5,7 @@ import type { AdminEventType } from '../domain/auditTrail.js';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { PROJECTION_TERMINAL_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
@@ -398,7 +399,16 @@ export function registerProjectionRoutes(
       freeCashFlows: flows,
       terminalMethod:
         terminalMethod === 'gordon' || terminalMethod === 'exit_multiple' ? terminalMethod : null,
-      terminalValue: num(result.terminal_value),
+      // Checked against the column for the reason funds, debt and the
+      // roll-forward all check theirs — see domain/numericColumn.ts. A Gordon
+      // terminal value divides by `r - g`, so two ordinary fractions a caller
+      // is allowed to send produce a quotient `numeric(20, 2)` cannot hold, and
+      // the driver's 22003 is a 500 that names neither rate.
+      terminalValue: requireStorableFigure(
+        num(result.terminal_value),
+        'Terminal value',
+        PROJECTION_TERMINAL_VALUE,
+      ),
       createdBy: principal.id,
     });
 

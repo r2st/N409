@@ -5,6 +5,7 @@ import type { AdminEventType } from '../domain/auditTrail.js';
 import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { requireStorableFigure, ROLLFORWARD_EQUITY_VALUE } from '../domain/numericColumn.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { calendarDate } from '../domain/calendarDate.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -386,8 +387,25 @@ export function registerRollforwardRoutes(
       priorValuationDate: shaped.priorValuationDate,
       newValuationDate: shaped.newValuationDate,
       yearsElapsed: shaped.yearsElapsed,
-      priorEquityValue: shaped.priorEquityValue,
-      rolledEquityValue: shaped.rolledEquityValue,
+      /*
+       * Checked against the column, the way `funds.ts` and `debt.ts` already
+       * check the figures they store — see domain/numericColumn.ts. Both the
+       * engine and `shapeRollforward` ask whether these are finite and
+       * positive, and neither asks whether they fit: `(1 + rate) ** years` at
+       * the rate cap `RunBody` allows takes an ordinary anchor past what
+       * `numeric(20, 2)` holds in about eleven years, and the driver's 22003
+       * reached the analyst as a 500 with nothing in it about the rate.
+       */
+      priorEquityValue: requireStorableFigure(
+        shaped.priorEquityValue,
+        'Prior equity value',
+        ROLLFORWARD_EQUITY_VALUE,
+      )!,
+      rolledEquityValue: requireStorableFigure(
+        shaped.rolledEquityValue,
+        'Rolled-forward equity value',
+        ROLLFORWARD_EQUITY_VALUE,
+      )!,
       annualAccretion: shaped.annualAccretion,
       newRoundPostMoney: body.new_round_post_money ?? null,
       calibrationSteps: shaped.calibrationSteps,

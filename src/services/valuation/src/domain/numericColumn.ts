@@ -40,6 +40,35 @@ export const FUND_MARK_FAIR_VALUE: NumericColumn = { precision: 24, scale: 4 };
 export const DEBT_FAIR_VALUE: NumericColumn = { precision: 24, scale: 6 };
 
 /**
+ * `rollforward_runs.prior_equity_value` / `.rolled_equity_value`, migration 0150.
+ *
+ * The same shape as the two above, in the subsystem that did not adopt the
+ * rule. A roll-forward is `prior_equity_value x (1 + rate) ** years`: the rate
+ * is capped at 10 (1000%) by `RunBody`, the gap is whatever two analyst-entered
+ * valuation dates are apart, and the prior value is whatever the previous
+ * engagement concluded. Each is defensible; the product is not — an eleven-year
+ * gap at the maximum rate takes a $10M anchor past 1e18, and `numeric(20, 2)`
+ * holds eighteen digits left of the point.
+ *
+ * The engine refuses `inf` and refuses a non-positive result
+ * (`engine/rollforward.py`), and `shapeRollforward` repeats both. Neither asks
+ * about magnitude, so a finite, positive, unstorable figure went to the driver
+ * and came back as `22003 numeric field overflow` — a 500 naming nothing, on a
+ * request whose accretion rate is the thing the analyst can actually change.
+ */
+export const ROLLFORWARD_EQUITY_VALUE: NumericColumn = { precision: 20, scale: 2 };
+
+/**
+ * `valuation_projections.terminal_value`, migration 0136.
+ *
+ * A Gordon terminal value is `FCF x (1 + g) / (r - g)`, which is the same
+ * bounded-parts-unbounded-product shape one division further on: the closer the
+ * discount rate is to the growth rate, the larger the quotient, and both are
+ * ordinary fractions the caller is allowed to send.
+ */
+export const PROJECTION_TERMINAL_VALUE: NumericColumn = { precision: 20, scale: 2 };
+
+/**
  * The exclusive upper bound on the magnitude the column accepts.
  *
  * Postgres rejects on the count of digits *left* of the point, so the limit is
