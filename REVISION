@@ -7851,3 +7851,79 @@
 #            disagree about what revocation means.
 #            gap: `engagements.current_stage` and `valuations.state` are still
 #            two parallel lifecycles that never speak — R342's gap, unchanged.
+#
+# R349 — Cross-cutting concerns (M4). One finding, and the shape of it is the
+#            one M4 exists to catch: a concern answered correctly at two doors
+#            and left unanswered at fourteen, with the argument for answering it
+#            written out in full beside one of the two.
+#
+#            **A client's 409A report could be cached by the edge and served to
+#            a stranger.** `content-disposition` is the header that makes a
+#            response a *file* — it tells a browser to save the bytes and names
+#            them — and sixteen routes on the valuation service set one: an
+#            uploaded document, the report, a receipt, an invoice, the change
+#            log, the three valuation exports, the model workbook, the evidence
+#            bundle, the comparison, the user list, the partner's copy of the
+#            report, the two personal-data exports. Two of the sixteen said
+#            anything at all about caching. Both said `no-store`, and
+#            `routes/account.ts` gives the reason in a sentence that is not
+#            about personal-data exports: "a file of somebody's own personal
+#            data has no business in a shared cache, and `no-store` is the one
+#            directive that also keeps it out of the browser's disk cache on a
+#            machine they may not own". Every one of the other fourteen is the
+#            same kind of object.
+#
+#            Bare is not neutral, because this deployment has a shared cache in
+#            front of it. `n409.aiknol.com` is proxied through Cloudflare — the
+#            whole trusted-proxy block at the top of
+#            `infra/caddy/n409.aiknol.com.caddy` exists because of it — and a
+#            proxy with no directive to obey falls back to its own defaults,
+#            which for the standard configuration are keyed on the extension in
+#            the URL path. Four of these downloads have one:
+#            `/valuations/:id/report.pdf`, `/valuations/:id/workbook.xlsx`,
+#            `/valuations/:id/audit-trail.csv` and
+#            `/valuations/:id/payments/:paymentId/receipt.pdf`. `.pdf`, `.xlsx`
+#            and `.csv` are all on the default cacheable list; the session is a
+#            cookie the response never echoes and there is no `Vary` to key on,
+#            so nothing in the exchange tells the edge that the body belongs to
+#            one person. The worst case is the platform's whole product: a
+#            concluded fair market value for a named client, handed to whoever
+#            asks for the same URL next.
+#
+#            Stamped by an `onSend` hook rather than by fourteen edits, for the
+#            reason `trackedSweep` and `storeDocument` are shaped the way they
+#            are — a rule applied at each call site is a rule the next call site
+#            does not have. The trigger is the header the route already sets, so
+#            the seventeenth download door gets the directive without its author
+#            knowing `plugins/downloadCache.ts` exists, and a route that set its
+#            own `cache-control` keeps it: `GET /api/v1/sample-report/pdf` is a
+#            marketing artefact with no client in it and deliberately answers
+#            `public, max-age=3600`. `downloadCacheCensus.test.ts` names the
+#            doors, pins the registration, exercises the hook against a file, a
+#            payload and a route that opted out, and holds the opt-out list to
+#            that one sample.
+#
+#            gap: the report service (3004) answers `content-disposition:
+#            inline` on `/render/v1/pdf` and carries no such hook. Left because
+#            its only caller is the valuation service over loopback and nothing
+#            caches that hop — but it is the same header on the same kind of
+#            body, and the reasoning above stops applying only because of where
+#            the unit sits, which is not a property the code states.
+#            gap: the twelve `setInterval` handles in the valuation service's
+#            `index.ts` are cleared at shutdown by a hand-written list of twelve
+#            `clearInterval` calls. It is complete today — checked — but it is
+#            the list-somebody-must-remember shape that `track` was introduced
+#            to remove for the same twelve schedulers three lines above it, and
+#            a thirteenth sweep whose timer is forgotten keeps starting work
+#            after the drain has finished waiting for it.
+#            gap: eleven of the sixteen download doors build
+#            `content-disposition` with a template literal rather than through
+#            `contentDisposition()`, which is the helper that scrubs the name
+#            and emits the RFC 5987 pair. All eleven interpolate values that are
+#            server-generated today (a ULID, a sequence number, a date stamp, a
+#            slug), so none is presently wrong; the guarantee is a property of
+#            each call site rather than of the header.
+#            gap: JSON API responses carry no `cache-control` at all. None of
+#            their URLs has a cacheable extension and Fastify sets no
+#            `Last-Modified` for a heuristic to work from, so nothing stores
+#            them today — but that is two absences agreeing rather than a rule.
