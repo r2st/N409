@@ -9769,3 +9769,100 @@
 #            `test_request_bounds`, `test_research_route`,
 #            `test_security_headers` and `test_tagging_agent`. Three rounds have
 #            now recorded both without moving them.
+#
+# R370 — Adversarial input & fence audit (M6). Two findings, no migration, 8 new
+#            tests, and both are the same shape: R369 made the two Python units
+#            first-class scrape targets by porting `shared/prometheus.ts`, and
+#            the port carried the escapes and the caps across without the two
+#            guarantees the *runtime* underneath the original was supplying for
+#            free. Neither is visible in the port — they are properties of
+#            Fastify and of Node, one layer below the file that was copied.
+#
+#            **A byte the exposition format has no spelling for.**
+#            `escape_label_value` writes the three escapes Prometheus text
+#            defines: backslash, double quote, newline. On the TypeScript side
+#            that is the whole of the problem, because every label value there
+#            is a constant, an operator-configured string, or
+#            `routeLabel(req.url)` — and Fastify hands a handler the *raw*
+#            request target, so a caller writing `%00` in a path gets three
+#            printable characters. Uvicorn percent-decodes the target before
+#            `scope["path"]` exists. `GET /z%00q` therefore reached
+#            `route_label` as a real NUL between two letters and went into the
+#            `/metrics` body as one:
+#
+#                http_requests_total{method="GET",route="/z\x00q",...} 1
+#
+#            A raw C0 byte, in a label value chosen from the network by anyone
+#            who can reach the port, on an endpoint five units feed into one
+#            scrape. What a parser does with it is the parser's choice, which is
+#            the reason not to send it. Every code point the format cannot spell
+#            — C0 except newline, DEL, C1 — is now U+FFFD before the three
+#            escapes. Replaced rather than dropped, because a label value is
+#            what an operator reads to find the request behind it and deleting
+#            the byte makes `/z\x00q` and `/zq` one series; U+FFFD is what
+#            `decode_text` already substitutes on the document path.
+#
+#            **Two hundred invented verbs fold the RED metrics away.**
+#            `req.method.toUpperCase()` needs no bound on the TypeScript side
+#            for a second, different reason: Node's parser accepts only the
+#            methods in llhttp's table and answers anything else at the parser,
+#            before Fastify exists, so `method` is drawn from about thirty
+#            values. h11 accepts any token. `curl -X FOOBAR1 .../health` is
+#            answered 405 by Starlette and counted — correctly, it is a request
+#            this unit served — under `method="FOOBAR1"`. Two hundred of those
+#            against one path fill `MAX_SERIES_PER_METRIC` on both
+#            `http_requests_total` and `http_request_duration_seconds`, from an
+#            unauthenticated caller, and everything after folds into
+#            `__other__` for the life of the process.
+#
+#            The fold is what makes that quiet rather than loud, and it is
+#            R341's lesson arriving from the other end: totals stay exact, so
+#            `sum by (job)` keeps working, while a rule that *selects* a label
+#            value stops matching the folded readings entirely.
+#            `HighServerErrorRate`, `SlowRequests` and `RequestsPilingUp` all
+#            select on `method` and `route`, so the estate's RED rules for these
+#            two units would go on evaluating against a series that receives
+#            nothing — which is what a healthy system looks like.
+#            `method_label` folds anything outside `KNOWN_METHODS` to
+#            `unknown`, `route_label`'s own spelling for "not attributable". The
+#            set keeps the WebDAV verbs a scanner reaches for, because nothing
+#            here serves any of them and a spike of PROPFIND is somebody looking.
+#
+#            **What the round looked at and did not find.** The realtime hub's
+#            three ceilings (R369) hold: `capacityFor` and `join` are one
+#            synchronous run with nothing awaited between them, `join` re-checks
+#            anyway, the per-user key is `principal.id` so an API token cannot
+#            open a second budget, and `isUlid` is uppercase-only so a room key
+#            cannot be split by case. `authorizeStream` re-reads the principal,
+#            the token and the valuation on every tick. The six custom
+#            content-type parsers were checked against the boundary NUL scan:
+#            SCIM's hands `preValidation` the *parsed object*, the three
+#            raw-buffer webhook scopes each carry their own scan, and the two
+#            form parsers hand up an object the hook walks. The seventeen routes
+#            with two path parameters all relate the two ids; the `partner_id`
+#            query family all route through a `resolveFirm`-shaped guard; the
+#            entity hierarchy already refuses a cycle under its own lock.
+#
+#            gap: the `route` label has no length bound on *either* tier. A
+#            4,000-character path is a 4,000-character label value, on up to 200
+#            series, across a counter and a histogram that writes sixteen lines
+#            per series. It is bounded — by the request-line limit, which is a
+#            number neither registry chose. Fixing it in one tier and not the
+#            other would create exactly the divergence these two findings are.
+#            gap: `internalAuth.ts`'s `INTERNAL_PUBLIC_PATHS` says it "mirrors
+#            `_PUBLIC_PATHS` on the Python side" and no longer does — the Python
+#            set gained `/metrics` in R369 and the TypeScript one handles the
+#            same question through `registerInternalAuth`'s `gatedElsewhere`.
+#            The comment is stale rather than wrong, and nothing pins the pair.
+#            gap: `escape_help` has the same missing half as
+#            `escape_label_value` did. Every `help` string on the estate is a
+#            module constant, so there is no reachable input — which is the
+#            argument this round just declined to accept about `route`.
+#            gap: R362's two recorded doors are still open and were re-read
+#            rather than closed: `PATCH /api/v1/users/:id` moves an account's
+#            address with no re-auth, and its `user_updated` audit row carries
+#            `{ fields: ['email'] }` and the *old* address as the label, so that
+#            event alone cannot say where the address went. The following
+#            `user_password_reset_sent` row does name the new one, which is why
+#            this is a trail that has to be reconstructed rather than one that
+#            is missing.
