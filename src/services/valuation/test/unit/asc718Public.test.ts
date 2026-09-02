@@ -118,6 +118,33 @@ describe('historical volatility', () => {
   });
 });
 
+const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+
+/**
+ * The ESPP fair value as it was concluded before R371: every component summed
+ * at full precision and the total rounded once, against components each rounded
+ * for display. Restated here only so the grid test below can show that the two
+ * arrangements really do disagree on ordinary inputs.
+ */
+function roundedTogether(
+  price: number,
+  discount: number,
+  lookbackMonths: number,
+  volatility: number,
+  riskFreeRate: number,
+): number {
+  const t = lookbackMonths / 12;
+  const call = blackScholesMerton({
+    grantDateFairValue: price,
+    exercisePrice: price,
+    expectedTermYears: t,
+    volatility,
+    riskFreeRate,
+  });
+  const put = call - price + price * Math.exp(-riskFreeRate * t);
+  return round4(discount * price + (1 - discount) * call + discount * Math.max(0, put));
+}
+
 describe('ESPP with lookback', () => {
   const espp = {
     grantDatePrice: 20,
@@ -130,9 +157,49 @@ describe('ESPP with lookback', () => {
   it('decomposes into discount + call + put components that sum to the fair value', () => {
     const fv = esppFairValue(espp);
     const sum = fv.components.purchaseDiscount + fv.components.callComponent + fv.components.putComponent;
-    expect(fv.fairValuePerShare).toBeCloseTo(sum, 3);
+    // Exactly, at the four decimals all four are stated to — not `closeTo` at
+    // three. The assertion below is the one that was loose enough to pass over
+    // the residual the components and the total used to be rounded apart by.
+    expect(fv.fairValuePerShare).toBe(round4(sum));
     // Discount component is exactly 15% of the $20 grant price.
     expect(fv.components.purchaseDiscount).toBeCloseTo(3, 6);
+  });
+
+  /**
+   * The row is read as an addition, so it has to be one.
+   *
+   * The tab draws "FV/share | Discount | Call | Put" on one line and every one
+   * of the four is `round4` — the reader checks the first against the other
+   * three. Rounding the components and the total independently leaves a
+   * residual of up to 1.5e-4 between them, and it is not a corner: about a
+   * quarter of the grid below lands on one. It was invisible while the tab
+   * printed all four at two decimals, which is not the same as absent.
+   */
+  it('closes the addition at every price and discount on a grid', () => {
+    const offenders: string[] = [];
+    let residuals = 0;
+    for (let price = 0.25; price <= 100; price += 0.25) {
+      for (let discount = 0.05; discount <= 0.95; discount += 0.05) {
+        const fv = esppFairValue({
+          grantDatePrice: price,
+          discountPct: discount,
+          lookbackMonths: 6,
+          volatility: 0.45,
+          riskFreeRate: 0.04,
+        });
+        const { purchaseDiscount, callComponent, putComponent } = fv.components;
+        const sum = round4(purchaseDiscount + callComponent + putComponent);
+        if (fv.fairValuePerShare !== sum) {
+          offenders.push(`${price}/${discount}: ${fv.fairValuePerShare} vs ${sum}`);
+        }
+        // What the old arrangement would have concluded — the sum rounded once,
+        // rather than the sum of the rounded parts — so the grid is known to
+        // exercise the defect rather than to be quiet about it.
+        if (roundedTogether(price, discount, 6, 0.45, 0.04) !== sum) residuals += 1;
+      }
+    }
+    expect(offenders.slice(0, 5)).toEqual([]);
+    expect(residuals).toBeGreaterThan(0);
   });
 
   it('is worth more than the bare discount because of the lookback optionality', () => {

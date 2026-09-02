@@ -339,14 +339,34 @@ export function esppFairValue(a: EsppAssumptions): EsppFairValue {
   const purchaseDiscount = d * s;
   const callComponent = (1 - d) * call;
   const putComponent = d * Math.max(0, put);
-  const fair = purchaseDiscount + callComponent + putComponent;
+  // The stated fair value is the sum of the *stated* components, not a
+  // separately rounded sum of the unrounded ones.
+  //
+  // The ASC 718-50 decomposition is published as an addition — the tab draws
+  // "FV/share | Discount | Call | Put" on one row and the reader checks the
+  // first against the other three — and each of the four is stated to four
+  // decimals. Rounding each component and the total independently leaves a
+  // residual of up to 1.5e-4, so the row could print a discount, a call and a
+  // put that add to one figure beside a fair value of another: three numbers
+  // each individually right and an addition that is visibly wrong, on the
+  // schedule whose whole content is that addition. (It was invisible while the
+  // tab printed all four at two decimals, which is not the same as absent.)
+  //
+  // Closed by making the components the authority rather than by pushing the
+  // residual into one of them: each is a figure a reviewer recomputes directly
+  // — d·S, (1−d)·Call, d·Put — and a component carrying somebody else's
+  // rounding is no longer that. The conclusion moves by at most $0.00015 a
+  // share, and `total_fair_value` follows it.
+  const components = {
+    purchaseDiscount: round4(purchaseDiscount),
+    callComponent: round4(callComponent),
+    putComponent: round4(putComponent),
+  };
   return {
-    fairValuePerShare: round4(fair),
-    components: {
-      purchaseDiscount: round4(purchaseDiscount),
-      callComponent: round4(callComponent),
-      putComponent: round4(putComponent),
-    },
+    fairValuePerShare: round4(
+      components.purchaseDiscount + components.callComponent + components.putComponent,
+    ),
+    components,
   };
 }
 
