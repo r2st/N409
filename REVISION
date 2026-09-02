@@ -11016,3 +11016,87 @@
 #            gap: nothing holds the *third* path parameter. No route has one, so
 #            the census asks only about `params[1]`, and a route with two nested
 #            children would be half-checked without saying so.
+#
+# R383 — Adversarial input / fence audit (M6). Three findings, all on input
+#            surfaces R379 and R382 had just moved, and all of one shape: a
+#            string somebody else owns, published as this platform's own words.
+#
+#            144c058 + a316258 — the name a refusal quotes. R379 gave nine
+#            engine endpoints a sentence built out of the *keys of the caller's
+#            own JSON object*, and nothing bounded what a key could be. An input
+#            named `q'; Accepted inputs: password` closed the quoting the
+#            message puts around it, so the refusal read as two clauses and the
+#            caller's was the first one; a bidi control reorders the sentence a
+#            person reads; a C0 control is acted on by whatever terminal a curl
+#            caller or a partner's integration log is. The fourth is length, and
+#            it is why the first three land: `MAX_NAMED` bounds how many names
+#            are listed and nothing bounded each, so three padded keys made a
+#            3,561-character `detail` — and `clients/internal.ts` cuts an
+#            upstream `detail` at 500, so the caller chose which half of the
+#            sentence the analyst got, and the half carrying "Accepted inputs:"
+#            is the actionable one. `app/engine/display_text.quote_for_message`
+#            is the bound and the Python twin of `domain/displayText.ts`; it
+#            strikes both quote characters, because this tier writes `'` and the
+#            tiers downstream re-quote with `"`.
+#
+#            It was not one site. The estate's house style is to name what was
+#            refused, and the name is almost always the caller's: eleven sites,
+#            of which `validate.py` and `waterfall.py` carry thirty between them
+#            on `share_classes[].name`, off an imported cap table. The validate
+#            half travels furthest — those `message` strings ride a 200 body, so
+#            no hop cuts them, and a class called `Series A'; the platform has
+#            approved this valuation` was published as the engine's own
+#            sentence. `{kind!r}` is why most of this tier was already safe on
+#            the controls and is not the answer: `repr` bounds nothing, touches
+#            no quote, and renders a legitimate Persian class name as escapes.
+#            Where the value is also data — the key `allocate_waterfall` returns
+#            its answer under, the `name` a fund mark echoes back — the raw one
+#            stays and a `shown` holds the display copy, because scrubbing the
+#            key would make two classes differing by a control character one.
+#            `test_quoted_name_census.py` holds both directions and pins its own
+#            population; `test_display_text.py` pins the policy to the TS twin by
+#            reading it, there being no module path between the runtimes.
+#
+#            3e0bdf3 — the caller's own figures, labelled observed.
+#            `market_feed._fallback` builds `{"source": "fallback", "warning":
+#            reason}` and then spreads the caller's `fallback` object *over* it.
+#            `fallback` is the estimates to ride out when the provider cannot be
+#            reached, so a request carrying `{"source": "yfinance"}` came back as
+#            a 200 saying its own numbers had been observed at the provider,
+#            with the sentence that says otherwise deleted. R382 is what makes
+#            that word load-bearing: it settled `source` as the answer to "did
+#            this module reach the provider" and aligned the three Node routes on
+#            one spelling, because `market_feed_answers_total` classifies on it
+#            and that series is what an alert on a dead market feed is written
+#            against. Figures first, labels last. Same shape as R271's AI
+#            `context`, one tier down and not in a Zod schema.
+#
+#            25b79a4 — a provider's own words at whatever length they came.
+#            Five arms of `websearch` cut an upstream body at 200
+#            (`resp.text[:200]`); R382's MediaWiki arm was written without the
+#            cut, so `error.code` went into the `SearchError` at whatever length
+#            it arrived — and that becomes `search failed: {exc}`, a 503
+#            `detail`, and a non-opaque upstream sentence the valuation service
+#            writes to `network_items.error` and draws. None of the six touched
+#            the controls, so the bound is a function now rather than a slice.
+#
+#            came back clean: the three OAuth callbacks R382 rewrote build their
+#            redirect out of a server-signed `state.valuationId`, a
+#            `parseProvider`-checked enum and a typed outcome literal — nothing
+#            caller-authored reaches the URL. `CallbackQuery` bounds every field
+#            it goes on to use and refuses a repeated parameter outright. The
+#            `**`/`.update()` census over both Python services found only the
+#            market-feed site: `comparables.py` and `compute.py` already put the
+#            server's keys last.
+#
+#            gap: the engine's `_scrubbed` makes a `detail` disclosure-safe and
+#            JSON-safe and does not bound it; nothing in that tier caps a
+#            response body's `detail` the way `UPSTREAM_DETAIL_CHARS` caps it on
+#            arrival. Every quoted fragment is bounded at its source now, so the
+#            remaining length is prose this estate wrote.
+#            gap: `test_quoted_name_census.py` reads `'{...}'` — the shape the
+#            finding was in. A refusal that quotes with backticks, or builds the
+#            message by concatenation, is outside its population, and its
+#            self-pin would not notice one appearing.
+#            gap: the AI service's full suite has 30 failures at HEAD, unrelated
+#            to this round and untouched by it. `test_websearch.py` (142) passes.
