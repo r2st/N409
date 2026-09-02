@@ -10806,3 +10806,109 @@
 #            the cap on the Documents tab") and no boundary rule reads a label
 #            out of a sentence reliably, so those stay held by reading — R374's
 #            gap, one table smaller.
+
+# R380 — State machine & transition verification (M3). Two findings, no
+#            migration, 6 new tests, and both findings are the same question:
+#            a rule this estate has already written down, enforced at one of
+#            the doors onto the state it is about. M3's premise is that the
+#            transitions are where an invariant is lost, and on a codebase this
+#            swept the productive question was not "what rule is missing" but
+#            "which writer reaches this row without passing the rule's door".
+#
+#            f641407 — `entity_type` and `parent_valuation_id` are one
+#            inter-company relationship, and two of the three writers say so.
+#            `PATCH /valuations/:id/entity` refuses the pair `standalone` + a
+#            parent outright — "A standalone entity has no parent" — because
+#            `consolidate` reads the type, so the link would be "stored, shown
+#            in the tree, and counted as if it were not there".
+#            `deleteOrganization` states the other half: a member returned to
+#            `standalone` has its parent link cleared with it, "because the type
+#            described a membership and the membership is what is being
+#            removed". `assignValuationToOrg` is the third writer and wrote
+#            `entity_type` on its own, so both halves were reachable through it.
+#            `POST /organizations/:id/entities` with `entity_type: 'standalone'`
+#            left the parent link where it was — one press of a `<select>` away,
+#            since `OrgAssignmentCard` offers "Standalone" in its Entity role
+#            picker and knows nothing about the link. Elimination is keyed on
+#            `subsidiary`, so the roll-up then counts the entity in full on top
+#            of the parent that contains it, while the tree draws it inside that
+#            parent; and `unanchored_subsidiaries` — the list whose whole job is
+#            to name a subsidiary the totals did *not* eliminate — is keyed on
+#            the type as well and says nothing. A holding company's consolidated
+#            equity carried the subsidiary twice, silently, in the figure
+#            domain/portfolio.ts calls the one an auditor relies on.
+#            `DELETE /organizations/:id/entities/:valuationId` is the same
+#            statement's other half: the one-engagement form of the removal
+#            `deleteOrganization` performs in bulk, leaving the engagement typed
+#            `subsidiary` under a parent in the organization it had just left —
+#            the "state the product has no reading of" the bulk door was fixed
+#            not to create. Applied where every door passes rather than at each
+#            of them: ending a membership ends the type and the link, and
+#            writing `standalone` clears the link, because that is what the word
+#            means.
+#
+#            b0be000 — R304's rule 4 and R372's rule 5 both hold that an
+#            attestation is about the artifact it was given against, and both
+#            read `main` alone, because `mainSignedAt` was the only reader
+#            `domain/publishGate.ts` had. `valuation_signatures` holds a row per
+#            role and the deliverable prints every one of them:
+#            `resolveSignatures` builds the certification table with a "Date
+#            signed" column and labels the second row **Concurring reviewer**,
+#            under a comment saying the label exists so an auditor does not read
+#            two signatures as two independent appraisals. It is a firm
+#            quality-control attestation on a USPAP SR 10-3 certification page,
+#            with a date on it. So the sequence rule 4 was written to stop was
+#            still open one row over, and the ordinary remedy is what opens it:
+#            both sign, the analyst corrects a chapter, re-runs QA (rules 2 and
+#            3 pass, being keyed to the new version), re-signs — which is
+#            exactly what rule 4 asks for — and publishes. The reviewer's line
+#            goes out dated before the body it certifies. Both rules ask about
+#            every signatory on file now. The second row is optional (rule 1
+#            asks only for `main`), so it is held to currency rather than to
+#            existence, and the remedy has the two arms that follow: have them
+#            re-sign, or remove the row — both controls that already exist on
+#            the Signatures panel, named here as that panel labels them.
+#
+#            gap: `POST /organizations/:id/entities` still takes no
+#            `parent_valuation_id`, so "assign as a subsidiary and stop" remains
+#            the ordinary way to reach an unanchored subsidiary. That one is
+#            *reported* rather than silent, which is the whole difference from
+#            the finding above, and domain/portfolio.ts names it as one of four
+#            such sequences on purpose.
+#            gap: `PATCH /valuations/:id/entity` authorises the parent id but
+#            never asks whether that engagement is retired, so a live subsidiary
+#            can be linked to a withdrawn parent. Left because the roll-up
+#            already answers it honestly — `listPortfolioEntities` filters
+#            `archived_at`, so the parent is simply not in the set and the child
+#            is reported unanchored — and because the write touches only the
+#            child's row, so no retirement rule is being walked past.
+#            gap: `consolidate` eliminates on the *child's* type and on whether
+#            the parent carries an equity value, and never on the parent's own
+#            `entity_type`. A subsidiary anchored to a parent typed `standalone`
+#            is still eliminated. That is arguably right — the argument is about
+#            double counting, not about a label — but it means the word
+#            `parent` is decorative in the one function that reads the tree,
+#            and nothing says so.
+#            came back clean: `board_resolutions` / `board_signoffs` (R288 and
+#            R312 closed all three doors onto `approved → pending`, and the
+#            third one records itself), `job_alerts` (open-once per
+#            (source, kind) under the partial index, resolve-on-absence,
+#            announcements stamped in the transaction that sends them),
+#            `api_tokens` (five refusals, each named, `partner_retired` ordered
+#            ahead of `orphaned` for its remedy), `user_invitations` (the
+#            partial index and every reader agree since R342), and the engine
+#            tier's new refusal path — R379's `describe_unbindable` reaches
+#            every free-form entry point including the three that dispatch
+#            through `value_intangible` / `run_impairment_test` /
+#            `value_instrument`, and the 422 it now answers with is `permanent`
+#            to `classifyStatus`, where the 500 it replaced was `transient`:
+#            a malformed inputs object used to be retried by the pipeline ladder
+#            and used to count toward opening the shared engine circuit.
+#            came back clean: R372's open question about `convertIntakeLink`
+#            ignoring `revoked_at` was re-examined and stays open. It is not the
+#            browser-only rule R372's other finding was: `intakeLinkStatus`
+#            ranks `submitted` above `revoked` on the stated ground that "work
+#            the client already did outranks the link's own lifecycle", and the
+#            console offers Withdraw only on `sent`/`in_progress` — so a
+#            submitted-then-withdrawn link reads `submitted` and offers Convert.
+#            The product has said what it means; the server agrees with it.
