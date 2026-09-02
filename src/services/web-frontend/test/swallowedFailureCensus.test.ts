@@ -33,6 +33,15 @@ import { join } from 'node:path';
  * is classified; a fixed one fails until it is struck off. `KNOWN_UNFIXED` is
  * deliberately not a permission — a census whose allowlist rubber-stamps known
  * bugs is a check that passes by having nothing left to ask.
+ *
+ * R352 (M5) added the second spelling. Until then the population was the arrow
+ * form alone — `.catch(() => …)` — and `try { await api(…) } catch { … }`
+ * around the identical discard was invisible to it. `ScenariosTab` answered a
+ * failed read of the saved bull/base/bear cases with `setSaved(null)`, which
+ * took the only surface those cases appear on off the page: a 503 drawn as
+ * *this engagement has saved none*, beside a form still inviting one. It sat
+ * there through every round this census has been green for, because a census
+ * that reads one of two spellings is green about the half it reads.
  */
 
 /** Reasons are prose on purpose: an entry nobody can justify is a bug. */
@@ -69,6 +78,15 @@ const SILENT_BY_DESIGN: Record<string, string> = {
     'A checklist of onboarding steps, additive to the ones the user has ticked by hand. Its own comment says so, and the panel is dismissible.',
   'src/pages/PartnerPortalPage.tsx\t/partners/mine':
     'Branding only. The heading falls back to "Your portfolio", which is true of every partner and claims nothing.',
+  // The block spelling, in the population since R352.
+  'src/lib/realtime.ts\t/api/v1/valuations/${valuationId}/stream':
+    'The SSE read loop. Every way out of it — unmount, abort, a dropped socket — is answered below by the reconnect and the presence reset, which is where the failure is handled rather than reported.',
+  'src/pages/InboxPage.tsx\t/inbox/read':
+    'Marking a thread read on the way into it. The optimistic update is inside the try, so a failure leaves the row exactly as it was, and the next load restores the truth.',
+  'src/pages/NotificationsPage.tsx\t/notifications/${id}/read':
+    'The same fire-and-forget read mark, per row. A failed mark leaves the row unread, which is what it was; interrupting the navigation it accompanies would cost more than the stale badge.',
+  'src/pages/PaymentRedirectPages.tsx\t/valuations/${valuationId}/payments':
+    'The post-checkout poll. A failed poll is transient by assumption and the loop keeps going; the budget running out is reported, by `setTimedOut`.',
 };
 
 /** Each reason says what the user is told that is not true. */
@@ -129,18 +147,78 @@ const SWALLOW =
  */
 const REQUEST = /(?:api|fetch)\s*(?:<[^>]*>)?\s*\(\s*(?:[`'"]([^`'"]*)[`'"]|([A-Za-z_$][\w$]*)\s*[,)])/g;
 
+/**
+ * The same discard, written as a statement instead of an argument.
+ *
+ * `SWALLOW` above reads `.catch(() => …)`. The block form is
+ * `try { await api(…) } catch { … }`, and it says exactly the same thing: a
+ * body that is empty, or that substitutes a value nobody sent. Comments are
+ * already stripped by the time this runs, so a catch whose whole body is an
+ * explanation counts as empty — which is the common spelling of it, and the
+ * one `ScenariosTab` was written in.
+ */
+const BLOCK_DISCARD =
+  /^(?:return\s+(?:\[\s*\]|null|undefined|\{\s*\}|new (?:Set|Map)\(\))\s*;?|(?:set[A-Za-z0-9_]*\(\s*(?:\[\s*\]|null|undefined|\{[^}]*\})\s*\)\s*;?\s*)+)$/;
+
+/** The `{ … }` opening at `open`, and where it closes. */
+function braced(source: string, open: number): { body: string; end: number } {
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return { body: source.slice(open + 1, i), end: i };
+    }
+  }
+  return { body: source.slice(open + 1), end: source.length };
+}
+
+function keyFor(file: string, region: string): string {
+  const requests = [...region.matchAll(REQUEST)];
+  const last = requests.length ? requests[requests.length - 1]! : null;
+  return `${file}\t${last ? (last[1] ?? last[2] ?? '(none)') : '(none)'}`;
+}
+
+/**
+ * Block-form discards, keyed by the request their own `try` was making.
+ *
+ * Scoped to the try body rather than to everything before the catch, which the
+ * arrow half has to do. That is not a refinement for its own sake: a
+ * `JSON.parse(localStorage.getItem(…))` guard is a `catch { return null }` too,
+ * and it is not a swallowed *request* failure — this census's whole subject.
+ * Requiring the guarded block to contain the call keeps those out, and keeps
+ * every key distinct, so no entry can hide behind another one's `(none)`.
+ */
+function blockSwallows(file: string, source: string): string[] {
+  const found: string[] = [];
+  for (const start of source.matchAll(/\btry\s*\{/g)) {
+    const tryOpen = source.indexOf('{', start.index);
+    const { body: guarded, end } = braced(source, tryOpen);
+    const after = source.slice(end + 1);
+    const clause = /^\s*catch\s*(?:\(\s*([A-Za-z_$][\w$]*)?[^)]*\))?\s*\{/.exec(after);
+    if (!clause) continue;
+    const { body } = braced(source, end + 1 + after.indexOf('{', clause.index));
+    const discarded = body.trim().replace(/\s+/g, ' ');
+    // A body that names the error it caught is doing something with it.
+    if (clause[1] && new RegExp(`\\b${clause[1]}\\b`).test(discarded)) continue;
+    if (discarded !== '' && !BLOCK_DISCARD.test(discarded)) continue;
+    if (!REQUEST.test(guarded)) continue;
+    REQUEST.lastIndex = 0;
+    found.push(keyFor(file, guarded));
+  }
+  REQUEST.lastIndex = 0;
+  return found;
+}
+
 function census(): string[] {
   const found: string[] = [];
   for (const file of walk('src')) {
     if (!/\.tsx?$/.test(file)) continue;
     const source = stripComments(readFileSync(file, 'utf8'));
     for (const match of source.matchAll(SWALLOW)) {
-      const before = source.slice(0, match.index);
-      const requests = [...before.matchAll(REQUEST)];
-      const last = requests.length ? requests[requests.length - 1]! : null;
-      const path = last ? (last[1] ?? last[2] ?? '(none)') : '(none)';
-      found.push(`${file}\t${path}`);
+      found.push(keyFor(file, source.slice(0, match.index)));
     }
+    found.push(...blockSwallows(file, source));
   }
   return found.sort();
 }
@@ -181,6 +259,26 @@ describe('swallowed request failures', () => {
     REQUEST.lastIndex = 0;
     expect(REQUEST.test("api('/inbox/unread-count')")).toBe(true);
     REQUEST.lastIndex = 0;
+  });
+
+  it('reads the block spelling as well as the arrow one (R352)', () => {
+    // The blind spot `ScenariosTab` sat in: the same discard, written as a
+    // statement. Both halves must be represented, and the block half must not
+    // drag in the localStorage guards that share its shape but not its subject.
+    expect(found).toContain('src/pages/InboxPage.tsx\t/inbox/read');
+    expect(found).toContain('src/pages/NotificationsPage.tsx\t/notifications/${id}/read');
+    // `tokenExpiry`'s `catch { return null }` guards a JSON.parse, not a request.
+    expect(found).not.toContain('src/lib/api.ts\t(none)');
+
+    const block = (source: string) => blockSwallows('f.ts', stripComments(source));
+    expect(block('try { await api("/x") } catch { }')).toEqual(['f.ts\t/x']);
+    expect(block('try { await api("/x") } catch {\n  // nothing to say\n}')).toEqual(['f.ts\t/x']);
+    expect(block('try { setA(await api("/x")) } catch { setA(null); }')).toEqual(['f.ts\t/x']);
+    // The fix, not the bug.
+    expect(block('try { await api("/x") } catch (err) { setError(describe(err)); }')).toEqual([]);
+    expect(block('try { await api("/x") } catch { setFailed(true); }')).toEqual([]);
+    // Not a request at all.
+    expect(block('try { return JSON.parse(raw) } catch { return null }')).toEqual([]);
   });
 
   it('does not read a doc comment about the bug as the bug', () => {
