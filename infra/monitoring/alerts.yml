@@ -1171,6 +1171,45 @@ groups:
           summary: 'an integration is being refused for something this platform did ({{ $labels.outcome }})'
           runbook: 'journalctl -u n409-valuation --grep=api-token for the apiTokenId and partnerId; then un-archive the partner, restore the membership, or have the firm mint a key under a current user'
 
+      # The gate above that door, which refuses keys the credential layer was
+      # happy with (R376, methodology M11).
+      #
+      # `apiKeyGuard` in `routes/partnerApi.ts` refuses five ways and counted
+      # none of them until now — R345 and R346 both closed with this as an open
+      # item, on the reasoning that folding them into `api_token_auth_total`
+      # would put these refusals over a denominator counting the whole estate's
+      # API traffic. Their own instrument instead, refusals-only, the shape
+      # `realtime_stream_refusals_total` already uses.
+      #
+      # `account_suspended` is the one that wakes anybody, and it is the same
+      # judgement `PartnerIntegrationLockedOut` encodes one rule up: this is a
+      # key we issued, still honour, and stopped accepting because an
+      # administrator here suspended the seat it acts as (R342). Nobody at the
+      # firm did anything and nobody on this side was told. A session bearer or
+      # a personal token on a partner route is the integrator's own mistake and
+      # the 403 body says exactly what the surface wants, so neither may page;
+      # both are still counted, because a *rate* of them is a client pointed at
+      # the wrong door and nothing else on this box can see that either.
+      - alert: PartnerIntegrationSuspended
+        expr: increase(partner_api_refusals_total{reason="account_suspended"}[30m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'a partner API key is being refused because the account it acts as is suspended'
+          runbook: 'journalctl -u n409-valuation --grep=partner-api for the apiTokenId, partnerId and userId; lifting the suspension resumes the key on its own, or the firm mints one under a current account'
+
+      # Both partner budgets in one rule: whichever ceiling is binding, the
+      # partner is being throttled and the integrator sees 429s. A ticket, not a
+      # page — the headers on every response already tell them which budget it
+      # is, and the remedy is a conversation about limits.
+      - alert: PartnerApiThrottling
+        expr: increase(partner_api_refusals_total{reason=~"key_rate_limited|partner_rate_limited"}[15m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'a partner is over its API ceiling ({{ $labels.reason }})'
+          runbook: 'PARTNER_API_RATE_LIMIT is the per-key budget and PARTNER_API_RATE_LIMIT_ORG the firm-wide one, both in routes/partnerApi.ts; the response headers name which one bound'
+
   - name: n409-browser
     rules:
       # A release that blanks a route for every user leaves the access log full

@@ -169,6 +169,7 @@ import { registerScimMetrics } from './observability/scimRequests.js';
 import { registerSignInMetrics } from './observability/signInOutcomes.js';
 import { registerIntegrationCallbackMetrics } from './observability/integrationCallbacks.js';
 import { registerApiTokenAuthMetrics } from './observability/apiTokenAuth.js';
+import { registerPartnerApiGuardMetrics } from './observability/partnerApiGuard.js';
 import { registerRealtimeStreamMetrics } from './observability/realtimeStreams.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
@@ -942,6 +943,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Three of those five are conditions this platform caused, by archiving a
   // firm, moving the member who minted the key, or closing their account.
   registerApiTokenAuthMetrics(metricsRegistry);
+  // And the gate one layer above that door, which R345 and R346 both left open.
+  // Everything `apiKeyGuard` refuses is a key this platform issued and still
+  // honours — pointed at a surface it may not use, or over its ceiling — and the
+  // sharpest of them is a key stopped by a suspension applied to the *account*
+  // it acts as: an administrative act here ends a running integration
+  // elsewhere, answered with a 403 that nothing logs.
+  registerPartnerApiGuardMetrics(metricsRegistry);
   // And the door people use, which is the one every round above left for last.
   // A sign-in refusal is a 401 and a lockout is a 429, and this deployment has
   // no rule on either class — `scimRequests.ts` says so in as many words — so a

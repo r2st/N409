@@ -46,6 +46,7 @@ import { WORKFLOW_TRANSITIONS } from '../domain/workflow.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { findPartnerIdentity } from '../repos/branding.js';
 import { findApiTokenById } from '../repos/apiTokens.js';
+import { refusePartnerApiRequest } from '../observability/partnerApiGuard.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { findReportByValuation, getVersionContent, listVersions } from '../repos/reports.js';
 import { reportStatusFor } from '../domain/report.js';
@@ -319,6 +320,12 @@ export function registerPartnerApiRoutes(
   /** API-key-only gate + per-key rate limit, run after app.authenticate. */
   const apiKeyGuard = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (!req.apiToken) {
+      // Counted, from R376: every refusal below this line is a key this
+      // platform issued and still honours, turned away by this gate rather than
+      // by the credential layer `apiTokenAuth.ts` instruments — and each was one
+      // more 4xx in `http_requests_total` and nothing else. See
+      // `observability/partnerApiGuard.ts`.
+      refusePartnerApiRequest(req.log, 'session_token');
       throw problems.forbidden(
         'The partner API requires an API key (Authorization: Bearer n409_pat_…) — session tokens are not accepted',
       );
@@ -327,6 +334,7 @@ export function registerPartnerApiRoutes(
     // route below scopes by partner_id — a NULL would silently match every
     // partner-less valuation on the platform.
     if (!req.apiToken.partnerId) {
+      refusePartnerApiRequest(req.log, 'personal_token');
       throw problems.forbidden(
         'The partner API requires a partner API key — personal tokens are not accepted',
       );
@@ -364,6 +372,15 @@ export function registerPartnerApiRoutes(
      * suspension is one DELETE and the key resumes — nothing is revoked.
      */
     if (isSuspended(requirePrincipal(req))) {
+      // The one refusal here that nobody at the firm caused and nobody on this
+      // side was told about: an administrator suspended a seat, and a key that
+      // has nothing to do with that seat's browsing stopped working. It is the
+      // only one of the five that writes a line as well as a count.
+      refusePartnerApiRequest(req.log, 'account_suspended', {
+        tokenId: req.apiToken.tokenId,
+        partnerId: req.apiToken.partnerId,
+        userId: requirePrincipal(req).id,
+      });
       throw problems.forbidden(
         'The account this API key acts as has been suspended, so the key cannot be used until the suspension is lifted. Its access resumes on its own once it is.',
       );
@@ -389,12 +406,14 @@ export function registerPartnerApiRoutes(
     }
 
     if (!result.allowed) {
+      refusePartnerApiRequest(req.log, 'key_rate_limited');
       throw problems.tooManyRequests(
         `Rate limit of ${result.limit} requests per ${PARTNER_API_RATE_WINDOW_MS / 1000}s exceeded for this API key`,
         Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000)),
       );
     }
     if (org && !org.allowed) {
+      refusePartnerApiRequest(req.log, 'partner_rate_limited');
       throw problems.tooManyRequests(
         `Rate limit of ${org.limit} requests per ${PARTNER_API_RATE_WINDOW_MS / 1000}s exceeded for this ` +
           'organization across all of its API keys',
