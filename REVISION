@@ -8816,3 +8816,81 @@
 #            position. Two confirmations of different things on one screen is a
 #            layout question this round answered with an `aria-label` and did
 #            not design.
+# R362 — Fence/guard/boundary audit (M6). One finding, no migration, 6 new
+#            tests, and it is the gap R359 wrote down as it closed the four
+#            beside it: "`POST /api/v1/users` creates an account … the same
+#            escalation, and this round did not touch it."
+#
+#            **The two doors that create an account asked for nothing.**
+#            `credentialIssuingRoutes.test.ts` is the estate's roster of the
+#            routes that hand out a way in, and it is deliberately not a
+#            hand-written list — membership is derived from the *writes*, so a
+#            handler calling `createApiToken`, `createScimToken` or
+#            `upsertSamlConfig` must appear in it or the census fails. The
+#            derivation was sound; the three functions it derives from were the
+#            three that *look* like a mint. Two return a secret and the third
+#            names an identity provider, and none of them is the strongest
+#            grant on the platform:
+#
+#              * `POST /api/v1/users` writes an account with any role — `god`
+#                included — on a password the caller types into the request.
+#              * `POST /api/v1/users/invite` posts that same grant to an
+#                address the caller chose, redeemable for seven days by whoever
+#                holds the link.
+#
+#            Every other credential here has its own revocation. This one has
+#            none, because the thing issued is a separate account: a password
+#            change, `bumpSessionEpoch`, `DELETE /me/tokens/:id` and the
+#            caller's own deactivation all leave it signed in.
+#            `revokeInvitationsFrom` retires the outstanding invitations of a
+#            *deactivated inviter*, which is offboarding and is the wrong end
+#            of this one — nobody deactivates the attacker, because nobody
+#            knows they were ever there. So a borrowed administrator session
+#            was one request from permanent access, and the two guards every
+#            sibling route carries were the two that were missing:
+#            re-authentication, and the refusal that stops a key minting its
+#            successor. Both added with `adminSso.ts`'s wording and its
+#            skip-on-no-digest; the console asks for the password and keeps the
+#            button dead until it has one, the way the SSO page does.
+#
+#            **Why the derivation still went stale.** A census that derives its
+#            membership from a list of function names has moved the
+#            hand-written part rather than removed it, and the names left out
+#            are the ones nobody spelled as a mint. The list gains both writes,
+#            and gains the discriminator that keeps `createUser`'s three
+#            legitimate callers out of the sweep without a second exemption
+#            list: `POST /auth/register` is a stranger creating their own
+#            account, `accept-invite` redeems the link this is about, and the
+#            SSO paths provision on a signed assertion — what they have in
+#            common is no `app.authenticate`, which is a property to test for
+#            rather than three names to write down. The public writers are
+#            pinned too, so a second JIT path is a failure rather than an
+#            exemption.
+#
+#            **What the six route sweeps could not see, again.** All six ask
+#            "did this handler consult the caller", and both routes do:
+#            `requireUserAdmin` is the first line of each, and both passed
+#            `privilegedRouteAuthorization` and the coverage census. The
+#            question that was not being asked is R359's — "is the caller still
+#            there" — and the answer to "which routes must ask it" was a list
+#            of three function names.
+#
+#            gap: `POST /api/v1/users/invitations/:id/resend` mints a new
+#            secret for an existing invitation and is not gated. It re-sends to
+#            the address a legitimate administrator already chose, so it grants
+#            no authority the revoke does not already reach — but it is a mint,
+#            it is not in the census, and the reasoning for leaving it out is
+#            this sentence rather than a test.
+#            gap: `POST /api/v1/users/:id/restore` brings back a way in on the
+#            account's old password, and `PATCH /api/v1/users/:id` can move an
+#            account's address before `send-password-reset` mints against it.
+#            Neither creates a credential, so neither is in this round's frame;
+#            both are the same "outlives the caller's access" question asked of
+#            an existing account rather than a new one.
+#            gap: `format:check` is still red on main — this round left
+#            `ScenariosTab.tsx`'s pre-existing reflow where it was, and fixed
+#            only the deviation in the file it edited.
+#            gap: `AdminUsersConsole.test.tsx`'s export-failure case has been
+#            red on main since the page's fallback wording changed. Fixed here
+#            because the file was open; nothing checks that a suite named in no
+#            round's diff is still green, which is how it stayed red.
