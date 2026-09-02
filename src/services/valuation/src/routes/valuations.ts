@@ -287,8 +287,45 @@ export function registerValuationRoutes(
     if (ops && body.user_id && !(await userExists(deps.pool, body.user_id))) {
       throw problems.unprocessable('Unknown user', { errors: [{ path: ['user_id'] }] });
     }
-    if (ops && body.partner_id && !(await findPartnerById(deps.pool, body.partner_id))) {
-      throw problems.unprocessable('Unknown partner', { errors: [{ path: ['partner_id'] }] });
+    /*
+     * `assertAssignablePartner` has two refusals and this had copied one.
+     *
+     * The comment above claims the admin console's shape "for the same two
+     * columns", and the console's helper reads: unknown partner, *and* — under
+     * "new partner assignments must reference a live (non-archived) partner" —
+     * archived partner. Only the first was here, so `archived_at` did nothing
+     * at the door that files the work itself.
+     *
+     * `partners.archived_at` is the platform's soft delete for a firm, and the
+     * rule it states is the one `convertIntakeLink` gives in a sentence: "a
+     * withdrawn firm acquiring fresh work is the thing being prevented". R342
+     * closed the API key that created engagements under an archived firm and
+     * the fan-out that told it about them; this is the console doing the same
+     * thing through the front door, and it is the shorter route of the two.
+     *
+     * Asked of the *resolved* partner rather than of the body field, so the
+     * member path is covered as well: archiving a firm does not sign its
+     * people out, and their own `principal.partnerId` is the id this writes
+     * when ops did not name one. Two answers because they are two faults — an
+     * ops caller named a field that will not do, and a member of a withdrawn
+     * firm is being told about their firm rather than about their request.
+     *
+     * Skipped entirely for a null partner, which is every platform-side
+     * engagement and the ops path that explicitly clears the field.
+     */
+    if (partnerId) {
+      const partner = await findPartnerById(deps.pool, partnerId);
+      // Only reachable from the body: a principal's `partner_id` is a foreign
+      // key and the row it names exists.
+      if (!partner) throw problems.unprocessable('Unknown partner', { errors: [{ path: ['partner_id'] }] });
+      if (partner.archived_at) {
+        throw ops && body.partner_id
+          ? problems.unprocessable('This partner is archived', { errors: [{ path: ['partner_id'] }] })
+          : problems.conflict(
+              'This firm has been withdrawn from the platform, so no new engagements can be created ' +
+                'under it. Ask an administrator to restore it first.',
+            );
+      }
     }
 
     // Feature 7: subscribers consume against their plan limit; a user with no

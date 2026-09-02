@@ -4,6 +4,7 @@ import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
+import { newUlid } from '@n409/shared';
 import type pg from 'pg';
 
 const dbUp = await isDbAvailable();
@@ -89,6 +90,66 @@ describe.skipIf(!dbUp)('POST /valuations refuses an id it cannot use', () => {
     expect(partner.statusCode, partner.body).toBe(422);
     expect(partner.json().detail).toBe('Unknown partner');
     expect(partner.json().errors?.[0]?.path).toEqual(['partner_id']);
+  });
+
+  it('refuses an archived firm on both the ops field and the member path', async () => {
+    /*
+     * R348. The comment beside these checks claims the shape
+     * `assertAssignablePartner` uses "for the same two columns", and that
+     * helper has two refusals: unknown, and — under "new partner assignments
+     * must reference a live (non-archived) partner" — archived. Only the first
+     * was copied, so `partners.archived_at` did nothing at the door that files
+     * the work. `convertIntakeLink` states the rule this breaks in a sentence:
+     * "a withdrawn firm acquiring fresh work is the thing being prevented".
+     *
+     * Both paths, because archiving a firm does not sign its people out and
+     * their own `principal.partnerId` is what the row is written with when ops
+     * names nothing.
+     */
+    const partnerId = newUlid();
+    await pool.query('INSERT INTO partners (id, name, key, archived_at) VALUES ($1, $2, $3, now())', [
+      partnerId,
+      'Withdrawn Advisors',
+      `withdrawn-${partnerId.toLowerCase()}`,
+    ]);
+    const member = await seedUser(
+      { app, pool, teardown: async () => {} },
+      { roles: ['partner'], partnerId },
+    );
+
+    const named = await create(ops.token, { partner_id: partnerId });
+    expect(named.statusCode, named.body).toBe(422);
+    expect(named.json().detail).toBe('This partner is archived');
+    expect(named.json().errors?.[0]?.path).toEqual(['partner_id']);
+
+    // The member names no field — the fault is their firm, not their body — so
+    // this is a conflict about the firm rather than a 422 about a parameter.
+    const own = await create(member.token, {});
+    expect(own.statusCode, own.body).toBe(409);
+    expect(own.json().detail).toMatch(/withdrawn/i);
+
+    // Nothing was filed under the withdrawn firm either way.
+    const { rows } = await pool.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM valuations WHERE partner_id = $1',
+      [partnerId],
+    );
+    expect(rows[0]!.n).toBe(0);
+  });
+
+  it('still creates under a firm that is restored', async () => {
+    const partnerId = newUlid();
+    await pool.query('INSERT INTO partners (id, name, key, archived_at) VALUES ($1, $2, $3, now())', [
+      partnerId,
+      'Back Again LLP',
+      `back-${partnerId.toLowerCase()}`,
+    ]);
+    expect((await create(ops.token, { partner_id: partnerId })).statusCode).toBe(422);
+    // Archiving is a boolean an administrator can set back, so the refusal has
+    // to be a refusal and not a one-way door.
+    await pool.query('UPDATE partners SET archived_at = NULL WHERE id = $1', [partnerId]);
+    const res = await create(ops.token, { partner_id: partnerId });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().valuation.partner_id).toBe(partnerId);
   });
 
   it('refuses a malformed id on the client path too, where it was only ignored', async () => {
