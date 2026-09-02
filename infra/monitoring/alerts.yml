@@ -22,9 +22,15 @@
 #
 #   web         127.0.0.1:3000     job_name: n409-web
 #   valuation   127.0.0.1:3001     job_name: n409-valuation
+#   ai          127.0.0.1:3002     job_name: n409-ai
+#   engine      127.0.0.1:3003     job_name: n409-engine
 #   report      127.0.0.1:3004     job_name: n409-report
 #
-# with `authorization: {credentials: $INTERNAL_SERVICE_TOKEN}`.
+# with `authorization: {credentials: $INTERNAL_SERVICE_TOKEN}` — which is why
+# the Python tier's `/metrics` accepts that spelling as well as
+# `X-Internal-Token`: a scraper configured once has to reach all five, and one
+# that silently 401s against two collects an estate that looks smaller than it
+# is.
 #
 # ── Which label names a process, and which names a dependency ───────────────
 #
@@ -43,11 +49,22 @@
 # healthy volume beside it — and the summaries that did fire named nobody, since
 # `{{ $labels.service }}` on a series without one renders empty.
 # `alertRulesCensus.test.ts` now holds every label a rule groups by, selects on
-# or interpolates to one the metrics in that rule actually carry. The AI (:3002)
-# and engine (:3003) services expose no scrape endpoint; they are measured from
-# the caller instead — see the `upstream_*` rules below, and the note on
-# `registerUpstreamMetrics` for why the caller's view is the one that decides
-# whether a user saw a failure.
+# or interpolates to one the metrics in that rule actually carry. Note that it
+# reads the **TypeScript** registrations only: the Python tier's instruments
+# live in `src/services/{ai,engine-wrapper}/app/metrics.py` and are pinned by
+# `test_metrics_endpoint.py` in each service instead, which asserts the series
+# these rules name by hand. A rule that only the Python units would fire is
+# therefore not covered by the census — keep the two names identical.
+#
+# The AI (:3002) and engine (:3003) services became scrape targets in R361
+# (methodology M11) and now publish `n409_build_info`, `process_uptime_seconds`
+# and the RED trio under the same names as the Node tier, so every rule in the
+# availability and http groups below covers all five units. They are *also*
+# still measured from the caller — see the `upstream_*` rules below, and the
+# note on `registerUpstreamMetrics` for why the caller's view is the one that
+# decides whether a user saw a failure. The two views answer different
+# questions and neither replaces the other: a unit that is up and answering its
+# own scrape can still be timing out every request the valuation tier makes.
 #
 # ── Severity ────────────────────────────────────────────────────────────────
 #
@@ -94,11 +111,13 @@ groups:
       # gauge written so that "what is live" is answerable from outside the box —
       # had no rule against it at all.
       #
-      # Covers the three Node units, which are the three that register this
-      # gauge. The two Python units carry their own `build_info` and have no
-      # scrape endpoint to publish it on; that is R313's open item, and a unit
-      # this rule cannot see is a reason to close it rather than to weaken the
-      # rule.
+      # Covers all five units since R361. It covered three — the Node ones —
+      # for as long as the two Python units computed `build_info` and had no
+      # scrape endpoint to publish it on, which was R313's open item, and a
+      # unit this rule cannot see was a reason to close it rather than to
+      # weaken the rule. A partial deploy that took on the valuation tier and
+      # not on the engine is exactly the skew this rule is for, and it was the
+      # one shape it could not see.
       #
       # Counting distinct `sha` rather than comparing to any expected value:
       # there is nothing on the box that knows what the intended build is, and

@@ -140,9 +140,22 @@ journalctl -u n409-report --since '-1d' | grep -i 'memory\|oom\|killed'
 systemctl show n409-report -p MemoryPeak -p MemoryCurrent -p MemoryMax
 ```
 
-The Python pair has no `/metrics` endpoint — the same reason the readiness
-contract covers three services rather than five — so their ceilings are visible
-through `systemctl show` and the journal only.
+The Python pair serves `/metrics` too since R361, but publishes the *process*
+facts only — build, uptime and the RED trio. It does not export cgroup state:
+`cgroupMemory.ts` reads `/sys/fs/cgroup` through a Node-side reader that has no
+Python twin, so those two units' ceilings are still visible through
+`systemctl show` and the journal only.
+
+```bash
+curl -H "authorization: Bearer $INTERNAL_SERVICE_TOKEN" localhost:3003/metrics \
+  | grep -E 'n409_build_info|process_uptime_seconds|http_requests_total'
+```
+
+Both spellings of the secret work there — `X-Internal-Token`, which is what the
+valuation service sends, and `Authorization: Bearer`, which is what a scrape
+config sends without a custom-header stanza. An unauthorized caller gets a 404
+rather than a 401, so a scanner that found the port is not told the endpoint
+exists.
 
 ### Alert thresholds
 
@@ -151,8 +164,8 @@ somebody has to already suspect before they go and look at it. The thresholds
 that turn them into a signal live in `infra/monitoring/alerts.yml`, as a
 Prometheus rule group: what value is a problem, for how long, and whether it is
 worth waking somebody for. That file's header carries the scrape configuration
-(the three targets, the token, and why the Python pair is measured from the
-caller instead) and the two-level severity policy.
+(five targets since R361, the token, and why the Python pair is *also* measured
+from the caller) and the two-level severity policy.
 
 Nothing on the box scrapes it today. The file is still the written answer to
 "how would we know?", and `alertRulesCensus.test.ts` holds every metric it names
