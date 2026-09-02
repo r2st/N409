@@ -104,7 +104,18 @@ export function registerMfaRoutes(
     if (counter === null || !(await consumeTotpCounter(deps.pool, user.id, counter)))
       throw problems.badRequest('That code is incorrect — check your authenticator and try again');
 
-    const backupCodes = await confirmTotpEnrollment(deps.pool, user.id);
+    const backupCodes = await confirmTotpEnrollment(deps.pool, user.id, user.totp_secret);
+    // The two refusals above, asked again as the write's own predicate and
+    // answered here when it did not apply. `POST /setup` is repeatable and
+    // replaces whatever is staged, so the secret this code was checked against
+    // is not necessarily the one still on the row — see
+    // `confirmTotpEnrollment`. Restarting is the only honest remedy: the code
+    // the caller holds belongs to a QR the account no longer has.
+    if (backupCodes === null)
+      throw problems.conflict(
+        'This enrolment was superseded — the 2FA setup was restarted elsewhere. Open setup again and ' +
+          'scan the new QR code.',
+      );
     await recordAdminEvent(deps.pool, {
       type: 'user_mfa_enabled',
       actor: { actorType: 'human', actorId: user.id },

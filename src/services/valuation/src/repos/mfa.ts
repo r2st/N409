@@ -56,18 +56,59 @@ async function insertBackupCodes(client: pg.ClientBase, userId: string, codes: s
 
 /**
  * Confirm enrolment: enable TOTP and replace the backup-code set. Returns the
- * plaintext backup codes for one-time display (only their hashes are stored).
+ * plaintext backup codes for one-time display (only their hashes are stored),
+ * or null when the staging this attests to is no longer the one on the row.
+ *
+ * PINNED TO THE SECRET THE CODE WAS CHECKED AGAINST (R348, methodology M3).
+ *
+ * `stageTotpSecret` above re-states its route's refusal as the write's own
+ * predicate, under a comment saying why: the answer read on the pool is one a
+ * second request is free to invalidate, and the route's checks — not enabled,
+ * and a secret is staged — are exactly that kind of answer. This write had
+ * none, so both of them could stop being true between the reading and the
+ * enabling.
+ *
+ * The staging is the one that matters. `POST /setup` is deliberately
+ * repeatable and deliberately overwrites whatever was staged — "harmless,
+ * because it isn't enabled until /confirm" — and that is true only while
+ * `/confirm` speaks for the secret it actually verified. Written
+ * unconditionally it did not: a setup committing between this route's read and
+ * this statement left the account enabled on the *new* secret, having proved
+ * possession of the old one. Two tabs of a user's own setup page reach it by
+ * accident and the account is locked out of its own authenticator; a stolen
+ * session reaches it on purpose, and the second factor the victim believes
+ * they just enrolled is the attacker's — which is the one thing enrolling a
+ * second factor is done to prevent.
+ *
+ * The ciphertext read from the row is compared rather than the plaintext, so
+ * this does not depend on `encryptSecret` being deterministic (it is not — see
+ * `auth/mfaCrypto.ts`). It is a pin on the row's own bytes, which is all the
+ * question needs: same bytes, same staging.
+ *
+ * `totp_enabled = false` is in the predicate too, so a confirm that loses to
+ * another confirm is refused rather than re-issuing a second backup-code set
+ * over the one the winner has already shown the user.
  */
-export async function confirmTotpEnrollment(pool: pg.Pool, userId: string): Promise<string[]> {
+export async function confirmTotpEnrollment(
+  pool: pg.Pool,
+  userId: string,
+  stagedSecret: string,
+): Promise<string[] | null> {
   const codes = generateBackupCodes();
-  await withTransaction(pool, async (client) => {
-    await client.query(`UPDATE users SET totp_enabled = true, totp_confirmed_at = now() WHERE id = $1`, [
-      userId,
-    ]);
+  return withTransaction(pool, async (client) => {
+    const { rowCount } = await client.query(
+      `UPDATE users SET totp_enabled = true, totp_confirmed_at = now()
+        WHERE id = $1 AND totp_enabled = false AND totp_secret = $2`,
+      [userId, stagedSecret],
+    );
+    // Nothing enabled, so nothing to issue: the DELETE below would otherwise
+    // throw away a live account's backup codes on behalf of a request that
+    // changed no state at all.
+    if ((rowCount ?? 0) === 0) return null;
     await client.query('DELETE FROM mfa_backup_codes WHERE user_id = $1', [userId]);
     await insertBackupCodes(client, userId, codes);
+    return codes;
   });
-  return codes;
 }
 
 /**

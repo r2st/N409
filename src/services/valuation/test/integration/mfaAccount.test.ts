@@ -200,6 +200,83 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
       expect(res.statusCode).toBe(422);
     });
 
+    it('refuses a confirmation whose staged secret was replaced under it', async () => {
+      /*
+       * R348, the mirror of the `/setup` race above and the more dangerous
+       * half. `/setup` is deliberately repeatable and replaces whatever is
+       * staged — "harmless, because it isn't enabled until /confirm" — which
+       * holds only while `/confirm` speaks for the secret it actually checked.
+       * The enabling UPDATE was unconditional, so a `/setup` landing between
+       * the route's read and that write enabled the account on the *new*
+       * secret: the caller proved possession of a QR the row no longer holds.
+       * Two tabs reach it by accident and lock the account out of its own
+       * authenticator; a stolen session reaches it on purpose and the factor
+       * the victim thinks they enrolled is the attacker's.
+       *
+       * Re-staged from inside the hook, immediately before the enabling
+       * UPDATE — the interleaving itself rather than a simulation of it.
+       */
+      const user = await seedPasswordUser();
+      const first = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/account/mfa/setup',
+        headers: authHeader(user.token),
+      });
+      expect(first.statusCode).toBe(200);
+      const mine = first.json().secret as string;
+
+      let theirs = '';
+      const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+        if (phase !== 'before' || theirs || !sql.includes('totp_enabled = true')) return undefined;
+        const other = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/account/mfa/setup',
+          headers: authHeader(user.token),
+        });
+        theirs = other.json().secret as string;
+        return undefined;
+      });
+      let res;
+      try {
+        res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/account/mfa/confirm',
+          headers: authHeader(user.token),
+          payload: { code: totp(mine) },
+        });
+      } finally {
+        restore();
+      }
+      expect(theirs).not.toBe('');
+      expect(theirs).not.toBe(mine);
+      expect(res.statusCode).toBe(409);
+      expect(res.json().detail).toMatch(/superseded/i);
+      // No backup codes were issued for an enrolment that did not happen.
+      expect(res.json().backup_codes).toBeUndefined();
+
+      // And nothing was enabled: the account is still un-enrolled, holding the
+      // staging that overtook this one.
+      expect((await status(user.token)).json()).toMatchObject({ enabled: false, confirmed_at: null });
+
+      /*
+       * The remedy the message names works. The losing confirm spent its time
+       * step on the way through (`consumeTotpCounter` runs before the enabling
+       * write and is deliberately not undone — a code offered at the login
+       * prompt must not be replayable either), so the counter is cleared here
+       * rather than waiting thirty seconds for the next one.
+       */
+      await ctx.pool.query('UPDATE users SET totp_last_counter = NULL WHERE id = $1', [user.id]);
+      const retry = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/account/mfa/confirm',
+        headers: authHeader(user.token),
+        payload: { code: totp(theirs) },
+      });
+      expect(retry.statusCode).toBe(200);
+      expect(retry.json().backup_codes).toHaveLength((retry.json().backup_codes as string[]).length);
+      expect((await status(user.token)).json()).toMatchObject({ enabled: true });
+    });
+
     it('refuses to confirm when no enrolment was staged', async () => {
       const user = await seedPasswordUser();
       const res = await ctx.app.inject({
