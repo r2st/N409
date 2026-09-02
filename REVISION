@@ -8335,3 +8335,66 @@
 #            `closed_account`. A challenge that is issued and never redeemed —
 #            which is what a phished password looks like from here — leaves no
 #            row on any of the three doors, only a counter.
+#
+# R355 — Computation & arithmetic (M2). Two findings, no migration, 10 new
+#            tests. The round read the arithmetic the platform performs on its
+#            own figures rather than on its inputs, and both findings are the
+#            same shape: a rounding step applied to a quantity that already had
+#            a boundary of its own, and the boundary lost. Fuzzing the
+#            allocation waterfall over four thousand randomised cap tables for
+#            value conservation and per-class monotonicity found nothing, and
+#            the DLOM closed forms, the Longstaff bound, the Hamada levering,
+#            the ASC 360/350 impairment tests, the LP catch-up and the
+#            convertible lattice all reconcile against their published forms.
+#
+#            **A cliff off the cadence grid vested nothing on the day it
+#            cleared.** `vestingStatus` floors the elapsed months to the vesting
+#            cadence so a quarterly grant only vests on quarter boundaries, and
+#            that flooring also swallowed the cliff: `Math.floor(6 / 12) * 12`
+#            is 0, so a 6-month cliff on an annual cadence — or a 12-month cliff
+#            on a 5-month one — reported `cliffCleared: true` and
+#            `vestedShares: 0` on the same object, until the first cadence point
+#            after it. The function's own docstring says the pro-rata amount
+#            vests at once at the cliff. Nothing pairs the two figures at any
+#            writer: the grant routes bound the cliff at 120 months and the
+#            cadence at 12 independently, and `clampScheduleMonths` clamps each
+#            into those ranges for the HRIS importer without relating them, so
+#            every pairing is a storable row. The count is read by the grant
+#            panel, by `exerciseScenarios` and by the auditor workbook's Grants
+#            sheet, whose active-grant total sums it. The cliff is now its own
+#            floor under the cadence rounding, and `vestingTimeline` plots the
+#            cliff month as a point when the cadence does not already supply one
+#            — the "cliff jump" its contract promises.
+#
+#            **The Monte-Carlo cross-check divided an even sample by an odd
+#            count.** `asc718.monteCarloFairValue` draws in antithetic pairs, so
+#            the loop steps by two and pushes two payoffs each time, but the
+#            divisor was the requested `paths`. An odd request summed
+#            `paths + 1` payoffs and divided by `paths`, scaling the estimate by
+#            (paths + 1) / paths — upward, and of the same order as the sampling
+#            error the estimate is quoted at. This function exists to be an
+#            independent check on `blackScholesMerton`, so a disagreement it
+#            reports has to be about the models; `engine/monte_carlo.py` already
+#            counts `count = pairs * 2`, and this now matches it.
+#
+#            gap: `valuationAnalytics.percentileRank` is documented as "the
+#            fraction of values strictly below x" and computes the midrank
+#            (`below + equal / 2`). The midrank is the right convention for the
+#            benchmark panel — it puts a company at the median of its own comp
+#            set at 0.5 rather than below it — so the code is right and the
+#            sentence above it is not.
+#            gap: `financialAnomalies.checkWorkingCapital` states receivables
+#            and payables as "days of that period's revenue" by multiplying the
+#            ratio by 365. Nothing on the grid says a column is a year, so a
+#            quarterly or monthly statement is described in days that are out by
+#            the period length. The threshold the finding fires on is a
+#            multiple of the flow and is unaffected; only the sentence is.
+#            gap: `charts.DonutChart` divides each slice by the sum of *all*
+#            slices while drawing only the positive ones, so a negative slice
+#            would make the ring's arcs total more than a full turn. No caller
+#            supplies one today, which is what makes it worth writing down.
+#            gap: `vestingStatus`'s cliff floor is the schedule's `cliffMonths`,
+#            which is what the row stores. A grant whose cliff was renegotiated
+#            after issue has no second field to say so, and the schedule is a
+#            contract — the platform has no amendment model for any of the three
+#            month figures.
