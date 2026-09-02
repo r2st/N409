@@ -112,4 +112,13 @@ describe('dloc_study_table', () => {
   it('rejects an unrecognised field rather than dropping it', () => {
     expect(ok({ dloc_study_table: [{ ...row, premuim: 0.3 }] }).success).toBe(false);
   });
+
+  /**
+   * R343, M19 — the same refinement `required_return_table` has carried since
+   * it was written, on the three study tables that did not. The exhibit prints
+   * this pair as `from–to` straight into the control-premium evidence table.
+   */
+  it('rejects a period whose ends are the wrong way round', () => {
+    expect(ok({ dloc_study_table: [{ ...row, period_start: 2024, period_end: 2019 }] }).success).toBe(false);
+  });
 });

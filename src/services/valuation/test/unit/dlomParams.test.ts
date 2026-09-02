@@ -124,6 +124,30 @@ describe('dlom_study_table', () => {
     expect(ok({ dlom_study_table: [{ ...row, period_start: 2018.5 }] }).success).toBe(false);
   });
 
+  /**
+   * R343, M19. Each end was bounded on its own and the pair was never
+   * compared, so `{ period_start: 2000, period_end: 1990 }` was a valid row —
+   * one the exhibit prints as "2000–1990" into the evidence table a 409A
+   * conclusion rests on, and one the engine files under two different eras
+   * because `dlom.py` keys the restricted-stock note on `period_start` and the
+   * pre-IPO one on `period_end`.
+   */
+  it('rejects a period whose ends are the wrong way round', () => {
+    expect(ok({ dlom_study_table: [{ ...row, period_start: 2000, period_end: 1990 }] }).success).toBe(false);
+  });
+
+  it('accepts a period of one year, where the ends are equal', () => {
+    expect(ok({ dlom_study_table: [{ ...row, period_start: 1997, period_end: 1997 }] }).success).toBe(true);
+  });
+
+  it('accepts a row that states one end of its period and not the other', () => {
+    // Undated rather than misdated: the engine's own filter reads
+    // `period_start` alone, so half a period is a row it leaves out of the era
+    // note rather than one it gets wrong.
+    expect(ok({ dlom_study_table: [{ ...row, period_start: 1997 }] }).success).toBe(true);
+    expect(ok({ dlom_study_table: [{ ...row, period_end: 1997 }] }).success).toBe(true);
+  });
+
   it('rejects an empty table', () => {
     expect(ok({ dlom_study_table: [] }).success).toBe(false);
   });

@@ -25,6 +25,36 @@ const Weight = z
   });
 
 const Fraction = z.number().min(0).max(1);
+/** A study year on a firm-supplied evidence table. */
+const StudyYear = z.number().int().min(1900).max(2200).optional();
+/**
+ * A study row's period, the right way round.
+ *
+ * The three study tables below each take a `period_start` and a `period_end`
+ * and each bounded them only individually, so `{ period_start: 2000,
+ * period_end: 1990 }` was a valid row. Two things then read it.
+ *
+ * The report does: Exhibit "Control-premium study" and the DLOM study table
+ * both print `${from}–${to}` from these two columns, so an inverted row ships
+ * as "2000–1990" in the evidence table a 409A conclusion rests on.
+ *
+ * And the engine does, differently at each family — `dlom.py` keys the
+ * restricted-stock era note on `period_start` and the pre-IPO one on
+ * `period_end`, each saying in as many words that it is deliberately not the
+ * other. An inverted row is therefore filed under two different eras by the two
+ * blenders, and neither matches the period printed beside it.
+ *
+ * `required_return_table` below already carries exactly this refinement, for
+ * exactly this reason ("a band whose ends are the wrong way round would print
+ * as a range nobody could satisfy"); the study tables were the three that did
+ * not. Only ordering is checked, and only when both ends are given: a row that
+ * states one end and not the other is undated rather than misdated, which is
+ * what the engine's `isinstance(row.get("period_start"), int)` filter already
+ * makes of it.
+ */
+const orderedPeriod = <T extends { period_start?: number; period_end?: number }>(row: T): boolean =>
+  row.period_start === undefined || row.period_end === undefined || row.period_start <= row.period_end;
+const PERIOD_ORDER = { message: 'period_start must not be after period_end' };
 const DateStr = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
@@ -83,10 +113,11 @@ export const ParamsPatchBody = z
           .object({
             study: z.string().min(1).max(200),
             premium: z.number().min(0).max(10),
-            period_start: z.number().int().min(1900).max(2200).optional(),
-            period_end: z.number().int().min(1900).max(2200).optional(),
+            period_start: StudyYear,
+            period_end: StudyYear,
           })
-          .strict(),
+          .strict()
+          .refine(orderedPeriod, PERIOD_ORDER),
       )
       .min(1)
       .max(60)
@@ -118,11 +149,12 @@ export const ParamsPatchBody = z
           .object({
             study: z.string().min(1).max(200),
             discount: z.number().min(0).max(0.99),
-            period_start: z.number().int().min(1900).max(2200).optional(),
-            period_end: z.number().int().min(1900).max(2200).optional(),
+            period_start: StudyYear,
+            period_end: StudyYear,
             statistic: z.enum(['median', 'mean']).optional(),
           })
-          .strict(),
+          .strict()
+          .refine(orderedPeriod, PERIOD_ORDER),
       )
       .min(1)
       .max(60)
@@ -139,11 +171,12 @@ export const ParamsPatchBody = z
           .object({
             study: z.string().min(1).max(200),
             discount: z.number().min(0).max(0.99),
-            period_start: z.number().int().min(1900).max(2200).optional(),
-            period_end: z.number().int().min(1900).max(2200).optional(),
+            period_start: StudyYear,
+            period_end: StudyYear,
             statistic: z.enum(['median', 'mean']).optional(),
           })
-          .strict(),
+          .strict()
+          .refine(orderedPeriod, PERIOD_ORDER),
       )
       .min(1)
       .max(60)

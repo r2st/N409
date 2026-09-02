@@ -396,6 +396,38 @@ describe('ParamsPanel — DLOC study selection', () => {
   });
 
   /**
+   * R343, M19 — each end of the period was bounded on its own and the pair was
+   * never compared, so 2000–1990 passed here and at the route. The exhibit
+   * prints `from–to` verbatim into the evidence table, and the engine keys the
+   * restricted-stock era note on `period_start` and the pre-IPO one on
+   * `period_end` — so an inverted row lands in two different decades depending
+   * on which blender reads it.
+   */
+  it('refuses a period whose ends are the wrong way round', async () => {
+    const patched = await openCustomRs();
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-study'), 'Ours');
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-value'), '0.3');
+    await userEvent.type(screen.getByLabelText('From 1'), '2000');
+    await userEvent.type(screen.getByLabelText('To 1'), '1990');
+
+    expect(screen.getByText(/the period runs from 2000 to 1990/)).toBeInTheDocument();
+    await userEvent.click(saveButton());
+    expect(patched).toHaveLength(0);
+  });
+
+  it('accepts a one-year period, where the ends are equal', async () => {
+    const patched = await openCustomRs();
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-study'), 'Ours');
+    await userEvent.type(screen.getByTestId('dlom-studies-row-0-value'), '0.3');
+    await userEvent.type(screen.getByLabelText('From 1'), '1997');
+    await userEvent.type(screen.getByLabelText('To 1'), '1997');
+
+    expect(screen.queryByText(/check the order/)).toBeNull();
+    await userEvent.click(saveButton());
+    expect(patched).toHaveLength(1);
+  });
+
+  /**
    * `tableForApi` drops a row with no study name, and nothing refused it: the
    * discount on that row was left out of the request while the page went on
    * showing it, so the concluded statistic was struck over a shorter table.

@@ -346,6 +346,23 @@ export function studyTableProblem(table: CustomStudyRow[] | null, valueKey: Stud
         return `"${row.study.trim()}": ${key === 'period_start' ? 'from' : 'to'} must be a year.`;
       }
     }
+    /*
+     * And the right way round (round 343, methodology M19).
+     *
+     * Each end was bounded on its own, so 2000–1990 passed here and at the
+     * route, and both readers of the pair took it: the exhibit prints
+     * `from–to` verbatim into the evidence table a 409A conclusion rests on,
+     * and the engine files the row under an era keyed on `period_start` for
+     * restricted stock and on `period_end` for pre-IPO — so an inverted row
+     * lands in two different decades depending on which blender reads it.
+     * Said here as well as at the route for the reason the rest of this
+     * function exists: the analyst should be told at the field.
+     */
+    const from = row.period_start.trim();
+    const to = row.period_end.trim();
+    if (from !== '' && to !== '' && Number(from) > Number(to)) {
+      return `"${row.study.trim()}": the period runs from ${from} to ${to} — check the order.`;
+    }
   }
   return null;
 }
