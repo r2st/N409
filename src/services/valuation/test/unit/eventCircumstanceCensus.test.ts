@@ -156,6 +156,9 @@ describe('the spine states no circumstance nobody can read', () => {
     expect(discriminators.map((d) => `${d.file}: ${d.key}`)).toContain(
       'repos/pipelineRuns.ts: retry_scheduled',
     );
+    // And the whole-key census the pair rule below runs over, which is a
+    // different list: `document_refiled` carries no discriminator at all.
+    expect(payloads.map((p) => `${p.file}: ${p.key}`)).toContain('repos/documents.ts: document_id');
   });
 
   it('classifies every discriminator a repo writes', () => {
@@ -178,6 +181,23 @@ describe('the spine states no circumstance nobody can read', () => {
     const written = new Set(discriminators.map((d) => d.key));
     const orphans = [...noted].filter((flag) => !written.has(flag)).sort();
     expect(orphans).toEqual([]);
+  });
+
+  it('spells a before/after pair the one way the reader parses', () => {
+    /*
+     * The other half of the same failure. `extractChanges` reads four payload
+     * shapes; `document_refiled` wrote a fifth — `from_category`/`to_category`
+     * and `from_kind`/`to_kind` — so the two pairs a re-file consists of
+     * reached no reader, and the change log emitted no row for the event at
+     * all. A `from_x` with a matching `to_x` is a change list spelled in a way
+     * nothing renders, and it costs nothing to spell it the way that works.
+     *
+     * `from_number` on the clone event is not one: it names the engagement the
+     * copy came from, beside `from`, and has no `to_number`.
+     */
+    const keys = new Set(payloads.map((p) => p.key));
+    const pairs = [...keys].filter((key) => key.startsWith('from_') && keys.has(`to_${key.slice(5)}`)).sort();
+    expect(pairs).toEqual([]);
   });
 
   it('argues its inert list against something that exists', () => {

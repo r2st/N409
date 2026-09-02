@@ -178,12 +178,15 @@ describe.skipIf(!dbUp)('document triage queue', () => {
         ORDER BY occurred_at DESC LIMIT 1`,
       [valuationId],
     );
+    // A change list, so the trail and the change log CSV render it — four
+    // `from_`/`to_` keys were a spelling `extractChanges` does not read, and
+    // the export emitted no row for the event (round 389).
     expect(rows[0].payload).toMatchObject({
       document_id: doc.id,
-      from_category: 'uploads',
-      to_category: 'board_resolutions',
-      from_kind: 'other',
-      to_kind: 'other',
+      changes: {
+        category: { from: 'uploads', to: 'board_resolutions' },
+        kind: { from: 'other', to: 'other' },
+      },
     });
   });
 

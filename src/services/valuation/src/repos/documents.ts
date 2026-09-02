@@ -350,13 +350,20 @@ export async function refileDocument(
       valuationId: doc.valuation_id,
       type: PIPELINE_EVENT_TYPES.documentRefiled,
       actor,
+      // A change list rather than four `from_`/`to_` keys (round 389,
+      // methodology M4). `extractChanges` reads `changes`, a bare `from`/`to`
+      // pair, `fields` and `engine_inputs_applied`; this was a fifth spelling
+      // of the first, so the two pairs a re-file is entirely made of reached
+      // neither the trail nor the change log — the CSV emitted no row for the
+      // event at all, and "was this document reclassified, and from what?" is
+      // the only question asked of it.
       payload: {
         document_id: doc.id,
         filename: doc.filename,
-        from_category: doc.category,
-        to_category: target.category,
-        from_kind: doc.kind,
-        to_kind: target.kind,
+        changes: {
+          category: { from: doc.category, to: target.category },
+          kind: { from: doc.kind, to: target.kind },
+        },
       },
     });
     return rows[0]!;

@@ -512,6 +512,23 @@ describe('describeEvent', () => {
     expect(enriched.summary).toBe('Value: 0.2 \u2192 0.25');
   });
 
+  it('renders a document re-file as the two pairs it is', () => {
+    const enriched = describeEvent({
+      ...event({ type: 'document_refiled' }),
+      payload: {
+        document_id: '01HDOC',
+        filename: 'Board Consent March.pdf',
+        changes: {
+          category: { from: 'uploads', to: 'board_resolutions' },
+          kind: { from: 'other', to: 'board_consent' },
+        },
+      },
+    });
+    expect(enriched.summary).toBe(
+      'Category: uploads \u2192 board_resolutions, Kind: other \u2192 board_consent',
+    );
+  });
+
   it('says which way a pipeline toggle went', () => {
     // Not a circumstance — a value that moved, and therefore a change list.
     // `{ enabled: false }` reached the trail as a bare label, on the one row
