@@ -186,7 +186,40 @@ async function deliver(
     const fallback = new Set(await listUserIdsWithRoles(deps.pool, CLIENT_MESSAGE_ROLES));
     ({ ids: live, users } = await liveRecipients(deps.pool, fallback, authorId));
   }
-  if (live.length === 0) return;
+  /*
+   * Nobody left to tell, said out loud (round 360, methodology M5).
+   *
+   * The fallback above exists because "a client's message must not land
+   * nowhere" — and when the fallback *itself* resolves to nobody, this returned
+   * in exactly the silence that rule was written against. `POST /comments`
+   * still answered 201, the SSE frame still went out to whoever had the tab
+   * open, and the only record that a client's question reached no human at all
+   * was its absence from a notification list.
+   *
+   * Reachable in one deployment shape and one accident: every `admin` / `god` /
+   * `supervisor` account soft-deleted or `ignored` (`findUsersByIds` subtracts
+   * both), and an engagement whose owner has been closed since. The first is
+   * the small firm whose one administrator left; the second is ordinary.
+   *
+   * `alert` only for a client's message, which is the half with somebody
+   * waiting on the other end. An internal `note` on a file whose reviewer has
+   * gone reaching nobody is the documented behaviour of the branch above — it
+   * is still worth a line, because the note's author believes it was
+   * delivered, but it is not worth waking anyone.
+   */
+  if (live.length === 0) {
+    deps.log?.warn(
+      {
+        valuationId: valuation.id,
+        commentId: comment.id,
+        kind: comment.kind,
+        fromClient: fromClient(valuation, comment),
+        alert: fromClient(valuation, comment),
+      },
+      'comment notification reached nobody — every intended recipient is closed or suspended',
+    );
+    return;
+  }
 
   const prefs = await preferenceOverrides(deps.pool, live);
   const recipients = live.filter((id) => channelsFor(prefs, id, COMMENT_NOTIFICATION_TYPE).in_app);

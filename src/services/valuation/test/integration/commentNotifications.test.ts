@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Writable } from 'node:stream';
+import { pino } from 'pino';
 import type pg from 'pg';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -248,5 +250,44 @@ describe.skipIf(!dbUp)('comment notifications', () => {
     await post(id, reviewer.token, 'chat', 'Here is the answer to your question.');
     expect(await notifications(owner.id, id)).toHaveLength(0);
     expect(await notifications(ops.id, id)).toHaveLength(0);
+  });
+
+  /*
+   * Round 360 (M5). Every branch above ends in `live.length === 0 ? return`,
+   * and until this round that return was the whole of the record: the route
+   * answered 201, the SSE frame went out, and "this message reached no human"
+   * was readable only as an absence from a list nobody was looking at.
+   */
+  it('says so when the message reaches nobody at all', async () => {
+    const lines: Array<Record<string, unknown>> = [];
+    (ctx.app.log as unknown as Record<symbol, unknown>)[pino.symbols.streamSym] = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        cb();
+      },
+    });
+    // `setupTestApp` runs the logger silent, which is the state that hid this.
+    const before = ctx.app.log.level;
+    ctx.app.log.level = 'warn';
+    try {
+      const { id, owner } = await engagement({ assign: true });
+      await suspend(owner.id);
+      await post(id, reviewer.token, 'chat', 'Here is the answer to your question.');
+
+      const said = lines.find(
+        (l) =>
+          l.msg ===
+          'comment notification reached nobody — every intended recipient is closed or suspended',
+      );
+      expect(said).toBeDefined();
+      expect(said!.valuationId).toBe(id);
+      expect(said!.kind).toBe('chat');
+      // An analyst's reply, so nobody is waiting on the other end of it: the
+      // line is worth writing and not worth waking anyone.
+      expect(said!.fromClient).toBe(false);
+      expect(said!.alert).toBe(false);
+    } finally {
+      ctx.app.log.level = before;
+    }
   });
 });
