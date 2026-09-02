@@ -7485,3 +7485,156 @@
 #            is no record anywhere that the key was refused at all. The refusal is
 #            a 403 with no counter and no audit row, so a firm whose integration
 #            went dark for a day has nothing on this side to join it to.
+
+# R345 — Observability & monitoring (M11). Four findings. Two are an instrument
+#            with no reader, one is a reader with the wrong audience, and the
+#            fourth is what the third made true.
+#
+#            **The kernel memory events written as the early warning warned
+#            nobody.** `cgroupMemory.ts` reads cgroup v2's `memory.events` and
+#            exports its five counters with an argument for why they are the ones
+#            worth having: "`high` counts times the cgroup was throttled at
+#            `MemoryHigh`, `max` counts times an allocation was about to breach
+#            `MemoryMax` and reclaim was forced ... the first two are the early
+#            warning; they tick long before anything dies". `infra/DEPLOYMENT.md`
+#            repeats it — "both tick long before anything dies and are the actual
+#            early warning". All three Node units register the family. No rule in
+#            `alerts.yml` named the metric at all.
+#
+#            `MemoryNearCgroupLimit` does not cover it and is not meant to. That
+#            rule samples an instantaneous ratio and requires ten consecutive
+#            minutes of it, so it sees a unit that grows into its ceiling and
+#            sits there. The failure this estate actually has is the other shape
+#            — a report render or a workbook import allocating hard inside one
+#            request — where the cgroup forces reclaim and the request or the
+#            unit dies between two fifteen-second scrapes, with the ratio never
+#            observed above 0.9 for ten minutes running. The events counters are
+#            monotonic within a process lifetime, so one scrape after the event
+#            sees it; that is the whole difference between an instrument that
+#            catches this and one that does not.
+#
+#            Three rules: `max` (page, the kill is next), `high` (ticket, the
+#            sizing conversation) and `oom_kill` (page) for the case nothing else
+#            can catch — the cgroup OOM handler picks a *process*, not a service,
+#            so a killed child leaves the unit up and healthy on every other
+#            instrument. `increase(...)` for the first two rather than `> 0`,
+#            because the counters reset only on restart and a bare comparison
+#            holds the alert open for a month after one touch at boot.
+#            `alertRulesCensus.test.ts` gains a sixth direction held against the
+#            exported `CGROUP_MEMORY_EVENTS`, so an event added to that constant
+#            arrives with the case red until somebody decides whether it is worth
+#            waking for; `low` and `oom` are excluded and argued in place.
+#
+#            **The last machine door refused integrations with nothing anywhere
+#            saying so.** Every other machine-facing door on this platform was
+#            instrumented in turn and for the same reason — inbound webhooks and
+#            both SSO flows in R329, the directory connector in R337, the three
+#            OAuth connect callbacks in R341 — and the argument each time is
+#            `scimRequests.ts`'s: `registerProblemHandler` leaves 4xx unlogged on
+#            purpose, which is right for a browser and wrong for the one caller
+#            that is a machine and cannot tell anybody it is being turned away.
+#
+#            The API key was the door left, and it is the one this estate itself
+#            calls "the door with no person behind it to notice". `plugins/auth.ts`
+#            answered a refused key with one `problems.unauthorized(...)`: no log
+#            line, no event row, a 401 in the same 4xx class as every mistyped
+#            password on the box. A firm's integration stopped dead, the firm
+#            could not find out why — for `orphaned` and `partner_retired` the
+#            console it would look in is behind the same key — and this side had
+#            nothing saying it had happened.
+#
+#            R342 is what makes that urgent rather than tidy. Three of the five
+#            refusals the credential layer can now give are conditions this
+#            platform caused: an administrator archived the firm, moved the
+#            member who minted the key out of it, or closed their account. Each
+#            is a deliberate act about a person or an organisation whose side
+#            effect is that an unattended integration reading cap tables and
+#            creating engagements simply stops.
+#
+#            `api_token_auth_total{outcome}` over `ApiTokenRefusal` plus
+#            `accepted` — the union itself rather than a second spelling, so a
+#            sixth refusal cannot reach the metric without being given a sentence
+#            first. One series per outcome and no partner label, the choice
+#            `scimRequests.ts` argues; which key and which firm ride the `warn`
+#            line, so `refusalFor` now returns the row it is refusing. `unknown`
+#            is counted and not logged, for the reason SCIM's `unauthenticated`
+#            is not: this API faces the internet and a scanner must not choose
+#            how much the box logs. Not an event row either —
+#            `identityAuditCensus.test.ts` had already settled that a write per
+#            API call is an access log, not an audit trail.
+#            `PartnerIntegrationLockedOut` fires on the three we caused and
+#            deliberately not on `revoked` or `unknown`, and the test holds the
+#            rule's selector to `SELF_INFLICTED_REFUSALS` so the judgement cannot
+#            drift out of either half. A follow-up commit corrected the log line's
+#            field names to the correlation mixin's `partnerId`/`apiTokenId`: a
+#            second spelling would have hidden this refusal from the exact filter
+#            somebody runs to find it, which is this module's own failure mode one
+#            level down.
+#
+#            **QA knew a schedule was missing and told the journal instead of the
+#            reviewer.** R344 gave a schedule that failed to build a reader after
+#            it had none — `buildExhibits` returns what it built and keeps no
+#            record of what it did not, so an appendix that threw was
+#            indistinguishable from one that never applied and the deliverable
+#            shipped short with the render reporting success. The reader it got
+#            was `req.log`, threaded to all four call sites.
+#
+#            That is right for three of them: a render is a machine finishing a
+#            document and nobody is standing over it. The fourth is the QA route,
+#            whose whole purpose is the opposite — its own docstring says "one
+#            place says whether this valuation may go out, and a reviewer reads
+#            one list" — and it was building the exhibits, being told which had
+#            failed, and writing that to a channel the reviewer does not read.
+#            The failure it can see is a stored `required_return_table` that will
+#            not parse, whose remedy is a row in that firm's own params; the log
+#            line goes to an operator who does not know it is missing from
+#            anything. `summaryFor` returns the issues as well as logging them
+#            and the review carries `report_schedules`, `warn` rather than
+#            `fail` at the level R344 argued and for the same reason: the report
+#            is correct in everything it prints, and whether a missing appendix
+#            is worth holding publication for is the reviewer's call. Not folded
+#            into `report_coherence`, which grades the body against the schedules
+#            that exist and would find this only if a chapter happened to point
+#            at the missing one.
+#
+#            **And the reason became publishable the moment it got that reader.**
+#            `errorMessageQuality.test.ts` had been red since R344 for the idiom
+#            `err instanceof Error ? err.message : String(err)` on the reason,
+#            and `errorBodyDisclosure`'s rule is that an error's own wording
+#            reaches a person only when something vouched for it. As a log line
+#            the objection was structural; on a QA review it is not.
+#            `requiredReturns.ts` gains `RequiredReturnTableError`, every refusal
+#            it raises is one of its own sentences naming a field and a rule, and
+#            anything else escaping `requiredReturnRows` is reported as a
+#            category rather than quoted. The useful case is unchanged: a band
+#            with `low` above `high` still tells the reviewer which row to fix.
+#
+#            Also repaired, found while adding the QA case: `deterministic checks
+#            fail an indefensible calculation` has been red since `f31bfd2e`. It
+#            asked the calculations route for a run with the discount rate below
+#            terminal growth, and that route was later taught to refuse exactly
+#            that pair. The check is still live and still right —
+#            `discount_vs_growth` reads the stored inputs, and the rows it exists
+#            for are the ones that predate the validation — so the test builds
+#            one of those, which is the only way it is reachable now.
+#
+#            gap: nothing on the box scrapes `alerts.yml`. `infra/DEPLOYMENT.md`
+#            says so plainly, and it means every rule this round added is the
+#            written answer to "how would we know?" rather than a page anybody
+#            will receive. Installing a scraper is the one change that turns
+#            three dozen instruments into monitoring, and it is infrastructure
+#            work rather than a code round.
+#            gap: the AI and engine tiers still expose no `/metrics`, so this
+#            round's neighbours in that tier — `llm_prose_fallback`,
+#            `xlsx_sheets_unreadable`, `documents_unreadable` — are structurally
+#            unalertable however well they are written. R313's open item.
+#            gap: `apiKeyGuard`'s own two refusals are still silent. A suspended
+#            account's key (R342) and a personal token presented to the partner
+#            API are refused a layer above the credential resolution, and folding
+#            them into `api_token_auth_total` would mix two populations under one
+#            `accepted` denominator. They want their own instrument or a labelled
+#            split, and this round did not make that call.
+#            gap: `realtime_streams_open` and `report_render_duration_seconds`
+#            are exported and read by no rule. Both are plausibly context rather
+#            than a page, which is the judgement the census deliberately declines
+#            to force — but neither has been argued either way in writing.
