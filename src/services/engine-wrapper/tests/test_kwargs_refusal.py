@@ -282,3 +282,75 @@ def test_the_engine_s_own_validation_still_owns_the_messages_it_writes():
 
         compute_wacc(target_debt_to_equity=0.3)
     assert "comparable_betas" in str(caught.value)
+
+
+# ── the cost of a name nobody could have meant (round 385, methodology M8) ───
+
+
+def test_an_unmeetable_length_is_settled_without_building_difflib_s_index():
+    """`get_close_matches` indexes its query before it compares anything.
+
+    `SequenceMatcher.set_seq2` walks the whole query building a position list
+    per distinct character, and the query is a key off the caller's own JSON
+    object — bounded only by the 8 MB request-body ceiling. A 1 MB name cost
+    249 ms and 40 MB of peak heap to conclude what two integers conclude, and
+    `MAX_NAMED` of them are asked per refusal.
+
+    Counted rather than timed: the module reaches `difflib` through its own
+    import, so patching the attribute records every call the clause makes.
+    Against the pre-fix source this reads 1.
+    """
+    import difflib as difflib_mod
+
+    from app.engine import kwargs_refusal as mod
+
+    calls = 0
+    real = difflib_mod.get_close_matches
+
+    def counting(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real(*args, **kwargs)
+
+    original = difflib_mod.get_close_matches
+    difflib_mod.get_close_matches = counting
+    try:
+        said = mod._unknown_clause(["z" * 200_000], ["alpha", "beta", "gamma"])
+    finally:
+        difflib_mod.get_close_matches = original
+    assert calls == 0
+    assert "did you mean" not in said
+
+    # The discriminator: a name that *could* be a misspelling still gets asked,
+    # so this is a length rule rather than a switched-off feature.
+    difflib_mod.get_close_matches = counting
+    try:
+        said = mod._unknown_clause(["alpah"], ["alpha", "beta", "gamma"])
+    finally:
+        difflib_mod.get_close_matches = original
+    assert calls == 1
+    assert "did you mean 'alpha'?" in said
+
+
+@pytest.mark.parametrize("longest", [1, 4, 12, 30, 64])
+def test_the_length_rule_never_hides_a_match_difflib_would_have_made(longest):
+    """The pruning is `difflib`'s own first test, applied earlier.
+
+    `real_quick_ratio` bounds a pair at `2 * min(la, lb) / (la + lb)` from the
+    two lengths alone, so beyond `longest * (2 - cutoff) / cutoff` no accepted
+    name is reachable whatever its characters are. Asserted against `difflib`
+    itself over every length either side of the boundary: nothing it would have
+    matched may be pruned.
+    """
+    import difflib as difflib_mod
+
+    from app.engine.kwargs_refusal import NEAR_MISS_CUTOFF, _too_long_to_match
+
+    accepted = ["a" * longest, "b" * max(1, longest - 3)]
+    for length in range(1, longest * 4 + 4):
+        name = "a" * length
+        pruned = _too_long_to_match(length, longest)
+        matched = bool(
+            difflib_mod.get_close_matches(name, accepted, n=1, cutoff=NEAR_MISS_CUTOFF)
+        )
+        assert not (pruned and matched), f"pruned a match at length {length}"

@@ -111,3 +111,44 @@ def test_the_two_tiers_agree_on_the_acted_on_range_and_the_bound():
     assert "code === 0x2028 || code === 0x2029" in ts
     twin_max = re.search(r"const MAX_QUOTED_CHARS = (\d+)", ts)
     assert twin_max and int(twin_max.group(1)) == MAX_QUOTED_CHARS
+
+
+def test_the_walk_stops_at_the_bound_rather_than_at_the_end_of_the_value(monkeypatch):
+    """The work is the bound's size, not the caller's (round 385, methodology M8).
+
+    Asserted as machinery rather than as output, because the output is
+    identical either way — that is the whole point of the change, and it is
+    also why nothing already here could see the defect. The pre-fix walk
+    examined every character of an 8 MB name to keep 81 of them, at 845 ms of a
+    GIL-held loop, on the *success* path of the cap-table, fund and rollforward
+    entry points.
+
+    `is_acted_on_control` is asked exactly once per character the walk reaches
+    (it is the left arm of an `or`), so counting the calls counts the walk.
+    Run against the pre-fix source this reads 200_000.
+    """
+    import app.engine.display_text as mod
+
+    reached = 0
+    real = mod.is_acted_on_control
+
+    def counting(ch: str) -> bool:
+        nonlocal reached
+        reached += 1
+        return real(ch)
+
+    monkeypatch.setattr(mod, "is_acted_on_control", counting)
+    assert mod.quote_for_message("x" * 200_000) == "x" * MAX_QUOTED_CHARS + "…"
+    assert reached == MAX_QUOTED_CHARS + 1
+
+
+def test_a_value_that_fits_is_still_walked_whole():
+    """The discriminator: a reader that merely stopped early would pass above.
+
+    Nothing may be dropped from a value short enough to print in full, and a
+    dropped control does not spend any of the bound.
+    """
+    assert quote_for_message("x" * MAX_QUOTED_CHARS) == "x" * MAX_QUOTED_CHARS
+    # 200 reordering controls in front of the text buy no room and cost no
+    # characters of the answer: the bound is over what is kept.
+    assert quote_for_message("‮" * 200 + "y" * 10) == "y" * 10

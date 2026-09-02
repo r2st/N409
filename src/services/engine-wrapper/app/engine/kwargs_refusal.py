@@ -75,6 +75,26 @@ def _listed(names: Sequence[str]) -> str:
     return listed
 
 
+# How alike two names must be before one is offered as what the other meant.
+NEAR_MISS_CUTOFF = 0.7
+
+
+def _too_long_to_match(length: int, longest_accepted: int) -> bool:
+    """Whether no accepted name can reach ``NEAR_MISS_CUTOFF`` against this one.
+
+    ``difflib`` scores a pair at most ``2 * min(la, lb) / (la + lb)`` — its own
+    ``real_quick_ratio``, which is the first of the three tests
+    ``get_close_matches`` applies and depends on nothing but the two lengths.
+    Rearranged for the longer side: a candidate beyond
+    ``longest * (2 - cutoff) / cutoff`` is out of reach of every accepted name,
+    whatever its characters are. So the answer is the answer ``difflib`` would
+    have given, arrived at before its query index is built rather than after.
+    """
+    if longest_accepted <= 0:
+        return True
+    return length > longest_accepted * (2 - NEAR_MISS_CUTOFF) / NEAR_MISS_CUTOFF
+
+
 def _unknown_clause(unknown: Sequence[str], accepted: Sequence[str]) -> str:
     """The names this calculation does not have, quoted back at the caller.
 
@@ -87,10 +107,22 @@ def _unknown_clause(unknown: Sequence[str], accepted: Sequence[str]) -> str:
     calculation might have meant is about the bytes sent, not about their
     display form — and only the accepted name it finds is printed, which came
     from a signature here. See :mod:`app.engine.display_text`.
+
+    A NAME TOO LONG TO BE A MISSPELLING IS NOT OFFERED TO ``difflib`` AT ALL
+    (round 385, methodology M8). ``get_close_matches`` indexes its query before
+    it compares anything — ``SequenceMatcher.set_seq2`` builds a position list
+    per distinct character of the whole string — and the query here is a key
+    off the caller's own JSON object, bounded only by the 8 MB body ceiling.
+    One 1 MB name cost 249 ms and 40 MB of peak heap to conclude what
+    :func:`_too_long_to_match` concludes from two integers, and ``MAX_NAMED``
+    of them are asked per refusal.
     """
     parts = []
+    longest = max((len(a) for a in accepted), default=0)
     for name in unknown[:MAX_NAMED]:
-        near = difflib.get_close_matches(name, accepted, n=1, cutoff=0.7)
+        near = [] if _too_long_to_match(len(name), longest) else difflib.get_close_matches(
+            name, accepted, n=1, cutoff=NEAR_MISS_CUTOFF
+        )
         shown = quote_for_message(name)
         parts.append(f"no input named '{shown}'" + (f" (did you mean '{near[0]}'?)" if near else ""))
     hidden = len(unknown) - len(parts)

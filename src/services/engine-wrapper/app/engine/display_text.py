@@ -74,15 +74,30 @@ def quote_for_message(value: str, max_chars: int = MAX_QUOTED_CHARS) -> str:
     That is the failure worth naming — an input called
     ``q'; Accepted inputs: password`` produced a refusal carrying a second,
     caller-written "Accepted inputs" clause, in front of the real one.
+
+    THE WALK STOPS WHERE THE ANSWER DOES (round 385, methodology M8). The bound
+    is on what the sentence keeps, and it used to be applied after every
+    character of the value had been examined and appended — so the *work* was
+    the caller's length rather than ``max_chars``. That is not a refusal-only
+    path: `waterfall._normalise_classes` quotes a class name for every one of
+    the 200 classes it accepts, `fund_valuation` one per position and
+    `rollforward` one per adjustment, all on the way to a successful answer.
+    At the 8 MB body ceiling one name cost **845 ms** of a GIL-held loop to
+    produce 81 characters. One character past the bound is proof the bound
+    applies, so the loop stops there; every input maps to zero or one output
+    characters, which is what makes the early stop the same answer.
     """
-    cleaned = []
+    cleaned: list[str] = []
+    over = False
     for ch in value:
         if ch in BIDI_CONTROLS:
             continue
         cleaned.append("?" if is_acted_on_control(ch) or ch in ("'", '"') else ch)
-    out = "".join(cleaned)
-    if not out:
+        if len(cleaned) > max_chars:
+            over = True
+            break
+    if over:
+        return "".join(cleaned[:max_chars]) + "…"
+    if not cleaned:
         return "(unnamed)"
-    if len(out) <= max_chars:
-        return out
-    return out[:max_chars] + "…"
+    return "".join(cleaned)
