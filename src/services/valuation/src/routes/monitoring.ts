@@ -380,6 +380,29 @@ export function registerMonitoringRoutes(
      * that a trigger which fires is announced.
      */
     const unsent: Array<{ valuation_id: string; trigger: string; failure_reason: string }> = [];
+    /**
+     * Triggers that fired, were recorded, and had nobody to be sent to.
+     *
+     * WHY THIS IS SEPARATE FROM BOTH COUNTS ABOVE (R353, methodology M11). The
+     * email goes to `valuation.assigned_reviewer_id`, and an engagement can be
+     * monitored without one — monitoring is enabled on a *completed* valuation,
+     * which is exactly when a reviewer is likeliest to have been unassigned, or
+     * to have left and had their account closed, which drops them from the
+     * `reviewers` batch here too.
+     *
+     * The alert row is the suppressor and it is already committed by the time
+     * the recipient is looked at, so the signature is marked handled and no
+     * later scan will fire it again. `alerts_sent` counted the sends that
+     * happened, `unsent` collected the ones something *threw* on, and this case
+     * threw nothing: the scan returned a healthy pair of numbers and the trigger
+     * — a safe-harbor expiry, a funding round, a material revenue move — reached
+     * nobody at all, permanently.
+     *
+     * Reported rather than re-fired. The row is deliberately left in place:
+     * re-firing on every scan would announce it to the same nobody, and the
+     * remedy is a person assigning a reviewer, which is what this list is for.
+     */
+    const unrouted: Array<{ valuation_id: string; trigger: string }> = [];
     // Paged, not capped: a trigger that fires and is never emailed is the
     // failure the monitor exists to prevent, and a capped scan would still
     // report a healthy-looking count.
@@ -497,6 +520,25 @@ export function registerMonitoringRoutes(
                 payload: { trigger: t.type, level: t.level, signature: t.signature },
               }),
             );
+            if (!reviewer) {
+              // Written where the send would have been, so the line and the
+              // list say the same thing about the same trigger. `warn`, not
+              // `error`: nothing failed and nothing is retried — the platform
+              // did what it was asked and there was no one to tell, which is a
+              // conversation with whoever owns the engagement rather than a
+              // page.
+              app.log.warn(
+                {
+                  monitorId: m.id,
+                  valuationId: m.valuation_id,
+                  trigger: t.type,
+                  level: t.level,
+                  company: m.company_name,
+                },
+                'monitor trigger fired on an engagement with no assigned reviewer — it is recorded, nobody was told, and no later scan will fire it again',
+              );
+              unrouted.push({ valuation_id: m.valuation_id, trigger: t.type });
+            }
             if (reviewer) {
               await sendTransactionalEmail(
                 { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
@@ -547,7 +589,14 @@ export function registerMonitoringRoutes(
         }
       }
     }
-    return { scanned, alerts_sent: alertsSent, unsent_count: unsent.length, unsent };
+    return {
+      scanned,
+      alerts_sent: alertsSent,
+      unsent_count: unsent.length,
+      unsent,
+      unrouted_count: unrouted.length,
+      unrouted,
+    };
   });
 
   // One-click roll-forward into a fresh valuation pre-populated from this one.
