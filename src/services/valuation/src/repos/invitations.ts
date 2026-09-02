@@ -128,6 +128,43 @@ export async function listInvitations(
   return { invitations: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+/**
+ * What makes an invitation still redeemable, in one place.
+ *
+ * Not only the row's own three columns. An invitation carries a `partner_id`
+ * and redeeming it *creates* the seat, so the firm has to still be one:
+ * `assertAssignablePartner` in `routes/adminUsers.ts` refuses to mint an
+ * invitation into an archived partner, under a comment reading "new partner
+ * assignments must reference a live (non-archived) partner" — and that is a
+ * question asked once, seven days before the assignment actually happens, on a
+ * flag an administrator can set in between.
+ *
+ * `revokeInvitationsFrom` is this same shape one subject over and its comment
+ * is the argument in full: an invitation is authority written down and posted,
+ * redeemable for a week by whoever holds the link, and it "cannot be revoked by
+ * any of the mechanisms that end a person's access". Archiving a firm is the
+ * mechanism that ends a *firm's* — R342 closed the doors a person walks through
+ * (user assignment, branding, intake links, API keys, webhook fan-out) and this
+ * is the one with nobody signed in on the other side of it. Left open, a
+ * withdrawn firm's outstanding invitations went on creating live accounts under
+ * it, with the partner roles the invitation named and a console session to use
+ * them from.
+ *
+ * Refused rather than revoked, for the reason R342 gives about the API key:
+ * archiving is a boolean an administrator can set back, and a link in an
+ * inbox is not something to destroy on their behalf. The row stays pending,
+ * stays listed, and stays revocable from the console.
+ *
+ * Applied to the two redemption readers and deliberately not to
+ * `hasPendingInvitation` or `listInvitations`: those answer "is this address
+ * spoken for", which the partial unique index settles on its own terms, and an
+ * invitation this hides from them is one the console could no longer show an
+ * administrator or offer a revoke control against.
+ */
+const LIVE_PARTNER_SQL = `(user_invitations.partner_id IS NULL
+       OR EXISTS (SELECT 1 FROM partners p
+                   WHERE p.id = user_invitations.partner_id AND p.archived_at IS NULL))`;
+
 /** Pending (unaccepted, unrevoked, unexpired) invitation for a presented token. */
 export async function findPendingInvitationByToken(
   pool: pg.Pool,
@@ -135,7 +172,8 @@ export async function findPendingInvitationByToken(
 ): Promise<InvitationRow | null> {
   const { rows } = await pool.query<InvitationRow>(
     `SELECT ${RETURNING} FROM user_invitations
-     WHERE token_sha256 = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
+     WHERE token_sha256 = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+       AND ${LIVE_PARTNER_SQL}`,
     [hashToken(rawToken)],
   );
   return rows[0] ?? null;
@@ -228,6 +266,7 @@ export async function acceptInvitation(
     const { rows } = await client.query<InvitationRow>(
       `UPDATE user_invitations SET accepted_at = now()
        WHERE token_sha256 = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+         AND ${LIVE_PARTNER_SQL}
        RETURNING ${RETURNING}`,
       [hashToken(args.rawToken)],
     );
