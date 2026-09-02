@@ -207,7 +207,12 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     try {
       await audit(args);
     } catch (err) {
-      log.warn({ err, type: args.type }, 'billing audit event not recorded');
+      // `logUnretried` (R352, M5). The containment above is right and stays;
+      // what was wrong is the level. The session exists at Stripe, the caller
+      // is being redirected into it, this request will not be made again, and
+      // no sweep writes the row later — so `warn`, which in this codebase says
+      // a retry is coming, describes the one thing that is not true of it.
+      logUnretried(log, err, { type: args.type }, 'billing audit event not recorded and not retried');
     }
   };
 

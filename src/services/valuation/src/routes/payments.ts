@@ -782,7 +782,15 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         payload: { stripe_event_id: stripeEventId, ...payload },
       });
     } catch (err) {
-      log.warn({ err, userId }, 'invoice refund audit event not recorded');
+      // `logUnretried`, not `warn` (R352, methodology M5). The swallow is
+      // right — see the note on `auditPayment` below for why a throw here is
+      // worse than a missing row — but nothing comes back for this. The
+      // compare-and-set upstream has already claimed the reversal, so the
+      // redelivery a 5xx would earn is declined, no sweep revisits an
+      // `admin_events` row that was never written, and money that went back
+      // out has lost the only durable trace it had. `warn` in this codebase
+      // promises a retry that does not exist here.
+      logUnretried(log, err, { userId }, 'invoice refund audit event not recorded and not retried');
     }
   }
 
@@ -822,7 +830,11 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         payload: { stripe_event_id: stripeEventId, ...payload },
       });
     } catch (err) {
-      log.warn({ err, type, valuationId }, 'payment audit event not recorded');
+      // See `auditInvoiceRefund` — same containment, same absence of a retry,
+      // same level. This one covers the partial refund and the chargeback,
+      // which deliberately change no status, so the spine row is the whole
+      // record that they happened.
+      logUnretried(log, err, { type, valuationId }, 'payment audit event not recorded and not retried');
     }
   }
 

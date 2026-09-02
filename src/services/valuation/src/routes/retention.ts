@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, logFailure, problems } from '@n409/shared';
+import { isUlid, logFailure, logUnretried, problems } from '@n409/shared';
 import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, invalidateValuation } from '../repos/valuations.js';
@@ -784,9 +784,18 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
         // one — answerable nowhere, because the row that would have said so is
         // the row that did not get written. `logSubjectCensus` holds every
         // failure line on this surface to that rule.
-        app.log.warn(
-          { err: auditErr, actorId: principal.id, sweep: 'retention', trigger: 'manual' },
-          'retention sweep failure not recorded on the audit spine',
+        //
+        // `logUnretried`, not `warn` (R352, M5). The 500 below sends the
+        // operator to press again, and a re-press is a *new* run: this one
+        // destroyed whatever `partial` counts, failed, and now has no row
+        // saying so on the surface a reviewer reads to find out who destroyed
+        // what. Nothing revisits it. `warn` is the level that promises
+        // something will.
+        logUnretried(
+          app.log,
+          auditErr,
+          { actorId: principal.id, sweep: 'retention', trigger: 'manual' },
+          'retention sweep failure not recorded on the audit spine and not retried',
         );
       }
       throw err;

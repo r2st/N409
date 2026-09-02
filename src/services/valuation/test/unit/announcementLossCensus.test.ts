@@ -153,6 +153,71 @@ function withoutNested(body: string): string {
   return out;
 }
 
+/**
+ * The spine half (round 352, methodology M5).
+ *
+ * `recordAdminEvent` does not tell a person anything, so it is not one of the
+ * doors above — but the level argument is word for word the same, and three
+ * sites had reached for `warn` anyway. A partial refund and a chargeback
+ * deliberately change no status, so the `admin_events` row is the entire record
+ * that money went back out; a Checkout Session exists at Stripe before its row
+ * is written. All three are contained on purpose (a throw would 5xx a webhook
+ * whose work is committed, or show an error for a redirect that succeeded), and
+ * none of them is retried: the compare-and-set upstream has already claimed the
+ * delivery, so the redelivery a 5xx would earn is declined, and no sweep
+ * revisits a row that was never written.
+ *
+ * The alias pass is what would otherwise have kept `billing.ts` out of the
+ * population. Its site calls a local `audit(args)` helper, one hop above
+ * `recordAdminEvent` — the same indirection that hid it from the first scan
+ * written for this round, and exactly the refactor a fourth site is likely to
+ * arrive already wearing.
+ */
+const SPINE = /\brecordAdminEvents?\s*\(/;
+
+/** Local one-hop wrappers around the spine writer, named per file. */
+function spineAliases(src: string): RegExp | null {
+  const names = new Set<string>();
+  for (const m of src.matchAll(
+    /(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)\s*[=(][\s\S]{0,600}?recordAdminEvents?\s*\(/g,
+  )) {
+    names.add(m[1]!);
+  }
+  return names.size ? new RegExp(`\\b(?:${[...names].join('|')})\\s*\\(`) : null;
+}
+
+describe('audit-spine loss is logged as loss', () => {
+  const files = ROOTS.flatMap((root) => tsFiles(path.join(SERVICE, root)));
+
+  const sites = (): Array<{ file: string; tc: TryCatch }> => {
+    const out: Array<{ file: string; tc: TryCatch }> = [];
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      const alias = spineAliases(src);
+      for (const tc of tryCatches(src)) {
+        const body = withoutNested(tc.tryBody);
+        if (!SPINE.test(body) && !(alias && alias.test(body))) continue;
+        if (/\bthrow\b/.test(tc.catchBody)) continue;
+        out.push({ file, tc });
+      }
+    }
+    return out;
+  };
+
+  it('finds contained spine writes, so a broken pattern cannot pass', () => {
+    // Three of these are reached only through a local wrapper; a scan without
+    // the alias pass finds fewer, which is how `billing.ts` was first missed.
+    expect(sites().length).toBeGreaterThan(3);
+  });
+
+  it('swallows a spine write failure only through logUnretried', () => {
+    const offenders = sites()
+      .filter(({ tc }) => !EXEMPTION.test(tc.catchBody) && !/\blogUnretried\s*\(/.test(tc.catchBody))
+      .map(({ file, tc }) => `${path.relative(SERVICE, file)}:${tc.line}`);
+    expect(offenders, 'audit-spine failures swallowed without logUnretried').toEqual([]);
+  });
+});
+
 describe('announcement loss is logged as loss', () => {
   const files = ROOTS.flatMap((root) => tsFiles(path.join(SERVICE, root)));
 
