@@ -68,11 +68,56 @@ describe('upstream error disclosure', () => {
     const problem = toProblem(err);
     expect(problem.status).toBe(422);
     // The withheld half is asserted by absence, not by an exact sentence: what
-    // matters is that *none* of the body came through, and pinning the prose
-    // instead makes this test fail on an improvement to the wording.
+    // matters is that the body's *contents* did not come through, and pinning
+    // the prose instead makes this test fail on an improvement to the wording.
+    //
+    // R357 narrowed "none of it" to "none of it but the paths". `loc` is a fact
+    // about the shape of the request this service sent, not about what was in
+    // it — the value is `input`, the prose is `msg`, and both are still
+    // withheld here and asserted below. Withholding the path too was the whole
+    // cost: the engine's remedy is "correct the inputs it names", and a schema
+    // rejection named nothing at all.
     expect(problem.detail).not.toContain('Input should be greater than 0');
-    expect(problem.detail).not.toContain('share_classes');
+    expect(problem.detail).toContain('inputs.share_classes[0].shares');
     expect(JSON.stringify(problem.toBody('/x'))).not.toContain('cfo@acme.example');
+    expect(JSON.stringify(problem.toBody('/x'))).not.toContain('Series A');
+  });
+
+  it('names every refused field, bounded, and counts the rest', async () => {
+    // A badly-shaped payload produces one entry per field the schema expected,
+    // so the sentence is bounded for the reason `describeIssues` is.
+    const body = JSON.stringify({
+      detail: [
+        { type: 'missing', loc: ['body', 'params', 'valuation_date'], msg: 'Field required' },
+        { type: 'missing', loc: ['body', 'params', 'currency'], msg: 'Field required' },
+        { type: 'missing', loc: ['body', 'inputs', 'revenue'], msg: 'Field required' },
+        { type: 'missing', loc: ['body', 'inputs', 'ebitda'], msg: 'Field required' },
+        { type: 'missing', loc: ['body', 'inputs', 'shares'], msg: 'Field required' },
+      ],
+    });
+    const detail = toProblem(await failWith(response(422, body))).detail ?? '';
+    expect(detail).toContain('params.valuation_date, params.currency, inputs.revenue');
+    expect(detail).toContain('(and 2 more fields)');
+    expect(detail).not.toContain('Field required');
+  });
+
+  it('keeps naming the part of the request when it is not the body', async () => {
+    // `body` leads every payload this client sends, so it says nothing; `query`
+    // is the half that says where to look.
+    const body = JSON.stringify({
+      detail: [{ type: 'int_parsing', loc: ['query', 'paths'], msg: 'Input should be a valid integer' }],
+    });
+    expect(toProblem(await failWith(response(422, body))).detail).toContain('it refused query.paths');
+  });
+
+  it('prefers a sentence the upstream wrote over the field list', async () => {
+    // The engine's own pre-flight message is written for the analyst and is
+    // better than any list of paths; the fallback is for the refusals that
+    // never had one.
+    const body = JSON.stringify({ detail: 'volatility is required', errors: [{ loc: ['body', 'x'] }] });
+    const detail = toProblem(await failWith(response(422, body))).detail ?? '';
+    expect(detail).toContain('volatility is required');
+    expect(detail).not.toContain('it refused');
   });
 
   it('withholds a traceback or an HTML error page', async () => {

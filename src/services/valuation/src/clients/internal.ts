@@ -9,6 +9,7 @@ import {
   flagEnabled,
   probeReady as sharedProbeReady,
   problems,
+  issuePath,
   requestIdHeaders,
   type CircuitState,
   type Counter,
@@ -111,6 +112,26 @@ export class InternalServiceError extends Error {
      * looking at the failed run.
      */
     readonly retryAfterSeconds: number | null = null,
+    /**
+     * The payload paths a framework-level schema rejection named, when the
+     * upstream answered with one.
+     *
+     * Separate from {@link issues} because it comes from a different place and
+     * carries less. `issues` is the engine's own hand-written pre-flight list,
+     * with a message and a hint per field; this is FastAPI's
+     * `RequestValidationError` body, which both Python services answer a schema
+     * failure with — `detail` as an array of `{loc, msg, type}`.
+     *
+     * Only the `loc` paths are kept. `msg` is pydantic's prose and `input` is
+     * the offending value echoed back, and {@link opaque} exists to keep both
+     * of those out of a response; nothing here changes that. A path is the one
+     * part of that body which is a fact about *our* request rather than about
+     * its contents, and it is the part the reader needs: the engine's remedy
+     * says "correct the inputs it names", and until R357 a schema rejection
+     * named none, because an array `detail` fell through every branch of the
+     * parse and was withheld whole.
+     */
+    readonly refusedFields: readonly string[] = [],
   ) {
     super(`${service}: ${detail}`);
   }
@@ -367,6 +388,36 @@ export function parseIssues(value: unknown): UpstreamIssue[] {
     });
   }
   return issues;
+}
+
+/**
+ * The `loc` paths off a FastAPI/pydantic rejection body — paths only.
+ *
+ * Both Python services hand a schema failure to `RequestValidationError`, whose
+ * body is `{detail: [{loc, msg, type, input}, ...]}`. The reader above tests
+ * `typeof detail === 'string'`, so that array falls through to `title`
+ * (absent), leaves `opaque` true, and is withheld — correctly, because `input`
+ * is the submitted payload verbatim. The cost of withholding it whole was that
+ * the analyst got the engine's voice with nothing in the middle: "The
+ * calculation could not be run. Correct the inputs it names…", a remedy that
+ * promises named inputs attached to a sentence naming none.
+ *
+ * So: the paths, and nothing else. `msg` and `input` and `ctx` stay withheld.
+ * A leading `body` segment is dropped because every payload this client sends
+ * is one; `query` and `path` are kept, because they say where to look.
+ */
+export function parseRefusedFields(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const fields: string[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue;
+    const loc = (raw as Record<string, unknown>).loc;
+    if (!Array.isArray(loc)) continue;
+    const segments = loc.filter((s): s is string | number => typeof s === 'string' || typeof s === 'number');
+    const path = issuePath(segments[0] === 'body' ? segments.slice(1) : segments);
+    if (path !== '' && !fields.includes(path)) fields.push(path);
+  }
+  return fields;
 }
 
 /**
@@ -714,6 +765,7 @@ async function postJsonOnce<T>(
     // upstream happened to send — see the `opaque` field on the error.
     let opaque = true;
     let issues: UpstreamIssue[] = [];
+    let refusedFields: string[] = [];
     try {
       const parsed = JSON.parse(text) as { detail?: unknown; title?: unknown; issues?: unknown };
       // Bounded on this branch too. The raw-text branch above was cut at 500
@@ -731,6 +783,7 @@ async function postJsonOnce<T>(
         opaque = false;
       }
       issues = parseIssues(parsed.issues);
+      refusedFields = parseRefusedFields(parsed.detail);
     } catch {
       /* keep raw text */
     }
@@ -740,7 +793,17 @@ async function postJsonOnce<T>(
     // call that produced it.
     emit({ response: safeParse(text), status: res.status, error: detail });
     recordUpstream(service, res.status >= 500 ? 'failed' : 'rejected', Date.now() - startedAt);
-    throw new InternalServiceError(service, res.status, detail, issues, false, opaque, false, retryAfter);
+    throw new InternalServiceError(
+      service,
+      res.status,
+      detail,
+      issues,
+      false,
+      opaque,
+      false,
+      retryAfter,
+      refusedFields,
+    );
   }
   let parsed: T;
   try {
@@ -804,6 +867,29 @@ function safeParse(text: string): unknown {
  */
 function describedBy(err: InternalServiceError): string | null {
   return err.opaque ? null : err.detail;
+}
+
+/** Named fields in the sentence, bounded, then a count of the rest. */
+const MAX_NAMED_FIELDS = 3;
+
+/**
+ * What a withheld schema rejection is still allowed to say.
+ *
+ * The body it comes from stays withheld — see {@link
+ * InternalServiceError.refusedFields} for why only the paths survive. This is
+ * the middle of `compose`, so it is a fragment rather than a sentence, and it
+ * is bounded for the reason `describeIssues` is: a badly-shaped payload
+ * produces one entry per field the schema expected, and a message stops being
+ * read once it stops fitting where the UI puts it.
+ */
+function refusedFieldsSentence(fields: readonly string[]): string | null {
+  if (fields.length === 0) return null;
+  const named = fields.slice(0, MAX_NAMED_FIELDS);
+  const hidden = fields.length - named.length;
+  const list = named.join(', ');
+  return hidden > 0
+    ? `it refused ${list} (and ${hidden} more field${hidden === 1 ? '' : 's'})`
+    : `it refused ${list}`;
 }
 
 /**
@@ -903,7 +989,7 @@ function compose(label: string, said: string | null, remedy?: string): string {
 
 /** Converts an InternalServiceError to the client-facing ApiProblem. */
 export function toProblem(err: InternalServiceError): ApiProblem {
-  const said = describedBy(err);
+  const said = describedBy(err) ?? refusedFieldsSentence(err.refusedFields);
   // A breaker rejection is not "bad gateway" — nothing was dialled, and the
   // honest answer is 503 with a time to come back. It is also the one upstream
   // failure the caller can do something useful about, so it gets a sentence
