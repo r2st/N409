@@ -40,6 +40,7 @@ import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
 import { assertRoutesGuarded, registerRouteAudit } from './plugins/routeAudit.js';
 import { registerParamValidation } from './plugins/params.js';
+import { registerDownloadCacheControl } from './plugins/downloadCache.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerMfaRoutes } from './routes/mfa.js';
@@ -390,6 +391,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
     done();
   });
+
+  // Every response that is a file says it must not be cached — stamped here so
+  // the sixteenth download door does not have to know about the fifteen before
+  // it. See plugins/downloadCache.ts for the edge this is about.
+  registerDownloadCacheControl(app);
 
   // In-process RED, for the question `createHttpMetrics` cannot answer without
   // a collector wired: is this build throwing 500s right now. Registered here
