@@ -15,7 +15,7 @@ import { calendarDate, calendarDateOf } from './calendarDate.js';
 import { CLASS_VOLATILITY_SCHEDULE, DISCOUNT_RATE_SCHEDULE } from './report.js';
 import { MULTIPLE_LABELS, multipleKeyFor, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
-import { requiredReturnRows } from './requiredReturns.js';
+import { requiredReturnRows, RequiredReturnTableError } from './requiredReturns.js';
 import { opmFmvPerShareCents, sensitivityGrid, sensitivityTables, type OpmInputs } from './sensitivity.js';
 import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatility.js';
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
@@ -3774,9 +3774,20 @@ export function requiredReturnExhibit(ctx: ExhibitContext): ReportPdfSection | n
     // params route validated, so the row predates that validation or was
     // written around it — had nothing anywhere telling them their firm's
     // ladder was not the one the report was going out without.
+    //
+    // The reason is published, not merely logged (R345): it reaches the QA
+    // review a reviewer reads, and `errorBodyDisclosure`'s rule is that an
+    // error's own wording is publishable only when something vouched for it.
+    // `RequiredReturnTableError` is that vouching — every sentence it carries
+    // is written in `requiredReturns.ts` and names a field and a rule. Anything
+    // else reaching here is a shape nobody wrote a sentence for, and is said as
+    // a category rather than quoted.
     ctx.onIssue?.({
       schedule: 'III',
-      reason: err instanceof Error ? err.message : String(err),
+      reason:
+        err instanceof RequiredReturnTableError
+          ? err.message
+          : 'the stored required-return table could not be read',
     });
     return null;
   }

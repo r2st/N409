@@ -128,6 +128,38 @@ describe('Appendix III', () => {
     expect(issues[0]!.reason).toContain('required_return_table[0].low');
   });
 
+  it('says a category rather than quoting a message nobody vouched for (R345)', () => {
+    /*
+     * The reason is published now, not merely logged: it reaches the QA review
+     * a reviewer reads. `errorBodyDisclosure`'s rule is that an error's own
+     * wording is publishable only when something vouched for it, and
+     * `RequiredReturnTableError` is that vouching — every sentence it carries
+     * is written in `requiredReturns.ts` and names a field and a rule.
+     *
+     * A throw of any other shape is one nobody wrote a sentence for, so its
+     * words do not go on the review. Provoked with a row that throws on being
+     * read, which is the honest way to reach the branch.
+     */
+    const hostile = [
+      {
+        get stage(): number {
+          throw new TypeError('a message from somewhere nobody vouched for');
+        },
+      },
+    ];
+    const issues: { schedule: string; reason: string }[] = [];
+    const out = requiredReturnExhibit({
+      ...CTX,
+      developmentStage: 1,
+      requiredReturnTable: hostile,
+      onIssue: (i) => issues.push(i),
+    });
+    expect(out).toBeNull();
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.reason).toBe('the stored required-return table could not be read');
+    expect(issues[0]!.reason).not.toContain('nobody vouched for');
+  });
+
   it('stays quiet when the appendix is merely not applicable', () => {
     // The discriminator: without it the assertion above passes for a reporter
     // that fires on every absence, which would make the line noise.

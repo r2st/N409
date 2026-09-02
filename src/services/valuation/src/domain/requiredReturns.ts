@@ -72,6 +72,24 @@ export interface RequiredReturnRow extends RequiredReturnBand {
 }
 
 /**
+ * What this module refuses a stored table with.
+ *
+ * A type, not a bare `Error`, because the wording now reaches a person. R345
+ * put a schedule that failed to build on the QA review a reviewer reads, and
+ * `errorBodyDisclosure`'s rule is that an error's own message is publishable
+ * only when something vouched for it — every sentence below is written here
+ * and names a field and a rule, so this class is that vouching. Anything else
+ * escaping this function is a shape nobody wrote a sentence for and is
+ * published as a category instead.
+ */
+export class RequiredReturnTableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RequiredReturnTableError';
+  }
+}
+
+/**
  * A caller-supplied table, validated, or the built-in ladder.
  *
  * A malformed override is refused rather than silently ignored: a firm that
@@ -82,30 +100,32 @@ export interface RequiredReturnRow extends RequiredReturnBand {
 export function requiredReturnBands(override?: unknown): readonly RequiredReturnBand[] {
   if (override === null || override === undefined) return REQUIRED_RETURN_BANDS;
   if (!Array.isArray(override) || override.length === 0) {
-    throw new Error('required_return_table must be a non-empty array of bands');
+    throw new RequiredReturnTableError('required_return_table must be a non-empty array of bands');
   }
   return override.map((raw, i) => {
     const row = raw as Partial<RequiredReturnBand>;
     if (typeof row !== 'object' || row === null) {
-      throw new Error(`required_return_table[${i}] must be an object`);
+      throw new RequiredReturnTableError(`required_return_table[${i}] must be an object`);
     }
     const { stage, category, low, high } = row;
     if (!DEVELOPMENT_STAGES.includes(stage as DevelopmentStage)) {
-      throw new Error(`required_return_table[${i}].stage must be one of ${DEVELOPMENT_STAGES.join(', ')}`);
+      throw new RequiredReturnTableError(
+        `required_return_table[${i}].stage must be one of ${DEVELOPMENT_STAGES.join(', ')}`,
+      );
     }
     if (typeof category !== 'string' || category.trim() === '') {
-      throw new Error(`required_return_table[${i}].category is required`);
+      throw new RequiredReturnTableError(`required_return_table[${i}].category is required`);
     }
     for (const [key, v] of [
       ['low', low],
       ['high', high],
     ] as const) {
       if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v >= 5) {
-        throw new Error(`required_return_table[${i}].${key} must be a fraction in (0, 5)`);
+        throw new RequiredReturnTableError(`required_return_table[${i}].${key} must be a fraction in (0, 5)`);
       }
     }
     if ((low as number) > (high as number)) {
-      throw new Error(`required_return_table[${i}].low must not exceed .high`);
+      throw new RequiredReturnTableError(`required_return_table[${i}].low must not exceed .high`);
     }
     return { stage: stage as DevelopmentStage, category, low: low as number, high: high as number };
   });
