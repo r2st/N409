@@ -614,4 +614,81 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
     // instead of guessing at it from the absence.
     expect(line!.result_keys).toEqual(['note', 'currency']);
   });
+  /**
+   * `params` is persisted jsonb that `navExhibits.instrumentExhibit` renders
+   * one table row per key into the report's "Exhibit — Instrument Terms" —
+   * and it is stored by this route without the engine ever seeing it, since
+   * `describe_unbindable` only runs on a valuation. So the bound has to be
+   * here, on the same two axes the sibling routes already bound their own
+   * persisted maps on (`asc718.rsu_performance_conditions`,
+   * `params.market_custom_ranges`).
+   */
+  describe('the terms map is bounded before it is stored', () => {
+    const wide = (n: number): Record<string, unknown> =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`p${i}`, i]));
+
+    it('refuses more parameters than an instrument can have', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/debt/instruments',
+        headers: authHeader(ops.token),
+        payload: { name: 'wide', instrument_type: 'bond', currency: 'USD', params: wide(101) },
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().detail).toContain('At most 100 instrument parameters');
+    });
+
+    it('accepts a map at the cap', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/debt/instruments',
+        headers: authHeader(ops.token),
+        payload: { name: 'at cap', instrument_type: 'bond', currency: 'USD', params: wide(100) },
+      });
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('refuses a key too long to be a table row', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/debt/instruments',
+        headers: authHeader(ops.token),
+        payload: {
+          name: 'long key',
+          instrument_type: 'bond',
+          currency: 'USD',
+          params: { ['x'.repeat(201)]: 1 },
+        },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+
+    /** The update door writes the same column, so it carries the same bound. */
+    it('bounds the update door too', async () => {
+      const id = await createInstrument('bond', { face: 1000 });
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/debt/instruments/${id}`,
+        headers: authHeader(ops.token),
+        payload: { params: wide(101) },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+
+    /**
+     * And the run door: `instrumentExhibit` prefers the run's own inputs over
+     * the stored map, so overrides are what the exhibit renders once an
+     * instrument has been valued.
+     */
+    it('bounds the per-run overrides', async () => {
+      const id = await createInstrument('bond', { face: 1000 });
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/debt/instruments/${id}/value`,
+        headers: authHeader(ops.token),
+        payload: { overrides: wide(101) },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+  });
 });

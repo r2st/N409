@@ -51,17 +51,52 @@ const DateStr = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 
+/**
+ * The contractual terms map, bounded on the two axes that decide how big it
+ * gets: how many entries, and how long a key may be.
+ *
+ * `z.record(z.unknown())` on its own is bounded by nothing but Fastify's 1 MB
+ * body, and this map is not a request-shaped value that dies with the request.
+ * `POST /debt/instruments` persists it to `debt_instruments.params` (jsonb)
+ * without calling the engine at all — the engine's `describe_unbindable` check
+ * only runs on a *valuation*, so a key it would refuse is stored happily and
+ * never asked about. `navExhibits.instrumentExhibit` then renders the stored
+ * map into the deliverable as "Exhibit — Instrument Terms", `Object.entries`,
+ * **one table row per key**, falling back to exactly this column for an
+ * instrument that has never been valued. So an unbounded map is an unbounded
+ * exhibit in a PDF somebody is sent, and an unbounded key is a table cell as
+ * wide as the body limit allows.
+ *
+ * The two sibling routes already write this rule down —
+ * `asc718.rsu_performance_conditions` and `params.market_custom_ranges` both
+ * cap a persisted jsonb map's key count, for the reason each states — and
+ * `communications`' `vars` states the general form ("bounded on all three
+ * axes"). This is the same map with a renderer attached and no bound at all.
+ *
+ * 100 is far past any real instrument: the widest entry point the engine binds
+ * (`convertible_note`) takes eleven parameters, and the UI sends a fixed field
+ * list per instrument type. The value axis is deliberately left open — the
+ * engine, not this schema, is the authority on what a parameter may be — and
+ * `paramValue` already renders a non-scalar through `esc(String(value))`.
+ */
+const MAX_INSTRUMENT_PARAMS = 100;
+const InstrumentParams = z
+  .record(z.string().max(200), z.unknown())
+  .refine((v) => Object.keys(v).length <= MAX_INSTRUMENT_PARAMS, {
+    message: `At most ${MAX_INSTRUMENT_PARAMS} instrument parameters`,
+  });
+
 const InstrumentBody = z.object({
   name: z.string().trim().min(1).max(200),
   instrument_type: z.enum(['bond', 'term_loan', 'convertible', 'safe', 'credit_spread']),
   currency: CurrencyCode.default('USD'),
-  params: z.record(z.unknown()).default({}),
+  params: InstrumentParams.default({}),
 });
 
 const UpdateBody = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
-    params: z.record(z.unknown()).optional(),
+    params: InstrumentParams.optional(),
   })
   .strict();
 
@@ -83,7 +118,12 @@ const ValueBody = z
     valuation_date: DateStr.optional(),
     // Per-run overrides merged over the stored params (e.g. a fresh market_yield,
     // benchmark_yield, stock_price or next-round assumptions).
-    overrides: z.record(z.unknown()).default({}),
+    // Same bound as the stored map it is merged over, and for the same
+    // reason: a run's overrides are written to `debt_valuations.inputs`, and
+    // `instrumentExhibit` *prefers* that copy — the run's own inputs are what
+    // the instrument was priced on — so this is the map the exhibit actually
+    // renders once an instrument has been valued.
+    overrides: InstrumentParams.default({}),
     /**
      * Whether the run is a measurement or a question.
      *
