@@ -10622,3 +10622,105 @@
 #            payload per connection.
 #            gap: `listCalculations` still ships `inputs` to the Calculations tab
 #            and to `qa.ts`, neither of which reads it — R322's note, unchanged.
+#
+# R378 — Computation & arithmetic (M2). Three findings, no migration, 5 new
+#            tests. The round left the closed forms alone — R355 and R363
+#            between them reconciled the DLOM family, the Hamada levering, the
+#            §1202 tiers, the impairment tests, PWERM and the CVM, and fuzzed
+#            the allocation — and read the figures a schedule *derives about
+#            itself*: a ceiling, a sample size, an elimination. All three are
+#            the same shape, which is why they are worth stating together: an
+#            arithmetic that is right for the case it was written against and
+#            was never asked what happens when its input runs out. Property
+#            probes this round found nothing further in the LP tiers, the ESOP
+#            repurchase schedule, the Rev. Rul. 59-60 discount chain, the
+#            relief-from-royalty and MEEM schedules with their TAB step-up, the
+#            bond duration/convexity and YTM round trip, the ASC 718 portfolio's
+#            calendar-year attribution, the LMDI value bridge, the CRR lattice
+#            against Black-Scholes, or six thousand randomised waterfalls with
+#            participation caps.
+#
+#            **A fund that had not cleared its hurdle owed the GP no carry, and
+#            the clawback said otherwise.** `lp_waterfall` reported
+#            `gp_carry_entitled` as `carry x total_profit` unconditionally and
+#            measured `clawback_owed` against it. Return of capital and the
+#            preferred return are senior to carry, so a fund whose distributable
+#            runs out inside tier 1 or tier 2 pays the GP nothing — the schedule
+#            beside the ceiling says so, in `gp_distribution: 0`. It is not an
+#            edge case: it is every fund that has returned capital and some
+#            profit without clearing its hurdle, which is the ordinary state of
+#            a fund mid-life. $100 of paid-in returning $105 against an 8%
+#            hurdle pays the GP $0 and claimed an entitlement of $1, so a GP
+#            holding $1 of prior carry showed a clawback of zero on the one line
+#            an LPAC acts on. A truncated catch-up is the same shape one tier
+#            down. The ceiling is now capped at the proceeds left once both
+#            senior LP claims are met rather than replaced by the awarded `gp`,
+#            which leaves R363's pinned no-catch-up behaviour exactly where it
+#            was: the cap is inactive precisely when the catch-up completes,
+#            which is the condition under which `gp == entitled` held by
+#            construction.
+#
+#            **A two-close price series produced a NaN volatility, not an
+#            error.** `asc718Public.historicalVolatility` computes a *sample*
+#            standard deviation, so it needs two returns and therefore three
+#            prices; its guard asked for two closes. A two-element series made
+#            one return and divided by `returns.length - 1` === 0 with a zero
+#            numerator, so the answer was NaN — not an error and not an
+#            Infinity. NaN is not nullish and clears every `> 0` refusal
+#            downstream. `routes/asc718.ts` has refused a two-close series since
+#            R305 and says in as many words that this is why, so the live path
+#            was covered; the guard belongs to the statistic rather than to one
+#            of its callers, and the engine's own
+#            `volatility.historical_volatility` has asked for three prices since
+#            it was written. Two halves agreeing, not a second opinion.
+#
+#            **A subsidiary was eliminated against a parent that consolidated
+#            nothing.** `portfolio.consolidate` dropped a subsidiary from
+#            `consolidated_equity_value` whenever its `parent_valuation_id`
+#            named any listed entity. Being listed is not the same as
+#            consolidating: a parent with no successful run yet (a holding
+#            company is routinely set up and linked before it is valued), and a
+#            parent whose latest run concluded something that is not this
+#            entity's equity — an IFRS 2 expense, an ASC 820 portfolio total, a
+#            gift & estate transferred interest, all three already excluded from
+#            every total here by `non_equity_entities` — both contribute nothing
+#            for the subsidiary to be inside. Either way the subsidiary's equity
+#            left the consolidated figure and nothing replaced it: an
+#            organization holding one $5M subsidiary under an unvalued parent
+#            reported a consolidated equity of zero, with an empty
+#            `unanchored_subsidiaries` list beside it saying nothing had been
+#            dropped. The same failure the parent-not-in-the-set case was
+#            written to fix, one class of parent further on, and the rule the
+#            file already states — kept, because nothing here contains it —
+#            settles both. Keyed now on the set of entities that actually
+#            carried an equity value into the roll-up, so the per-currency
+#            buckets follow it.
+#
+#            gap: `ifrs2.expense_schedule` attributes a graded award by
+#            instalment but measures every tranche at one `total_fair_value`
+#            struck on one expected term. IFRS 2.IG11 treats each instalment as
+#            its own award, and a shorter-dated tranche is worth less than a
+#            longer-dated one — so the front-loading is right and the amount
+#            being front-loaded is an approximation. Left because it is a
+#            measurement design rather than a slip: giving each tranche its own
+#            term means the endpoint taking a term vector, which is a contract
+#            change.
+#            gap: `asc718.monteCarloFairValue` says it draws "in antithetic
+#            pairs" and draws the two Box-Muller outputs instead, which are
+#            independent. The estimate is unbiased either way — only the
+#            variance reduction the comment claims is absent — so the arithmetic
+#            is right and the sentence is not. `asc718Public.standardNormals`
+#            has the same generator and claims nothing.
+#            gap: `smb_valuation` accepts a `weights` object naming only some of
+#            the methods that ran and normalises the named ones, so an unnamed
+#            method silently takes weight zero. The refusal one line above is for
+#            a weight naming a method that could *not* run; there is no matching
+#            statement for a method that ran and was not weighted, and zero is
+#            only one of the two readings.
+#            gap: `portfolio.consolidate` still eliminates against a parent that
+#            is itself typed `subsidiary` or `portfolio_company` — the anchor
+#            test asks whether the named valuation carries equity, not what kind
+#            of entity it is. A two-level chain (A parent of B, B parent of C)
+#            therefore eliminates C against B and B against A, which is right
+#            only if B's valuation consolidates C. Nothing in the data says
+#            whether it does.
