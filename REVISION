@@ -9186,3 +9186,121 @@
 #            that endpoint (`revenue`, `revenue_growth`) are refused by name;
 #            `sic_code` is compared rather than measured, so nothing looked at
 #            it.
+
+# R366 — Error message quality (M19). Two findings, and the round's shape is
+#            the one R365 named: a rule keyed on the spelling of the bug it was
+#            written for rather than on the thing it is about, and a second
+#            spelling that walked straight past it.
+#
+#            **Six schema refusals that dropped the reason on the floor.** R180
+#            moved ~150 validation refusals onto `invalidQuery`/`invalidBody`
+#            so the failing field names land in `detail`, which is the only
+#            field a browser renders, and left a census behind. That census is
+#            written over the *old idiom* — `problems.*(…, { errors:
+#            parsed.error.issues })` — which is a shape a route only has once it
+#            has already decided to forward the issues. Four routes never had
+#            it: they checked `!parsed.success`, threw a category noun and
+#            discarded the `ZodError`, so there was nothing left to match.
+#            `GET /valuations/counts?buckets=weekly` answered `Invalid buckets
+#            mode` while zod had already written "Expected 'groups' | 'named',
+#            received 'weekly'"; the clone endpoint answered `Invalid clone
+#            request` for one optional boolean; refresh-all answered `Invalid
+#            region` with the region list one field away; and `POST
+#            /debt/rating-spread` answered `Provide a rating` to a request that
+#            had provided one and got the length wrong, which is a sentence that
+#            is not merely useless but false.
+#
+#            `?sort=` is the other half and could not have reached the helpers
+#            at all: it is a hand-rolled parse, so there is no `ZodError` to
+#            hand `invalidQuery` — the case `validationDetail`'s own docstring
+#            anticipated. Its three distinct failures (too many terms, a column
+#            that is not sortable, a direction that is not one) all returned
+#            `null`, and both list endpoints turned that into the two words
+#            `Invalid sort`. A caller who wrote `?sort=name:asc` — the column is
+#            `company_name` — was told nothing, and the spelling they needed is
+#            a fixed list of eight the server was holding. `parseSortTerms` now
+#            says which failure it was and `domain/sortRefusal.ts` turns that
+#            into a sentence naming the offending term and the columns that
+#            would work; `parseSort` stays as the boolean the SQL sweep and
+#            `sort.test.ts` ask for. The census states the rule over the fact —
+#            a refused `safeParse` is answered by the helpers — with the five
+#            deliberate exceptions named one by one and their files pinned, so
+#            an exemption cannot outlive the route it excuses.
+#
+#            **A questionnaire that answered "Internal Server Error".** The
+#            client intake page is token-authenticated and public, predates
+#            `api()`, and posts with its own `fetch`. Its unpacking read
+#            `problem.detail ?? problem.title ?? <three sentences written for
+#            exactly this case>`, and `title` is the RFC 9457 reason phrase —
+#            the one field the spec asks to be identical on every occurrence of
+#            a status. This service emits a body with a title and no detail on
+#            one path in particular: `registerProblemHandler`'s unhandled-500
+#            arm sends `{ type, title: 'Internal Server Error', status,
+#            instance }`. So the middle arm was not a rare fallback but the
+#            whole answer on the failure this reader — a prospective client
+#            filling in a questionnaire for a firm they have just engaged — is
+#            least able to interpret, with the sentences below it unreachable.
+#            R255 removed this same read from 191 handlers behind
+#            `describeActionFailure`, which returns `err.message` only when the
+#            problem carried a `detail`; the census left behind bans `err
+#            instanceof ApiError ? err.message`, and this page has no `ApiError`
+#            to match on. The auditor portal, one file over, already read
+#            `detail` alone with a status-aware fallback. The census now asks
+#            the question over the fact — no page composes a displayed message
+#            from a problem body's `title` — with `lib/api.ts` the single
+#            exemption, and pins the three hand-rolled transports so the rule
+#            cannot pass by there being nothing left to read.
+#
+#            **And one improvement not shipped, recorded at the site.**
+#            `refuseIfRetiredNow` re-reads the engagement after an AI call with
+#            a three-minute budget and answers a vanished row with a bare 404.
+#            The R198 rule says a 404 raised below the routes has a sentence to
+#            give — the caller's right to see the row was settled minutes ago,
+#            so nothing is being protected — and this looked like the next
+#            instance of it. It is not: retention declares `valuation`
+#            archive-only, no endpoint deletes one, and `DELETE FROM valuations`
+#            is refused by the database itself through the cascade into
+#            `valuation_events` and migration 0001's immutability trigger. The
+#            branch cannot be taken, so a sentence written for it is a sentence
+#            nobody receives — the same trap that nearly took R180's 119
+#            malformed-id 404s.
+#
+#            `swallowedFailureCensus` has been red on main since R358, which
+#            issued the params and engine-inputs reads together and marks the
+#            second promise handled with `void request.catch(() => {})`. That
+#            is not a discarded failure — the inner await beside it still draws
+#            `scenarioLoadError` — and it is now classified as such.
+#
+#            gap: nothing holds the frontend's error census to the setters it
+#            actually reads. `messageCallArguments` matches five names
+#            (`setError`, `setActionError`, `setConvertError`, `setMessage`,
+#            `new Error`) and the tree has about thirty — `setSaveError` alone
+#            has seventeen call sites, `setEditorError` fourteen. Widening the
+#            matcher to every `set*Error`/`set*Message` setter takes the
+#            population from a subset to 652 spans and finds nothing today, so
+#            it is a ratchet rather than a finding; it is worth adding before
+#            the setter that does carry a shrug is written.
+#            gap: the two remedies that name a workspace tab spell it "Cap
+#            table" and the tab is labelled "Cap Table"; `domain/research.ts`
+#            and `routes/comparables.ts` name the Company and Overwrites tabs,
+#            both of which are conditionally rendered. The R357 rule — check the
+#            door, not just the screen — has no enforcement, and cannot easily
+#            get one: the remedies are in the valuation service and the labels
+#            are JSX in web-frontend, with no import path between the packages.
+#            A generated inventory of nav labels, imported by a test on each
+#            side, is the only shape that would work.
+#            gap: `toProblem`'s fallbacks are the arm nothing checks.
+#            `voiceOf` and `degradedMessage` both fall through to a sentence
+#            built from the *service name* — "The webhooks step could not be
+#            completed", "The webhooks service is temporarily unavailable" —
+#            which is precisely the failure `SERVICE_VOICE` exists to prevent,
+#            and `errorMessageQualityR198` asserts the label rules over the
+#            table only. A fourth internal service added later inherits a
+#            message the round that banned it would have failed.
+#            gap: `GET /valuations` and the list export are the only two
+#            endpoints whose sort is hand-parsed; every other list takes its
+#            order from a zod enum. The refusal prose added here is therefore
+#            one file with two callers, and the next hand-rolled query parser
+#            will reach for `problems.badRequest` with a category noun again —
+#            the new census sees `safeParse` refusals only, and by construction
+#            a hand-rolled parse has none.
