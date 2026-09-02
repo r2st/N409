@@ -11306,3 +11306,120 @@
 #            gap: no census over "a reported figure derived from a variable a
 #            rescue branch reassigned". Both fixes were found by reading the
 #            function whole; the next one will be found the same way.
+#
+# R387 — Error message / user-facing text audit (M19). Five fixes over the
+#            surfaces R383–R386 had just moved, no SQL, no migration, no
+#            template version, 22 tests, at `d3d0fa1b..ff7ac74a`.
+#
+#            One shape ran through four of the five: a sentence that was true
+#            of the run it was written for and is asserted over every run since.
+#            R386 is what surfaced them — it made `estimate_volatility` answer
+#            null for a distribution nobody measured, and every reader of those
+#            five figures had been written on the assumption that they exist.
+#
+#            8fcd740 — `VolatilityPanel`. Exhibit F-1 already handled a pinned
+#            run in both directions: its peer-table footer reads `Analyst
+#            selection` where `row.method === 'manual'`, and `push()` drops a
+#            null distribution row. The panel handled neither. Its footer is the
+#            literal `Median — selected`, unconditionally, over a table whose
+#            every row said `Excluded`; the dispersion cell beside it is
+#            `pct(min)–pct(max)`, which with both bounds null renders `—–—`, a
+#            range between two absences. Five more statements about the same
+#            row: the card headed `Derived from peers` above `0 companies`, a
+#            divergence banner offering to adopt a `derivation`, a run note
+#            reading `62.0% from 0 companies`, and a history column falling
+#            through `?? row.method` to the raw enum word `manual`, because
+#            `METHODS` is the *selectable* estimators and `manual` is not one.
+#            `METHOD_LABELS` restates the server's `VOLATILITY_METHOD_LABELS`
+#            for the reason every label in that tree is restated: web-frontend
+#            has no dependency on shared.
+#
+#            4b98859 — the same disagreement inside the exhibit itself. F-1's
+#            lead paragraph asserts the median — "taken at the median, which is
+#            robust to a single outlier peer" — for every run, two rows above an
+#            `Estimator` cell reading `Analyst-selected` and immediately over a
+#            footer reading `Analyst selection`. So the exhibit contradicted its
+#            own table on one page of a signed deliverable, in the direction
+#            that claims more support for the figure than exists; under R386's
+#            nulls the median it claimed is the median of an empty set. F-1 is
+#            render-time, so no `409a.vNN` moves.
+#
+#            a9a1b00 — `safe_conversion.ownership_pct`, recorded as a gap by
+#            R386 and left because the arithmetic cannot be improved: the
+#            denominator is `next_round_shares + safe_shares`, the count the
+#            round price was struck off, so the shares the new round's own money
+#            buys are missing and the figure is an upper bound on the holder's
+#            position. What can be improved is the two words printing it. The
+#            debt card said `Ownership` and the credit exhibit `Ownership on
+#            conversion`; a founder reconciling either against the cap table
+#            after the round finds a higher number with nothing on the page
+#            saying why. Both now state their own denominator — `Metric` grew a
+#            `hint` slot, and the exhibit carries a note conditional on the
+#            figure being present, so a bond's result exhibit does not explain
+#            SAFEs.
+#
+#            29428e1 — R384's own flag, read by nobody. `deleteOrganization`
+#            detaches every engagement a holding company held, and each one's
+#            `portfolio_membership_changed` carries the change list a single
+#            hand-detachment produces, character for character. R384 saw that
+#            and wrote `organization_deleted: true` beside `changes` —
+#            deliberately outside it, "why the membership ended, which the
+#            before/after pair cannot say". `extractChanges` normalises four
+#            payload shapes and this is a fifth, so the field went into the
+#            spine, out through the audit JSON, into the change-log CSV and onto
+#            the tab, and was displayed by none of them. `EVENT_NOTES` is a map
+#            rather than a branch because the next one will be written the same
+#            way: beside `changes`, on a payload some repo already builds.
+#
+#            a658513 + ff7ac74 — the two bounded-quoting helpers, on the halves
+#            R383 and R385 did not have to look at. `_provider_words` is written
+#            after a colon at all five of its call sites, and answered the empty
+#            string for an empty body — so a 5xx from a proxy in front of a
+#            provider reached the analyst as `searxng HTTP 502: `, a sentence
+#            trailing off on its punctuation. It also mapped *every* control to
+#            `?`, and what these arms hand it is `resp.text`, a whole HTML error
+#            page: `502 Bad Gateway\n<hr>\nnginx` was published as `502 Bad
+#            Gateway?<hr>?nginx`, one `?` per line of markup, reading as
+#            corruption rather than as a provider's answer. A whitespace control
+#            becomes a space now and the rest stay `?` — both inert, neither can
+#            end the log line — and the space folds into the leading/interior
+#            handling instead of spending the 200-character bound. The twin
+#            finding is in `quote_for_message`/`quoteForMessage`: `(unnamed)`
+#            was guarded by `if not cleaned`, which is the empty string and a
+#            value of pure reordering controls and not a name of three spaces —
+#            so a blank-but-present spreadsheet cell was quoted as `'   '`. R383
+#            is what makes that reachable at thirty sites on
+#            `share_classes[].name`. Asked of the fragment the sentence keeps,
+#            so `' '×200` is `(unnamed)` rather than eighty spaces and an
+#            ellipsis, while `' '×79 + 'zz'` still quotes. Both runtimes in one
+#            commit, since `test_display_text.py` reads the TS file to hold them
+#            to one policy, and `cleanedWhole` — the oracle 3,000 randomised
+#            values are checked against — carries the new rule written the slow
+#            way.
+#
+#            Probed and left alone. `src/routes`, `clients`, `plugins`, `hooks`,
+#            `pipeline` and `repos` are already swept by
+#            `errorMessageQuality.test.ts` for contentless details, bare 403s,
+#            bare 404s and a 429 that will not say when; the five R380/R384
+#            organization refusals all name the thing and the remedy. The
+#            frontend twin `errorMessageCensus` covers the page side. R385's
+#            three pre-truncations are output-identical to what they replaced on
+#            every non-blank input.
+#
+#            gap: `AuditTrailTab` renders `change.field` raw — `dlom`,
+#            `parent_valuation_id` — while `humanizeField` exists on the server
+#            and the change-log CSV carries both spellings in adjacent columns.
+#            Defensible for an audit surface, and inconsistent with the CSV
+#            beside it; not decided here.
+#            gap: the AI service's `POST /ai/v1/pipelines/{pipeline}` answers
+#            `Unknown pipeline '{pipeline}'` with the path segment unquoted —
+#            the shape R383 closed one tier over. Its only caller passes a typed
+#            union, and the route is behind internal auth, so it is reachable
+#            only by a caller who already holds the service key. Recorded, not
+#            fixed.
+#            gap: nothing pins the panel's wording to the exhibit's. The
+#            volatility fix is two files agreeing by hand about four sentences,
+#            which is how they came to disagree in the first place.
+#            gap: `EVENT_NOTES` has one entry, and nothing walks the payloads
+#            repos actually write looking for the next flag beside `changes`.
+#            The census that would find it does not exist.
