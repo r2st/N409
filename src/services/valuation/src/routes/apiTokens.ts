@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageTokens } from '../auth/operations.js';
 import { canManageUsers } from '../auth/rbac.js';
+import { verifyReauthPassword } from '../auth/reauth.js';
 import {
   API_TOKEN_PAGE_LIMIT,
   apiTokenStats,
@@ -14,6 +15,7 @@ import {
   revokeApiToken,
   TOKEN_PAGE_LIMIT,
 } from '../repos/apiTokens.js';
+import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { flagParam } from '../domain/queryFlag.js';
@@ -63,8 +65,40 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
         'An API token cannot mint another API token — create it from the partner console while signed in',
       );
 
-    const parsed = z.object({ name: nonBlankText(1, 200) }).safeParse(req.body);
+    const parsed = z
+      .object({ name: nonBlankText(1, 200), current_password: z.string().min(1).optional() })
+      .safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid token', parsed.error);
+
+    /*
+     * Re-authenticated, on the same rule and for the same reason as `POST
+     * /api/v1/me/tokens` — and this is the mint that rule was written about.
+     * `auth/reauth.ts` lists the credential-level actions that sit behind a
+     * password prompt on an already signed-in session, "minting a personal API
+     * token" among them, because the session may not be the owner's and the
+     * password is the only thing still in the way. A firm key is strictly the
+     * stronger of the two: it is handed to an integration, it reads the whole
+     * of that firm's book, and `bumpSessionEpoch` — what a password change and
+     * "sign out everywhere" both do — deliberately does not touch API tokens.
+     * So a borrowed partner-admin cookie bought permanent access to a firm's
+     * engagements, and the owner noticing and changing their password
+     * afterwards revoked the cookie and left the key.
+     *
+     * Skipped when there is no digest to check, exactly as the personal mint
+     * skips it: an account that signs in through Google or SAML has no
+     * password to demand. For those the `req.apiToken` refusal above is what
+     * stops a key issuing its own successor.
+     */
+    const self = await findUserById(deps.pool, principal.id);
+    if (!self) throw problems.unauthorized();
+    if (self.password_digest) {
+      if (!parsed.data.current_password)
+        throw problems.unprocessable('Your current password is required to create an API token', {
+          errors: [{ path: ['current_password'] }],
+        });
+      if (!(await verifyReauthPassword(self.id, parsed.data.current_password, self.password_digest)))
+        throw problems.badRequest('Current password is incorrect');
+    }
 
     const { token, secret } = await createApiToken(deps.pool, {
       partnerId,

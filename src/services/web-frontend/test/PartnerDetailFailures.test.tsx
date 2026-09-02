@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { AuthProvider } from '../src/lib/auth';
 import { PartnerDetailPage } from '../src/pages/PartnerDetailPage';
 import type { PartnerDetail } from '../src/lib/types';
 
@@ -104,11 +105,15 @@ function mockApi(over: Partial<PartnerDetail> = {}, overrides: Route[] = []) {
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={[`/admin/partners/${PARTNER_ID}`]}>
-      <Routes>
-        <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
-      </Routes>
-    </MemoryRouter>,
+    // The token panel reads the signed-in account before it mints a firm key
+    // (round 359), so the page needs the auth context.
+    <AuthProvider>
+      <MemoryRouter initialEntries={[`/admin/partners/${PARTNER_ID}`]}>
+        <Routes>
+          <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>,
   );
 }
 
@@ -410,6 +415,7 @@ describe('PartnerDetailPage — the API token panel', () => {
     renderPage();
 
     await user.type(await screen.findByLabelText('New token name'), 'Portfolio sync');
+    await user.type(screen.getByLabelText('Your current password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Issue token' }));
 
     expect(await screen.findByText('A token by that name already exists.')).toBeInTheDocument();

@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 import { DEFAULT_MEDIA_TYPE } from '../../src/documents/mediaType.js';
 
 const dbUp = await isDbAvailable();
@@ -289,7 +297,7 @@ describe.skipIf(!dbUp)('adversarial partner-API declared media types', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(adminToken),
-      payload: { name: 'adversarial media types' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'adversarial media types' },
     });
     expect(minted.statusCode).toBe(201);
     apiKey = minted.json().secret as string;

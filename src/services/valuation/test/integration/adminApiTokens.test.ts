@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -27,7 +35,7 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name },
+      payload: { current_password: SEEDED_PASSWORD, name },
     });
     expect(res.statusCode, res.body).toBe(201);
     return res.json() as { token: { id: string }; secret: string };
@@ -228,7 +236,7 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
         method: 'POST',
         url: `/api/v1/partners/${partnerA}/tokens`,
         headers: authHeader(orgAdmin.token),
-        payload: { name: 'integration' },
+        payload: { current_password: SEEDED_PASSWORD, name: 'integration' },
       });
       expect(minted.statusCode, minted.body).toBe(201);
       const secret = minted.json().secret as string;
@@ -246,10 +254,66 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
         method: 'POST',
         url: `/api/v1/partners/${partnerA}/tokens`,
         headers: authHeader(secret),
-        payload: { name: 'successor' },
+        payload: { current_password: SEEDED_PASSWORD, name: 'successor' },
       });
       expect(second.statusCode).toBe(403);
       expect(second.json().detail).toContain('cannot mint another API token');
+    });
+  });
+
+  /**
+   * The password prompt in front of the firm key (round 359, methodology M4).
+   *
+   * `auth/reauth.ts` lists the credential-level actions that sit behind a
+   * password on an already signed-in session, and `POST /me/tokens` was made
+   * one of them because a borrowed cookie could otherwise mint a credential
+   * that survives every way of taking the cookie away. The firm key is the
+   * stronger of the two mints and had no prompt at all.
+   */
+  describe('minting a firm key re-authenticates', () => {
+    it('refuses the mint when no password is sent, and names the field', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/partners/${partnerA}/tokens`,
+        headers: authHeader(admin.token),
+        payload: { name: 'no password' },
+      });
+      expect(res.statusCode, res.body).toBe(422);
+      const body = res.json() as { detail: string; errors?: Array<{ path: string[] }> };
+      expect(body.detail).toContain('current password');
+      expect(body.errors?.[0]?.path).toEqual(['current_password']);
+    });
+
+    it('refuses a wrong password, and mints nothing', async () => {
+      const before = ((await list(admin.token, '?revoked=true')).json() as { total: number }).total;
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/partners/${partnerA}/tokens`,
+        headers: authHeader(admin.token),
+        payload: { current_password: `${SEEDED_PASSWORD}-wrong`, name: 'guessed' },
+      });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json().detail).toContain('Current password is incorrect');
+      const after = ((await list(admin.token, '?revoked=true')).json() as { total: number }).total;
+      expect(after).toBe(before);
+    });
+
+    it('mints for an SSO-only account, which has no password to demand', async () => {
+      // The same exception `POST /me/tokens` and `DELETE /me` make: an account
+      // that signs in through Google has no digest, so a prompt would be a box
+      // nobody can fill. The `req.apiToken` refusal above is what stops a key
+      // issuing its successor for those.
+      const sso = await seedUser(ctx, { roles: ['partner'], partnerId: partnerB });
+      await ctx.pool.query("UPDATE users SET password_digest = NULL, sso_provider = 'google' WHERE id = $1", [
+        sso.id,
+      ]);
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/partners/${partnerB}/tokens`,
+        headers: authHeader(sso.token),
+        payload: { name: 'sso-minted' },
+      });
+      expect(res.statusCode, res.body).toBe(201);
     });
   });
 

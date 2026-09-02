@@ -12,6 +12,7 @@ import {
   authHeader,
   forceState,
   isDbAvailable,
+  SEEDED_PASSWORD,
   seedPartner,
   seedUser,
   setupTestApp,
@@ -52,7 +53,7 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'hooks' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'hooks' },
     });
     apiKey = minted.json().secret as string;
 
@@ -61,7 +62,7 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
       method: 'POST',
       url: `/api/v1/partners/${otherPartnerId}/tokens`,
       headers: authHeader(otherAdmin.token),
-      payload: { name: 'other' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'other' },
     });
     otherApiKey = otherMinted.json().secret as string;
 

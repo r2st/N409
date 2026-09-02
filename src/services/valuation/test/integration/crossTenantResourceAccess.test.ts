@@ -1,7 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { newUlid } from '@n409/shared';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -102,8 +110,10 @@ describe.skipIf(!dbUp)('a second tenant naming the first tenant’s rows', () =>
     expect(comment.statusCode, comment.body).toBe(201);
     ids.comment = comment.json().comment.id;
 
+    // Re-authenticated since R359, on the same rule as the personal key below.
     const partnerToken = await as(owner, 'POST', `/api/v1/partners/${ownerPartnerId}/tokens`, {
       name: 'A integration',
+      current_password: SEEDED_PASSWORD,
     });
     expect(partnerToken.statusCode, partnerToken.body).toBe(201);
     ids.partnerToken = partnerToken.json().token.id;
@@ -255,7 +265,7 @@ describe.skipIf(!dbUp)('a second tenant naming the first tenant’s rows', () =>
       name: 'mint a token against another firm',
       method: 'POST',
       url: () => `/api/v1/partners/${ownerPartnerId}/tokens`,
-      payload: () => ({ name: 'stolen' }),
+      payload: () => ({ current_password: SEEDED_PASSWORD, name: 'stolen' }),
       expected: 403,
       disclosureReason: 'same as the listing above — the refusal is about the caller, not about the row',
       ownerExpected: 201,

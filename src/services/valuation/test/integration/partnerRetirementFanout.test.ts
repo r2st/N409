@@ -3,7 +3,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { runRetentionSweep } from '../../src/routes/retention.js';
 import { invalidateValuation } from '../../src/repos/valuations.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -65,7 +73,7 @@ describe.skipIf(!dbUp)('the retirement fan-out', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(partnerAdmin.token),
-      payload: { name: 'fanout' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'fanout' },
     });
     expect(minted.statusCode).toBe(201);
     apiKey = minted.json().secret as string;

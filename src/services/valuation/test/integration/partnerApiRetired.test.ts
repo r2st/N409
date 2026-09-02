@@ -4,7 +4,15 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { retireValuations } from '../../src/repos/valuationPurge.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 import { mutatingValuationRoutes } from '../support/routeTable.js';
 
 const dbUp = await isDbAvailable();
@@ -69,7 +77,7 @@ describe.skipIf(!dbUp)('the partner API and a retired engagement', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'retirement sweep' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'retirement sweep' },
     });
     expect(minted.statusCode).toBe(201);
     apiKey = minted.json().secret as string;

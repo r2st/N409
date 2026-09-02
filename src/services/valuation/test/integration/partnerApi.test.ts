@@ -11,6 +11,7 @@ import {
   authHeader,
   forceState,
   isDbAvailable,
+  SEEDED_PASSWORD,
   seedPartner,
   seedUser,
   setupTestApp,
@@ -50,7 +51,7 @@ describe.skipIf(!dbUp)('partner API', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(partnerAdminToken),
-      payload: { name: 'CI integration' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'CI integration' },
     });
     expect(minted.statusCode).toBe(201);
     apiKey = minted.json().secret as string;
@@ -60,7 +61,7 @@ describe.skipIf(!dbUp)('partner API', () => {
       method: 'POST',
       url: `/api/v1/partners/${otherPartnerId}/tokens`,
       headers: authHeader(otherAdmin.token),
-      payload: { name: 'Rival key' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'Rival key' },
     });
     otherApiKey = otherMinted.json().secret as string;
   }, 60_000);
@@ -338,7 +339,7 @@ describe.skipIf(!dbUp)('partner API', () => {
         method: 'POST',
         url: `/api/v1/partners/${pid}/tokens`,
         headers: authHeader(admin.token),
-        payload: { name: 'tight' },
+        payload: { current_password: SEEDED_PASSWORD, name: 'tight' },
       });
       const key = minted.json().secret as string;
 
@@ -385,7 +386,7 @@ describe.skipIf(!dbUp)('partner API', () => {
           method: 'POST',
           url: `/api/v1/partners/${pid}/tokens`,
           headers: authHeader(admin.token),
-          payload: { name },
+          payload: { current_password: SEEDED_PASSWORD, name },
         });
         expect(minted.statusCode).toBe(201);
         return minted.json().secret as string;
@@ -443,7 +444,7 @@ describe.skipIf(!dbUp)('partner API', () => {
         method: 'POST',
         url: `/api/v1/partners/${pid}/tokens`,
         headers: authHeader(admin.token),
-        payload: { name: 'spray' },
+        payload: { current_password: SEEDED_PASSWORD, name: 'spray' },
       });
       const key = minted.json().secret as string;
       const ping = () =>
@@ -497,7 +498,7 @@ describe.skipIf(!dbUp)('partner API', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(partnerAdminToken),
-      payload: { name: 'short-lived' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'short-lived' },
     });
     const { token, secret } = minted.json();
     expect(
@@ -544,7 +545,7 @@ describe.skipIf(!dbUp)('partner API', () => {
         method: 'POST',
         url: `/api/v1/partners/${firmId}/tokens`,
         headers: authHeader(admin.token),
-        payload: { name: `${name} integration` },
+        payload: { current_password: SEEDED_PASSWORD, name: `${name} integration` },
       });
       expect(minted.statusCode).toBe(201);
       return { firmId, admin, secret: minted.json().secret as string };
@@ -642,7 +643,7 @@ describe.skipIf(!dbUp)('partner API: GET /me', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(adminToken),
-      payload: { name: 'production' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'production' },
     });
     expect(minted.statusCode).toBe(201);
     apiKey = minted.json().secret as string;
@@ -683,7 +684,7 @@ describe.skipIf(!dbUp)('partner API: GET /me', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(adminToken),
-      payload: { name: 'staging' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'staging' },
     });
     expect(second.statusCode).toBe(201);
     const first = (await me(apiKey)).json() as { partner: { id: string }; token: { id: string } };
@@ -734,7 +735,7 @@ describe.skipIf(!dbUp)('partner API: GET /me', () => {
       method: 'POST',
       url: `/api/v1/partners/${doomedPartner}/tokens`,
       headers: authHeader(doomedAdmin.token),
-      payload: { name: 'about to close' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'about to close' },
     });
     const doomedKey = minted.json().secret as string;
     expect((await me(doomedKey)).statusCode).toBe(200);
@@ -779,7 +780,7 @@ describe.skipIf(!dbUp)('partner API: external_id', () => {
       method: 'POST',
       url: `/api/v1/partners/${owner}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'external-id tests' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'external-id tests' },
     });
     expect(minted.statusCode).toBe(201);
     return minted.json().secret as string;
@@ -923,7 +924,7 @@ describe.skipIf(!dbUp)('partner API: submit', () => {
       method: 'POST',
       url: `/api/v1/partners/${owner}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'submit tests' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'submit tests' },
     });
     return minted.json().secret as string;
   };
@@ -1068,7 +1069,7 @@ describe.skipIf(!dbUp)('partner API: update', () => {
       method: 'POST',
       url: `/api/v1/partners/${owner}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'update tests' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'update tests' },
     });
     return minted.json().secret as string;
   };

@@ -7,7 +7,15 @@ import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { PARTNER_API_ENDPOINTS, PARTNER_API_PREFIX } from '../../src/routes/partnerApi.js';
 import { recordDelivery } from '../../src/repos/partnerWebhooks.js';
 import { MAX_DOCUMENT_BYTES } from '../../src/routes/documents.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -51,7 +59,7 @@ describe.skipIf(!dbUp)('partner API scoping and paging', () => {
       method: 'POST',
       url: `/api/v1/partners/${forPartnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name },
+      payload: { current_password: SEEDED_PASSWORD, name },
     });
     expect(res.statusCode).toBe(201);
     return res.json().secret as string;

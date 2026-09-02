@@ -9,7 +9,15 @@ import {
 } from '../../src/routes/partnerApi.js';
 import { schemaKey } from '../../src/domain/openapi.js';
 import { SELF_DESCRIBING_PATHS } from '../../src/domain/partnerApiContract.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -132,7 +140,7 @@ describe.skipIf(!dbUp)('partner API response contract', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'contract' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'contract' },
     });
     expect(minted.statusCode).toBe(201);
     apiKey = minted.json().secret as string;

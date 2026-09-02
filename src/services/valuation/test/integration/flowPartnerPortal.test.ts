@@ -3,6 +3,7 @@ import {
   authHeader,
   forceState,
   isDbAvailable,
+  SEEDED_PASSWORD,
   seedPartner,
   seedUser,
   setupTestApp,
@@ -251,6 +252,7 @@ describe.skipIf(!dbUp)('the partner portal', () => {
     it('mints API credentials for its own firm and not another', async () => {
       const mine = await as(partner.token, 'POST', `/api/v1/partners/${firmId}/tokens`, {
         name: 'Keystone integration',
+        current_password: SEEDED_PASSWORD,
       });
       expect(mine.statusCode).toBe(201);
       // Shown once, on creation, and never listed again.
@@ -261,6 +263,7 @@ describe.skipIf(!dbUp)('the partner portal', () => {
 
       const theirs_ = await as(partner.token, 'POST', `/api/v1/partners/${rivalFirmId}/tokens`, {
         name: 'Not mine',
+        current_password: SEEDED_PASSWORD,
       });
       expect(theirs_.statusCode).toBe(403);
     });
@@ -278,6 +281,7 @@ describe.skipIf(!dbUp)('the partner portal', () => {
     it('cannot mint API credentials for it', async () => {
       const res = await as(member.token, 'POST', `/api/v1/partners/${firmId}/tokens`, {
         name: 'From a seat',
+        current_password: SEEDED_PASSWORD,
       });
       expect(res.statusCode).toBe(403);
       expect((await as(member.token, 'GET', `/api/v1/partners/${firmId}/tokens`)).statusCode).toBe(403);

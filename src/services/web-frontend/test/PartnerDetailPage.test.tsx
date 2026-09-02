@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { AuthProvider } from '../src/lib/auth';
 import { PartnerDetailPage } from '../src/pages/PartnerDetailPage';
 import type { PartnerDetail } from '../src/lib/types';
 
@@ -104,11 +105,17 @@ function mockApi(over: Partial<PartnerDetail> = {}, savedView?: { created: boole
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={[`/admin/partners/${PARTNER_ID}`]}>
-      <Routes>
-        <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
-      </Routes>
-    </MemoryRouter>,
+    // The token panel asks the signed-in account whether it has a password to
+    // confirm before it mints a firm key (round 359), so the page needs the
+    // auth context. No stored session here, so the provider settles anonymous
+    // without a request of its own.
+    <AuthProvider>
+      <MemoryRouter initialEntries={[`/admin/partners/${PARTNER_ID}`]}>
+        <Routes>
+          <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>,
   );
 }
 
@@ -263,6 +270,7 @@ describe('PartnerDetailPage', () => {
       renderPage();
 
       await user.type(await screen.findByLabelText('New token name'), 'Portfolio sync');
+      await user.type(screen.getByLabelText('Your current password'), 'hunter2');
       await user.click(screen.getByRole('button', { name: 'Issue token' }));
 
       expect(await screen.findByText('n409_live_supersecret')).toBeInTheDocument();
@@ -284,6 +292,26 @@ describe('PartnerDetailPage', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Issue token' }));
 
       expect(await screen.findByText('Token name is required.')).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+    });
+
+    /**
+     * The password in front of the firm key (round 359, methodology M4).
+     *
+     * This mint hands out the credential that reads the whole firm's book and
+     * outlives every way of ending a browser session, and it was the one mint
+     * on the platform with no prompt — while the strictly weaker personal key
+     * on the settings page had one since R262.
+     */
+    it('refuses to issue a firm key without the current password, and says so', async () => {
+      const calls = mockApi();
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.type(await screen.findByLabelText('New token name'), 'Portfolio sync');
+      await user.click(screen.getByRole('button', { name: 'Issue token' }));
+
+      expect(await screen.findByText('Password is required.')).toBeInTheDocument();
       expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
     });
   });
@@ -707,12 +735,15 @@ describe('PartnerDetailPage — navigating between firms', () => {
 
   const renderTwoFirms = () =>
     render(
-      <MemoryRouter initialEntries={[`/admin/partners/${PARTNER_ID}`]}>
-        <Routes>
-          <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
-        </Routes>
-        <Link to={`/admin/partners/${OTHER_ID}`}>Open the other firm</Link>
-      </MemoryRouter>,
+      // As in `renderPage` above: the token panel reads the signed-in account.
+      <AuthProvider>
+        <MemoryRouter initialEntries={[`/admin/partners/${PARTNER_ID}`]}>
+          <Routes>
+            <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
+          </Routes>
+          <Link to={`/admin/partners/${OTHER_ID}`}>Open the other firm</Link>
+        </MemoryRouter>
+      </AuthProvider>,
     );
 
   it('fills the branding forms from the firm in the URL, not the one that replied last', async () => {

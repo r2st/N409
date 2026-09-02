@@ -4,7 +4,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { decodeCursor } from '../../src/domain/pagination.js';
 import { DELIVERIES_PAGE_MAX, listDeliveries } from '../../src/repos/partnerWebhooks.js';
-import { isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -99,7 +106,7 @@ describe.skipIf(!dbUp)('cursor pagination', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: { authorization: `Bearer ${admin.token}` },
-      payload: { name: 'cursors' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'cursors' },
     });
     apiKey = minted.json().secret as string;
 

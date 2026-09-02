@@ -4,7 +4,15 @@ import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { newWebhookSecret, setWebhookTargetPolicy } from '../../src/domain/partnerWebhooks.js';
 import { deliverToWebhook } from '../../src/hooks/partnerWebhooks.js';
 import { createWebhook, listDeliveries } from '../../src/repos/partnerWebhooks.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -43,7 +51,7 @@ describe.skipIf(!dbUp)('partner webhook SSRF guard', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'ssrf' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'ssrf' },
     });
     apiKey = minted.json().secret as string;
 

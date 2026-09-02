@@ -4,6 +4,7 @@ import {
   authHeader,
   forceState,
   isDbAvailable,
+  SEEDED_PASSWORD,
   seedPartner,
   seedUser,
   setupTestApp,
@@ -332,7 +333,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         method: 'POST',
         url: `/api/v1/partners/${partnerId}/tokens`,
         headers: authHeader(partnerAdmin.token),
-        payload: { name: 'CI integration' },
+        payload: { current_password: SEEDED_PASSWORD, name: 'CI integration' },
       });
       expect(res.statusCode).toBe(201);
       secret = res.json().secret;
@@ -346,7 +347,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         method: 'POST',
         url: `/api/v1/partners/${partnerId}/tokens`,
         headers: authHeader(partnerMember.token),
-        payload: { name: 'nope' },
+        payload: { current_password: SEEDED_PASSWORD, name: 'nope' },
       });
       expect(member.statusCode).toBe(403);
 
@@ -400,7 +401,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         method: 'POST',
         url: `/api/v1/partners/${otherPartnerId}/tokens`,
         headers: authHeader(ops.token),
-        payload: { name: 'ops-provisioned' },
+        payload: { current_password: SEEDED_PASSWORD, name: 'ops-provisioned' },
       });
       expect(res.statusCode).toBe(201);
     });

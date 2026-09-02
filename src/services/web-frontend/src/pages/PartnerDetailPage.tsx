@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, describeActionFailure } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import {
   isEmailAddress,
   optional,
@@ -11,6 +12,7 @@ import {
 } from '../lib/useFormValidation';
 import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/format';
 import { NAMED_BUCKETS, PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
+import { hasPassword } from '../lib/rbac';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import type {
@@ -255,10 +257,12 @@ interface ApiToken {
  * flashed in a toast that a mistimed blink loses.
  */
 function ApiTokenPanel({ partnerId }: { partnerId: string }) {
+  const { user } = useAuth();
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
   /** True when the partner holds more tokens than this page carries. */
   const [tokensTruncated, setTokensTruncated] = useState(false);
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [issued, setIssued] = useState<{ name: string; secret: string } | null>(null);
   /*
    * The failed *read* is held apart from a refused create or revoke, because
@@ -302,9 +306,21 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
     void load();
   }, [load, token]);
 
+  /*
+   * A firm key is a credential-level action, so the server re-authenticates the
+   * mint — the same prompt the personal key on the settings page carries, and
+   * for a stronger reason: this one is handed to an integration, reads the
+   * whole firm's book, and outlives every way of ending a browser session.
+   * Skipped for an account with no password, which has none to confirm.
+   */
+  const needsPassword = hasPassword(user);
+
   const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
-    { name },
-    { name: required('name', 'Token name') },
+    { name, password },
+    {
+      name: required('name', 'Token name'),
+      password: needsPassword ? required('password', 'Password') : undefined,
+    },
   );
 
   const create = handleSubmit(async () => {
@@ -313,10 +329,12 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
     try {
       const res = await api<{ secret: string }>(`/partners/${partnerId}/tokens`, {
         method: 'POST',
-        body: { name: name.trim() },
+        body: { name: name.trim(), current_password: password },
       });
       setIssued({ name: name.trim(), secret: res.secret });
       setName('');
+      // Never leave a password sitting in a form that stays on screen.
+      setPassword('');
       reset();
       await load();
     } catch (err) {
@@ -393,6 +411,20 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
             className="!w-72"
           />
         </Field>
+        {needsPassword && (
+          <Field label="Your current password" error={errorFor('password')}>
+            <TextInput
+              aria-label="Your current password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onBlur={blurHandler('password')}
+              required
+              className="!w-64"
+            />
+          </Field>
+        )}
         <Button type="submit" disabled={busy}>
           Issue token
         </Button>

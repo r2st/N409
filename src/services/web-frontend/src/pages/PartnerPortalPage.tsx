@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
+import { hasPassword } from '../lib/rbac';
 import { computeStats } from '../lib/stats';
 import { formatDate, formatDateTime } from '../lib/format';
 import type { ApiToken, PartnerBranding, Valuation, ValuationList } from '../lib/types';
@@ -39,6 +40,15 @@ export function PartnerPortalPage() {
   const [org, setOrg] = useState<PartnerBranding | null>(null);
   const partnerId = user?.partner_id ?? null;
   const canMint = Boolean(user?.roles.includes('partner')); // org admins, not members
+  /*
+   * A firm key is a credential-level action, so the server re-authenticates the
+   * mint — the same prompt the personal key on the settings page carries, and
+   * for a stronger reason: this one is handed to an integration, reads the
+   * whole firm's book, and survives every way of ending a browser session.
+   * Skipped for an account with no password, which has none to confirm.
+   */
+  const needsPassword = hasPassword(user);
+  const [password, setPassword] = useState('');
 
   useEffect(() => {
     api<ValuationList>('/valuations?per_page=100')
@@ -70,15 +80,21 @@ export function PartnerPortalPage() {
   const mint = async (e: FormEvent) => {
     e.preventDefault();
     if (!partnerId || !name.trim()) return;
+    if (needsPassword && !password) {
+      setTokenError('Your current password is required to create a token.');
+      return;
+    }
     setBusy(true);
     setTokenError(null);
     try {
       const res = await api<{ token: ApiToken; secret: string }>(`/partners/${partnerId}/tokens`, {
         method: 'POST',
-        body: { name: name.trim() },
+        body: { name: name.trim(), current_password: password },
       });
       setMinted({ name: res.token.name, secret: res.secret });
       setName('');
+      // Never leave a password sitting in a form that stays on screen.
+      setPassword('');
       loadTokens();
     } catch (err) {
       setTokenError(describeActionFailure(err, 'Could not create the token.'));
@@ -231,7 +247,19 @@ export function PartnerPortalPage() {
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
-            <Button type="submit" disabled={busy || !name.trim()}>
+            {needsPassword && (
+              <div className="w-full sm:w-64">
+                <TextInput
+                  aria-label="Your current password"
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Your current password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            )}
+            <Button type="submit" disabled={busy || !name.trim() || (needsPassword && !password)}>
               {busy ? 'Creating…' : 'Create token'}
             </Button>
           </form>

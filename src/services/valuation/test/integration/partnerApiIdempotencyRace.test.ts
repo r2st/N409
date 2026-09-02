@@ -1,7 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -39,7 +47,7 @@ describe.skipIf(!dbUp)('partner API idempotency under concurrency', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'race test' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'race test' },
     });
     expect(minted.statusCode).toBe(201);
     apiKey = minted.json().secret as string;

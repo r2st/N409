@@ -3,6 +3,7 @@ import {
   authHeader,
   forceState,
   isDbAvailable,
+  SEEDED_PASSWORD,
   seedPartner,
   seedUser,
   setupTestApp,
@@ -218,7 +219,7 @@ describe.skipIf(!dbUp)('the draft stamp on a delivered report', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'stamp-check' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'stamp-check' },
     });
     expect(res.statusCode).toBe(201);
     return { token: res.json().secret as string };

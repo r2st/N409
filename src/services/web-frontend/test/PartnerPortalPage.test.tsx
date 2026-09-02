@@ -334,6 +334,7 @@ describe('PartnerPortalPage — API tokens', () => {
 
     await screen.findByText('No tokens yet.');
     await user.type(screen.getByLabelText('Token name'), '  CRM integration  ');
+    await user.type(screen.getByLabelText('Your current password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
     expect(await screen.findByText(/Token “CRM integration” created/)).toBeInTheDocument();
@@ -342,6 +343,30 @@ describe('PartnerPortalPage — API tokens', () => {
 
     const post = calls.find((c) => c.method === 'POST' && c.path.endsWith('/tokens'));
     expect(post?.body?.name).toBe('CRM integration');
+    // The firm key is re-authenticated server-side (round 359); the prompt has
+    // to actually reach it, not merely appear.
+    expect(post?.body?.current_password).toBe('hunter2');
+  });
+
+  /**
+   * The password in front of the firm key (round 359, methodology M4).
+   *
+   * `POST /partners/:id/tokens` mints the credential that is handed to an
+   * integration, reads the whole firm's book, and outlives every way of ending
+   * a browser session — and it was the one mint on the platform with no prompt,
+   * while the strictly weaker personal key on the settings page had one.
+   */
+  it('will not mint a firm key until the current password is given', async () => {
+    mockServer({ partner: null, tokens: [] });
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('No tokens yet.');
+    await user.type(screen.getByLabelText('Token name'), 'CRM integration');
+    expect(screen.getByRole('button', { name: 'Create token' })).toBeDisabled();
+
+    await user.type(screen.getByLabelText('Your current password'), 'hunter2');
+    expect(screen.getByRole('button', { name: 'Create token' })).not.toBeDisabled();
   });
 
   it('clears the name and reloads the list after a mint', async () => {
@@ -351,6 +376,7 @@ describe('PartnerPortalPage — API tokens', () => {
 
     await screen.findByText('No tokens yet.');
     await user.type(screen.getByLabelText('Token name'), 'CRM integration');
+    await user.type(screen.getByLabelText('Your current password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
     // The new token appears in the table, and the form is ready for the next.
@@ -369,6 +395,7 @@ describe('PartnerPortalPage — API tokens', () => {
 
     await screen.findByText('No tokens yet.');
     await user.type(screen.getByLabelText('Token name'), 'CRM');
+    await user.type(screen.getByLabelText('Your current password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
     await screen.findByText(/Token “CRM” created/);
     await user.click(screen.getByRole('button', { name: 'Copy' }));
@@ -392,6 +419,7 @@ describe('PartnerPortalPage — API tokens', () => {
 
     await screen.findByText('No tokens yet.');
     await user.type(screen.getByLabelText('Token name'), 'CRM integration');
+    await user.type(screen.getByLabelText('Your current password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
     expect(await screen.findByText('A token with that name already exists')).toBeInTheDocument();
@@ -405,6 +433,7 @@ describe('PartnerPortalPage — API tokens', () => {
 
     await screen.findByText('No tokens yet.');
     await user.type(screen.getByLabelText('Token name'), 'CRM');
+    await user.type(screen.getByLabelText('Your current password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
     await screen.findByText('boom');

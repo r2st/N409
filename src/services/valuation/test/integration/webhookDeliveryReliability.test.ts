@@ -6,6 +6,7 @@ import {
   authHeader,
   interceptPoolQueries,
   isDbAvailable,
+  SEEDED_PASSWORD,
   seedPartner,
   seedUser,
   setupTestApp,
@@ -66,7 +67,7 @@ describe.skipIf(!dbUp)('webhook delivery reliability', () => {
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
       headers: authHeader(admin.token),
-      payload: { name: 'reliability' },
+      payload: { current_password: SEEDED_PASSWORD, name: 'reliability' },
     });
     apiKey = minted.json().secret as string;
 
