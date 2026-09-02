@@ -11638,3 +11638,110 @@
 #            gap: `discarded_signoffs` is still a list of ids of rows that no
 #            longer exist — R388's gap, and still a PII decision rather than a
 #            repair.
+#
+# R390 — Silent failure audit (M5). Three findings, each one a statement that
+#            reported an outcome it had not achieved, at `30880754..3b2e5f99`.
+#            The shape the round kept finding: a write that matched nothing, and
+#            a caller that answered for what it had asked rather than for what
+#            landed.
+#
+#            5a522b3 — a role grant the `roles` table cannot honour, committed
+#            as a smaller one. `assignRoles` is `INSERT INTO user_roles … SELECT
+#            $1, id FROM roles WHERE key = ANY($2)`, so it inserts one row per
+#            key it *finds*. Its own note said "the set is validated where it is
+#            chosen" — and it is, against `ROLE_KEYS`, a TypeScript constant.
+#            The other side of the join is a seed migration (0002, plus
+#            `auditor` in 0081). Two lists, two files, no compiler between them,
+#            and the failure is not a smaller grant than asked for but a
+#            different one nobody is told about: `createUser` and
+#            `createProvisionedUser` both `return { ...row, roles: args.roles }`,
+#            so the caller, the SCIM response and the admin console all report a
+#            role the account does not hold, and `adminPatchUser` — which
+#            replaces the set, `DELETE FROM user_roles` and then this — leaves an
+#            account with **no roles at all** over a 204. The statement reports
+#            what it matched now (a data-modifying CTE, so still one round trip
+#            and one insert) and an unmatched key raises; every caller is inside
+#            `withTransaction`, so the creation or the replacement rolls back
+#            with it and the two `roles: args.roles` returns become true.
+#            `roleSeedCensus.test.ts` keeps it from getting that far: both sides
+#            derived, no database, 18 keys on each today, plus the reverse
+#            direction, a refusal of `DELETE FROM roles` (the FK has no ON
+#            DELETE, so that fails at migrate time mid-release) and a vacuity
+#            guard. Same shape as `promptRegistrySeeds.test.ts`.
+#
+#            d428c1b — an unreadable sheet index, read as a workbook that never
+#            had one. `_xlsx_rels` answered `{}` for both "there is no
+#            relationships part" and "there is one and it will not parse", and
+#            `_xlsx_sheets` reads `{}` as licence to pair the Nth declared sheet
+#            with `sheet{N}.xml`. That guess is sound for the first case only: a
+#            workbook with no relationships part can only be a simple one, and
+#            the `N` is a creation-order id that diverges from tab position for
+#            good the first time a tab is reordered. So a corrupt index put the
+#            client's own tab names over rows they were never matched to —
+#            `=== Sheet: Cap Table ===` above the revenue rows, which is the
+#            failure `_xlsx_sheets`' own docstring describes ("confidently
+#            pulled share classes out of a P&L"). Nothing raised, nothing
+#            counted, and this is the tier with no operator in the loop by
+#            construction. The unreadable case now takes the caller's
+#            damaged-file fallback — the same parts, numbered `Sheet1…SheetN`,
+#            claiming nothing about which tab is which — so every row is kept and
+#            only the pairing goes, the trade `UNREAD_NOTE` and the per-sheet
+#            note already make. One `xlsx_sheet_index_unreadable` warning beside
+#            it, for the audience the corpus cannot reach.
+#
+#            3b2e5f9 — a signing link mailed to a director the list no longer
+#            has. `POST /board/members/:memberId/send` reads the member with
+#            `findSignoffById` — its own statement, on its own connection — and
+#            then re-mints the token with `UPDATE board_signoffs … WHERE id =
+#            $1`. `deleteBoardMember` is a live door in that window, and it is
+#            the same window `deleteBoardMember` reasons about itself when it
+#            refuses a second removal for a double-clicked button. An UPDATE
+#            that matches nothing is not an error: the route emailed a director
+#            who had just been taken off the sign-off list a message about the
+#            board resolution adopting a 409A FMV, carrying a link whose token
+#            hashes to a row that does not exist, and answered `sent: true`.
+#            Both statements report whether they landed now. The re-mint refuses
+#            with the 404 the lookup would have given a statement earlier —
+#            first write, nothing revoked, nothing queued. The stamp does not
+#            refuse, because by then the message has left; it gets the second
+#            `logUnretried` line beside R301's, saying the different thing. The
+#            race is run rather than described: a held transaction deletes the
+#            row uncommitted, so the lookup still sees it and the UPDATE queues
+#            behind the row lock. Pre-fix that test answers 200 and queues the
+#            mail.
+#
+#            Probed and left alone. `silentCatchCensus`'s twenty `.catch(() =>`
+#            handlers in valuation still carry their markers; the frontend's
+#            thirty loads all reach a `setError`/`*Failed` state; `no-floating-
+#            promises` covers the four server packages; the AI tier's spend
+#            ceilings are covered by `config_check`'s roster, which already
+#            names "an unusable value reads as unlimited" as the reason it
+#            exists; `refreshInvitation`, `markPayment`, `stageTotpSecret` and
+#            `confirmTotpEnrollment` all already RETURN or count their rows,
+#            which is what made the board pair legible as the outlier.
+#
+#            gap: nothing derives the population the board fix belongs to. "An
+#            `UPDATE … WHERE id = $1` whose row identity came from an earlier
+#            statement, returning `void`" is a census this estate does not have,
+#            and the twenty candidates it would list are mostly idempotent
+#            bookkeeping where zero rows is the right answer. Separating those
+#            from the two that are not takes a rule about the *caller*, not the
+#            statement.
+#            gap: a workbook relationships part that parses but does not cover
+#            every `r:id` in `xl/workbook.xml` still falls through the positional
+#            guess, one sheet at a time — the same unsound guess in the mixed
+#            case, where it looks fine because the sheets around it paired
+#            correctly. Closing it means deciding what a declared tab with no
+#            reachable part should say, which R344 argued must not be silence.
+#            gap: `createPasswordResetToken` inserts `SELECT … FROM users u
+#            WHERE u.id = $2` and returns the secret whatever the insert wrote,
+#            so an account closed between the caller's lookup and this statement
+#            gets a reset mail whose link has no row. The same shape as the
+#            board pair and a benign outcome — the link simply reports itself
+#            unknown — so it is on the list rather than in the diff.
+#            gap: three connector `error.slice(0, 500)` calls and
+#            `recordSendFailure`'s two bound a provider's text with `slice`
+#            rather than `sliceChars`. Every one lands in a `text` column, where
+#            a halved astral character becomes `U+FFFD` rather than failing the
+#            write — a display loss, not the `22P02` `textSlice.ts` documents for
+#            `jsonb`. No payload literal in this service cuts a string.
