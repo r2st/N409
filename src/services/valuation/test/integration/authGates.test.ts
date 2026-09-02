@@ -2,7 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
 import { upsertSamlConfig } from '../../src/repos/ssoConfig.js';
 import { totp } from '../../src/auth/totp.js';
-import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 

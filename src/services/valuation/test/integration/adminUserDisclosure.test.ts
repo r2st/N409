@@ -2,7 +2,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 /**
  * What an administrator is shown of an account, and what they were shown.
@@ -115,7 +122,8 @@ describe.skipIf(!dbUp)('what the admin user routes disclose', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: authHeader(admin.token),
-      payload: { current_password: SEEDED_PASSWORD,
+      payload: {
+        current_password: SEEDED_PASSWORD,
         email: `created-${target.id.toLowerCase()}@test.example.com`,
         password: 'Str0ng-Test-Passw0rd!x',
         roles: ['valuation_user'],

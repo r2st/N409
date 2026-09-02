@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -42,7 +50,13 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: auth(),
-      payload: { current_password: SEEDED_PASSWORD, email: email(), password: 'correct-horse-battery-9', roles: ['valuation_user'], ...over },
+      payload: {
+        current_password: SEEDED_PASSWORD,
+        email: email(),
+        password: 'correct-horse-battery-9',
+        roles: ['valuation_user'],
+        ...over,
+      },
     });
     expect(res.statusCode, res.body).toBe(201);
     return res.json().user as { id: string; email: string; roles: string[] };
@@ -136,7 +150,12 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
           method: 'POST',
           url: '/api/v1/users',
           headers: auth(),
-          payload: { current_password: SEEDED_PASSWORD, email: email(), password: 'correct-horse-battery-9', roles: [role] },
+          payload: {
+            current_password: SEEDED_PASSWORD,
+            email: email(),
+            password: 'correct-horse-battery-9',
+            roles: [role],
+          },
         });
         expect(created.statusCode, role).toBe(422);
         expect(created.json().detail).toMatch(/require a partner organisation/i);
@@ -180,7 +199,8 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
           method: 'POST',
           url: '/api/v1/users',
           headers: auth(),
-          payload: { current_password: SEEDED_PASSWORD,
+          payload: {
+            current_password: SEEDED_PASSWORD,
             email: email(),
             password: 'correct-horse-battery-9',
             roles: ['partner'],
@@ -642,7 +662,12 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: auth(),
-        payload: { current_password: SEEDED_PASSWORD, email: a.email, password: 'correct-horse-battery-9', roles: ['valuation_user'] },
+        payload: {
+          current_password: SEEDED_PASSWORD,
+          email: a.email,
+          password: 'correct-horse-battery-9',
+          roles: ['valuation_user'],
+        },
       });
       expect(dup.statusCode).toBe(409);
 
