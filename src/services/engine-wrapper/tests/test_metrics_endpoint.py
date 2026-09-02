@@ -26,9 +26,11 @@ from app import build_info as build_info_module
 from app.main import app
 from app.metrics import (
     MAX_SERIES_PER_METRIC,
+    UNKNOWN_METHOD,
     MetricsRegistry,
     escape_label_value,
     format_value,
+    method_label,
     metrics_caller_authorized,
     metrics_token,
     route_label,
@@ -265,3 +267,28 @@ def test_the_escaper_keeps_the_three_the_format_defines_and_replaces_the_rest():
     # A replacement character the caller sent themselves is left alone, and an
     # ordinary path is untouched.
     assert escape_label_value("/api/v1/\ufffd") == "/api/v1/\ufffd"
+
+
+def test_an_invented_method_is_folded_so_a_scanner_cannot_fill_the_cap(_token):
+    """R370, methodology M6. h11 accepts any token as a method; llhttp does not.
+
+    The TypeScript twin needs no bound here — Node answers an unknown method at
+    the parser, so `method` is drawn from about thirty values. Starlette
+    answers this one 405, and counts it, which is right; what was wrong is that
+    it counted it under a label value the caller chose.
+    """
+    client.request("FOOBAR1", "/health")
+    client.request("BAZQUX2", "/health")
+    body = _scrape({"x-internal-token": TOKEN}).text
+    assert "FOOBAR1" not in body
+    assert "BAZQUX2" not in body
+    assert 'http_requests_total{method="unknown",route="/health",status="4xx"} 2' in body
+
+
+def test_the_methods_worth_naming_are_still_named():
+    for known in ("GET", "POST", "DELETE", "PATCH", "OPTIONS", "PROPFIND"):
+        assert method_label(known) == known
+    assert method_label("get") == "GET"
+    # Two hundred invented verbs are one series, not two hundred.
+    assert len({method_label(f"VERB{i}") for i in range(200)}) == 1
+    assert method_label("") == UNKNOWN_METHOD

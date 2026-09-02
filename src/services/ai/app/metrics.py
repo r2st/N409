@@ -130,6 +130,71 @@ def route_label(path: str | None, fallback: str = "unknown") -> str:
     return "/" + "/".join(segments)
 
 
+#: The methods a request may be counted under by name.
+#:
+#: RFC 9110's own set, plus PATCH (RFC 5789), and the WebDAV verbs a scanner
+#: reaches for often enough that folding them would lose a real signal. Nothing
+#: here serves any of the last group; a spike of them is somebody looking.
+KNOWN_METHODS: frozenset[str] = frozenset(
+    {
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "DELETE",
+        "CONNECT",
+        "OPTIONS",
+        "TRACE",
+        "PATCH",
+        "PROPFIND",
+        "PROPPATCH",
+        "MKCOL",
+        "COPY",
+        "MOVE",
+        "LOCK",
+        "UNLOCK",
+    }
+)
+
+#: What an unrecognised method is counted as. `route_label`'s spelling for the
+#: same idea, so a dashboard reads one word for "we could not attribute this".
+UNKNOWN_METHOD = "unknown"
+
+
+def method_label(method: str) -> str:
+    """A request method as a label value, folded when it is not one we know.
+
+    The other half of the port's inherited assumption (R370, methodology M6;
+    see `escape_label_value` for the first). On the TypeScript registry this is
+    a port of, `req.method.toUpperCase()` needs no bound because it cannot
+    have one that matters: Node's HTTP parser accepts only the methods in
+    llhttp's table and answers anything else at the parser, before Fastify
+    exists. So `method` there is drawn from about thirty values.
+
+    h11 accepts any token. `curl -X FOOBAR1 http://host/health` is answered
+    405 by Starlette's router — and counted, correctly, because it is a
+    request this unit served — under `method="FOOBAR1"`. Two hundred invented
+    verbs against one path therefore fill `MAX_SERIES_PER_METRIC` on
+    `http_requests_total` and `http_request_duration_seconds`, from an
+    unauthenticated caller, and everything after that folds into `__other__`
+    for the life of the process.
+
+    The fold keeps totals exact, which is exactly what makes it quiet: a rule
+    that *selects* a label value stops matching the folded readings entirely
+    while `sum by (job)` stays right. `HighServerErrorRate`, `SlowRequests`
+    and `RequestsPilingUp` all select on `method` and `route`, so the estate's
+    RED rules for these two units would go on evaluating against a series that
+    no longer receives anything, which is indistinguishable from a healthy
+    system.
+
+    Not case-normalised beyond `upper()`: methods are case-sensitive per RFC
+    9110, so `get` is not GET, and counting it as one would report a request
+    this service refused as one it served.
+    """
+    upper = method.upper()
+    return upper if upper in KNOWN_METHODS else UNKNOWN_METHOD
+
+
 def status_class(code: int) -> str:
     """RED bucket for a status code: 1xx / 2xx / 3xx / 4xx / 5xx."""
     bucket = code // 100
@@ -598,7 +663,7 @@ def make_metrics_middleware(registry: MetricsRegistry):
     )
 
     async def metrics_middleware(request: Request, call_next):
-        method = request.method.upper()
+        method = method_label(request.method)
         route = route_label(request.url.path)
         started = time.perf_counter()
         in_flight["n"] += 1
