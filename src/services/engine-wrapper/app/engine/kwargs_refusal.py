@@ -20,6 +20,7 @@ afterwards is known to be about a value rather than a name.
 """
 
 import difflib
+import functools
 import inspect
 from collections.abc import Mapping
 from typing import Callable, Iterable, Sequence
@@ -32,12 +33,21 @@ MAX_NAMED = 10
 _KEYWORD_KINDS = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
 
 
-def _signature_names(fn: Callable) -> tuple[list[str], list[str], bool]:
-    """(accepted, required, takes_var_keyword) for one entry point."""
+# Bounded rather than unbounded: the estate's entry points number in the tens,
+# and a cache keyed on a callable should not be able to grow without one.
+@functools.lru_cache(maxsize=128)
+def _signature_names(fn: Callable) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+    """(accepted, required, takes_var_keyword) for one entry point.
+
+    Cached on the callable: the entry points are module-level and fixed, and
+    this runs on the request path of every endpoint that takes a free-form
+    object. Tuples rather than lists so a caller cannot mutate the cached
+    answer.
+    """
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):  # builtins, C callables
-        return ([], [], True)
+        return ((), (), True)
     accepted: list[str] = []
     required: list[str] = []
     var_keyword = False
@@ -50,7 +60,7 @@ def _signature_names(fn: Callable) -> tuple[list[str], list[str], bool]:
         accepted.append(p.name)
         if p.default is inspect.Parameter.empty:
             required.append(p.name)
-    return (accepted, required, var_keyword)
+    return (tuple(accepted), tuple(required), var_keyword)
 
 
 def _listed(names: Sequence[str]) -> str:
