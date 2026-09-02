@@ -16,6 +16,7 @@ import logging
 import re
 import zipfile
 from dataclasses import dataclass
+from typing import Iterator
 from xml.etree import ElementTree
 
 from pypdf import PdfReader
@@ -503,6 +504,66 @@ def _row_values(row: ElementTree.Element, shared: list[str]) -> list[str]:
     return values
 
 
+def _iter_sheet_rows(data: bytes, max_rows: int) -> Iterator[ElementTree.Element]:
+    """The `<row>` elements of a worksheet part, one at a time, and no more
+    than `max_rows` of them.
+
+    `_parse_xml_part` builds the whole part as a tree, and for every other part
+    of a workbook that is right — the relationships and the workbook itself are
+    small, and the shared-strings table is read end to end anyway. A worksheet
+    is the one part where the caller is allowed to stop early and usually does:
+    `MAX_CHARS_PER_DOC` is 20,000 characters, which a cap table covers in a few
+    hundred rows, and the row and sheet ceilings sit two orders of magnitude
+    above it (R338, M8). Reading a sheet as a tree paid for every row anyway,
+    and paid for it twice — expat builds an `Element` per row and per cell, and
+    `root.iter()` was materialised into a list before it was sliced.
+
+    That cost is *bounded* — `_BoundedZip` will not inflate a part past the
+    archive's budget — and bounded is not small: a 40,000-row sheet is 0.6 MB
+    compressed, 12 MB of XML and **209 MB of tree**, to answer with 20,033
+    characters that were complete after row 700. The ceiling `_BoundedZip`
+    allows an archive of a few megabytes is 128 MB of XML, which is a tree this
+    box does not have the memory for. Streaming makes the cost the rows that
+    are read rather than the rows that exist.
+
+    The document type declaration is refused exactly as `_parse_xml_part`
+    refuses it, before a byte reaches expat, and for the same reason: a
+    worksheet is as good a place to carry a billion laughs as the shared
+    strings are, and `iterparse` expands entities as eagerly as `fromstring`.
+
+    Rows are dropped as they go — a finished row is cleared out of its parent,
+    so the parser holds one row rather than every row it has seen. The element
+    yielded is therefore live only until the consumer asks for the next one,
+    which is all `_row_values` needs.
+    """
+    if _has_doctype(data):
+        raise MalformedDocument(
+            "this workbook contains an XML document type declaration, which no spreadsheet "
+            "writes and which cannot be read safely"
+        )
+    if max_rows <= 0:
+        return
+    row_tag = f"{_SSML}row"
+    body_tag = f"{_SSML}sheetData"
+    body: ElementTree.Element | None = None
+    seen = 0
+    for event, element in ElementTree.iterparse(io.BytesIO(data), events=("start", "end")):
+        if event == "start":
+            # `sheetData` is where the finished rows pile up. Clearing the row
+            # itself frees its cells but leaves the empty `<row/>` attached to
+            # its parent, which is the whole leak at 40,000 of them.
+            if body is None and element.tag == body_tag:
+                body = element
+            continue
+        if element.tag != row_tag:
+            continue
+        yield element
+        seen += 1
+        (body if body is not None else element).clear()
+        if seen >= max_rows:
+            return
+
+
 def _xlsx_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
     """Tab-separated rows per sheet — enough structure for the LLM to read a
     cap table without a spreadsheet dependency.
@@ -541,8 +602,31 @@ def _xlsx_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
         for name, path in opened:
             if size >= limit:
                 break
+            lines = [f"=== Sheet: {name} ==="]
+            # This sheet's contribution, held back until the part has been
+            # read to wherever it is going to stop. A streamed read raises part
+            # way through a sheet where the tree read raised before it started,
+            # so the note below has to *replace* this block rather than follow
+            # a half of it — the reader must not report rows under a heading it
+            # is about to say could not be read.
+            #
+            # One consequence, and it is the right one: a sheet that is damaged
+            # somewhere past the character budget now yields its rows instead of
+            # the note, because the read stops before it reaches the damage.
+            # The rows it returns were always sound, and this reader already
+            # says nothing at all about the sheets the budget stopped it from
+            # opening; "could not be read" is owed where a read was attempted
+            # and failed, not where it was never needed.
+            block_size = len(lines[0]) + 2
             try:
-                root = _parse_xml_part(zf.read(path))
+                for row in _iter_sheet_rows(zf.read(path), MAX_XLSX_ROWS_PER_SHEET):
+                    values = _row_values(row, shared)
+                    if any(v.strip() for v in values):
+                        line = "\t".join(values).rstrip()
+                        lines.append(line)
+                        block_size += len(line) + 1
+                        if size + block_size >= limit:
+                            break
             except (KeyError, ElementTree.ParseError):
                 # The tab is named in the corpus with a note where its rows
                 # would be, rather than being dropped out of it (R344, M5).
@@ -566,17 +650,8 @@ def _xlsx_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
                 blocks.append(note)
                 size += len(note) + 2
                 continue
-            lines = [f"=== Sheet: {name} ==="]
-            size += len(lines[0]) + 2
-            for row in list(root.iter(f"{_SSML}row"))[:MAX_XLSX_ROWS_PER_SHEET]:
-                values = _row_values(row, shared)
-                if any(v.strip() for v in values):
-                    line = "\t".join(values).rstrip()
-                    lines.append(line)
-                    size += len(line) + 1
-                    if size >= limit:
-                        break
             blocks.append("\n".join(lines))
+            size += block_size
         if unreadable:
             # The audience the corpus note cannot reach. A part that will not
             # parse is a property of the file, so one line is a client's odd
