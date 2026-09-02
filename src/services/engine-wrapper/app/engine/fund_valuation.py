@@ -351,6 +351,9 @@ def lp_waterfall(
     pref = min(remaining, pref_target)
     lp += pref
     remaining -= pref
+    # What is left once the LPs' two senior claims are met: the most the GP can
+    # take on any tiering, and the ceiling `entitled` below is capped at.
+    residual_after_pref = remaining
 
     # Tier 3 — GP catch-up to carry_pct of profit above return of capital.
     catch_up = 0.0
@@ -374,7 +377,27 @@ def lp_waterfall(
     paid_in = roc_target
     total_profit = max(available - roc_target, 0.0)
     gp_paid = _num(gp_distributions_to_date, "gp_distributions_to_date", minimum=0.0)
-    entitled = carry * total_profit
+    # The GP's full-life carry ceiling.
+    #
+    # `carry x total_profit` is the ceiling *when the fund's proceeds reach the
+    # carry tiers at all*, and that was the whole of it. Return of capital and
+    # the preferred return are senior to carry, so a fund whose distributable
+    # runs out inside tier 1 or tier 2 owes the GP nothing — and this reported
+    # a full carry share of the profit anyway. It is not an edge case: it is
+    # every fund that has returned capital and some profit without clearing its
+    # hurdle, which is the ordinary state of a fund mid-life. On $100 of paid-in
+    # returning $105 against an 8% hurdle the schedule pays the GP $0 and this
+    # said $1, so a GP holding $1 of prior carry showed no clawback on the one
+    # line an LPAC acts on.
+    #
+    # Capped at the residual rather than replaced by `gp`, so the no-catch-up
+    # ceiling stays where R363 pinned it: an LPA without a catch-up still
+    # measures the GP against `carry x total_profit` whenever the proceeds
+    # reached that far. Where the catch-up is on and nothing was truncated the
+    # cap is inactive — `carry x total_profit <= residual_after_pref` is exactly
+    # the condition for the catch-up to complete — so `gp == entitled` still
+    # holds by construction there.
+    entitled = min(carry * total_profit, residual_after_pref)
     # Clawback: the GP owes back any carry it has *already been paid* above its
     # entitled share of total profit (the end-of-life true-up LPACs require).
     #

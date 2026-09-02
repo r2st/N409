@@ -256,6 +256,53 @@ def test_waterfall_clawback_measures_a_no_catch_up_gp_against_the_same_ceiling()
     assert w["clawback_owed"] == pytest.approx(5.0)
 
 
+def test_waterfall_carry_ceiling_is_capped_by_the_preferred_return_tier():
+    """A fund that has not cleared its hurdle owes the GP nothing.
+
+    Return of capital and the preferred return are senior to carry, so a fund
+    whose distributable runs out inside those tiers pays the GP zero. The
+    ceiling used to be `carry x total_profit` regardless, so a GP holding prior
+    carry showed no clawback against an entitlement the waterfall never awarded.
+    """
+    w = lp_waterfall(
+        committed_capital=120,
+        contributed_capital=100,
+        distributable=105,  # $5 of profit against an $8 hurdle
+        preferred_return_rate=0.08,
+        years=1.0,
+        carry_pct=0.20,
+        gp_catch_up=True,
+        gp_distributions_to_date=1.0,
+    )
+    assert w["tiers"]["preferred_return"] == pytest.approx(5.0)
+    assert w["gp_distribution"] == 0.0
+    assert w["gp_carry_entitled"] == 0.0
+    assert w["clawback_owed"] == pytest.approx(1.0)
+
+
+def test_waterfall_carry_ceiling_follows_a_truncated_catch_up():
+    """Proceeds that reach the catch-up but do not complete it cap the ceiling.
+
+    The GP takes every dollar left after the preferred return and no more, so
+    that is the entitlement the clawback measures against.
+    """
+    w = lp_waterfall(
+        committed_capital=120,
+        contributed_capital=100,
+        distributable=109,  # $9 profit: $8 pref, $1 into a $2 catch-up
+        preferred_return_rate=0.08,
+        years=1.0,
+        carry_pct=0.20,
+        gp_catch_up=True,
+        gp_distributions_to_date=3.0,
+    )
+    assert w["tiers"]["preferred_return"] == pytest.approx(8.0)
+    assert w["tiers"]["gp_catch_up"] == pytest.approx(1.0)
+    assert w["gp_distribution"] == pytest.approx(1.0)
+    assert w["gp_carry_entitled"] == pytest.approx(1.0)
+    assert w["clawback_owed"] == pytest.approx(2.0)
+
+
 def test_waterfall_rejects_full_carry():
     with pytest.raises(EngineInputError):
         lp_waterfall(committed_capital=100, contributed_capital=100, distributable=100, carry_pct=1.0)
