@@ -39,6 +39,7 @@ of screens costs one fan-out rather than one per request.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import threading
@@ -51,6 +52,20 @@ from datetime import datetime, timezone
 from .market_data import Company
 from .market_data import _COMPANIES as SNAPSHOT  # noqa: PLC2701 — same package
 from .market_feed import NO_PROVIDER_REASON, UNSET, MarketFeedClient
+
+# The second log line this tier's `app/engine` package writes, and it is the
+# other half of the first (R384, methodology M11). `market_feed._fallback` says
+# so whenever a *fetch* was converted into the caller's own figures; this module
+# is the one caller whose fetches it cannot speak for — see `_report`.
+_log = logging.getLogger("market_universe")
+
+# How much of the per-ticker reasoning goes on the log line. The reasons are a
+# provider's own words (`_fallback` passes `str(exc)`), one per ticker, over a
+# universe of every guideline company on file: without a bound a single dead
+# afternoon writes the whole snapshot's worth of exception text to disk on every
+# TTL expiry. `detail` is the redacted field, as it is on `_fallback`'s line.
+_LOGGED_REASONS = 5
+_LOGGED_REASON_CHARS = 500
 
 __all__ = [
     "MARKET_FEED_PROVIDER_STATES",
@@ -413,7 +428,7 @@ def _utc_now_iso() -> str:
 
 def _fetch_all(
     client: MarketFeedClient, snapshot: Sequence[Company], deadline: float, clock
-) -> dict[str, dict]:
+) -> tuple[dict[str, dict], int]:
     """One ``info`` payload per ticker, as far as the deadline allows.
 
     A ticker whose fetch has not landed by the deadline is simply absent from
@@ -421,25 +436,47 @@ def _fetch_all(
     waited on afterwards: the feed client swallows provider errors already, so
     a straggler can only finish writing into its own memo, where the next
     refresh will find it.
+
+    Returns how many tickers the deadline took, alongside what landed. That
+    count is the one thing about this refresh nothing else can see (R384,
+    methodology M11): every *other* way a fetch fails goes through
+    ``market_feed._fallback``, which writes a `warning` naming the ticker and
+    quoting the provider. A fetch abandoned here never gets there — the worker
+    is still running, and it is this thread that gave up on it — so a source
+    that has stopped answering rather than started refusing produced a universe
+    of snapshot figures with not one line in any log at any tier, which is the
+    exact shape R305 wrote `_fallback` to close one module over.
     """
     fetched: dict[str, dict] = {}
+    abandoned = 0
     pool = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="universe-refresh")
     try:
         futures = {
             pool.submit(client.get_company_info, company.ticker): company.ticker
             for company in snapshot
         }
+        expired = False
         for future, ticker in futures.items():
-            remaining = deadline - clock()
-            if remaining <= 0:
-                break
+            if not expired:
+                remaining = deadline - clock()
+                expired = remaining <= 0
+            if expired:
+                # Counted rather than broken out of. The loop used to stop at
+                # the first ticker past the deadline, which is the same set of
+                # figures and a different number: every ticker after it is as
+                # unfetched as that one, and the count is what the log line is
+                # about. The clock is not read again, so a scripted one sees
+                # exactly the calls it saw before.
+                abandoned += 1
+                continue
             try:
                 fetched[ticker] = future.result(timeout=remaining)
             except Exception:  # timeout, or a provider error the client re-raised
+                abandoned += 1
                 continue
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-    return fetched
+    return fetched, abandoned
 
 
 def resolve_universe(
@@ -497,7 +534,7 @@ def resolve_universe(
             return resolved
 
         as_of = _utc_now_iso() if now is None else str(now() if callable(now) else now)
-        fetched = _fetch_all(feed, snapshot, clock() + REFRESH_TIMEOUT_SECONDS, clock)
+        fetched, abandoned = _fetch_all(feed, snapshot, clock() + REFRESH_TIMEOUT_SECONDS, clock)
 
         companies: list[Company] = []
         warnings: list[str] = []
@@ -535,9 +572,88 @@ def resolve_universe(
             snapshot_count=snapshot_count,
             warnings=tuple(warnings),
         )
+        _report(resolved, abandoned)
         if cached_ok:
             _store(resolved, clock)
         return resolved
+
+
+def _report(resolution: UniverseResolution, abandoned: int) -> None:
+    """What a degraded refresh leaves in the log, having a provider to blame.
+
+    WHY IT LOGS (R384, methodology M11). `market_feed._fallback` writes the one
+    line this tier's engine package had, and it is written per *fetch*: the
+    provider missing, a network error, a parse error, a ticker the source does
+    not carry. This module is the caller that fetch can be silent for. A refresh
+    abandoned at the deadline never reaches `_fallback` — the worker thread is
+    still going, and it is this thread that stopped waiting — so a source that
+    has stopped answering, as opposed to one that has started refusing, produced
+    a universe of snapshot figures with nothing in any log at any tier.
+
+    Nor does the caller's side see it. `market_feed_answers_total` is the
+    valuation service counting answers to `engine/v1/market-feed`, and the
+    universe is resolved *inside* this process on the way to a comparables
+    screen — it never crosses that wire. What does reach an operator is
+    `universe.source` and `universe.warnings` on one analyst's screen, and an
+    audit row per engagement: exactly the per-request, per-engagement shape
+    R305 wrote both of those instruments to get out from behind.
+
+    Two events, because they are two incidents with two first moves. Nothing
+    live at all is the provider, its credentials or its reachability — the same
+    diagnosis `MarketFeedFallingBack` is about, arrived at from a source that
+    rule cannot see. Tickers abandoned is this refresh's own budget:
+    `MARKET_UNIVERSE_REFRESH_TIMEOUT_SECONDS` against a source that is answering
+    but slowly, and the remedy is a number rather than a credential. Both fire
+    together when both are true, which is a fact rather than a duplicate.
+
+    `warning` on `_fallback`'s reasoning: yfinance is a declared requirement, so
+    a deployment that has one and cannot use it is unwell rather than configured
+    that way. Per resolution rather than per screen — the result is memoised for
+    `TTL_SECONDS`, so this is one line per refresh, not one per analyst.
+
+    Alertable without a new instrument: `register_process_metrics` counts every
+    warning-or-worse line carrying an `event` into `log_degraded_events_total`,
+    keyed on the word. That is the channel R376 built for exactly this — a tier
+    whose degrades are reported in the log and nowhere else.
+    """
+    if resolution.live_count == 0:
+        _log.warning(
+            "market universe refresh returned no live figures",
+            extra={
+                "event": "market_universe_degraded",
+                # The same two dimensions `_fallback` carries. There is no one
+                # ticker this line is about, so only the kind is set.
+                "feed_kind": "universe",
+                "count": resolution.live_count,
+                "total": resolution.live_count + resolution.snapshot_count,
+                # The providers' own words, bounded twice — see `_LOGGED_REASONS`.
+                # `detail` is the redacted field, as it is on `_fallback`'s line.
+                "detail": _reasons(resolution.warnings),
+            },
+        )
+    if abandoned:
+        _log.warning(
+            "market universe refresh ran out of time before every ticker answered",
+            extra={
+                "event": "market_universe_refresh_timeout",
+                "feed_kind": "universe",
+                "count": abandoned,
+                "total": resolution.live_count + resolution.snapshot_count,
+                "limit": REFRESH_TIMEOUT_SECONDS,
+            },
+        )
+
+
+def _reasons(warnings: Sequence[str]) -> str:
+    """The first few per-ticker reasons, as one bounded string."""
+    if not warnings:
+        # Not "no reason": every non-live row appends one, so an empty tuple
+        # beside a zero live count is this module disagreeing with itself.
+        return "no per-ticker reason was recorded"
+    joined = "; ".join(warnings[:_LOGGED_REASONS])
+    if len(warnings) > _LOGGED_REASONS:
+        joined += f"; and {len(warnings) - _LOGGED_REASONS} more"
+    return joined[:_LOGGED_REASON_CHARS]
 
 
 def _store(resolution: UniverseResolution, clock) -> None:

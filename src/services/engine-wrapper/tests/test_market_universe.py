@@ -6,6 +6,7 @@ degradation: which rows kept their snapshot figures, what the resolution called
 itself afterwards, and whether the reason survived as far as the caller.
 """
 
+import logging
 import time
 
 import pytest
@@ -645,3 +646,120 @@ def test_ticker_verification_answers_with_live_figures_when_it_has_them(client):
 def test_a_bad_ticker_list_is_still_a_422_with_live_resolution(client):
     resp = client.post("/engine/v1/market-data", json={"tickers": "DDOG", "live": False})
     assert resp.status_code == 422
+
+
+# ── what a degraded refresh leaves behind (R384, methodology M11) ─────────────
+#
+# `market_feed._fallback` writes a line per *fetch* that fell back, and this
+# module is the caller it cannot speak for: a fetch abandoned at the refresh
+# deadline never reaches it, because the worker is still running and it is the
+# resolving thread that gave up. Nor does the valuation service's
+# `market_feed_answers_total` see any of this — the universe is resolved inside
+# this process on the way to a comparables screen and never crosses that wire.
+# So the whole of what an operator was told was `universe.warnings` on one
+# analyst's screen.
+
+
+def _events(records):
+    """This module's own degrade words. Scoped to the logger because
+    `market_feed`'s line rides the same capture and is the point: the
+    per-ticker half is already reported, and the universe line is only for what
+    that half cannot say."""
+    return [(r.event, r.levelname) for r in records if r.name == "market_universe" and hasattr(r, "event")]
+
+
+def test_a_universe_with_nothing_live_in_it_says_so_in_the_log(caplog):
+    with caplog.at_level("WARNING", logger="market_universe"):
+        resolution = resolve(StubProvider(fails=["DDOG", "CRM", "CAT"]))
+    assert resolution.source == "snapshot"
+    line = next(r for r in caplog.records if getattr(r, "event", None) == "market_universe_degraded")
+    assert line.levelname == "WARNING"
+    # The two dimensions `_fallback` carries, and the counts that separate a
+    # dead source from a couple of names it does not hold.
+    assert line.feed_kind == "universe"
+    assert (line.count, line.total) == (0, 3)
+    # The provider's own words, in the field the formatter redacts.
+    assert "network down" in line.detail
+
+
+def test_a_partly_live_universe_is_not_a_degrade(caplog):
+    """One ticker the source will not answer for is Tuesday. The line that
+    fires on it is `_fallback`'s, naming that ticker; this one is about a
+    refresh that produced nothing, and a rule keyed on the word must not have
+    to filter out the ordinary case."""
+    with caplog.at_level("WARNING", logger="market_universe"):
+        resolution = resolve(StubProvider(fails=["CAT"]))
+    assert resolution.source == "mixed"
+    assert _events(caplog.records) == []
+    # And the ticker that did fail is reported, one module over, by name.
+    fallback = next(r for r in caplog.records if getattr(r, "event", None) == "market_feed_fallback")
+    assert fallback.ticker == "CAT"
+
+
+def test_a_fully_answered_universe_says_nothing(caplog):
+    with caplog.at_level("WARNING", logger="market_universe"):
+        resolve(StubProvider())
+    assert _events(caplog.records) == []
+
+
+def test_the_refresh_deadline_is_its_own_event(caplog):
+    """A source that has stopped answering rather than started refusing. The
+    fetches are abandoned by this thread, so `_fallback` never runs for them —
+    without this line the universe goes stale with nothing written anywhere."""
+    ticks = iter([0.0] + [999.0] * 20)
+
+    with caplog.at_level("WARNING", logger="market_universe"):
+        resolution = mu.resolve_universe(
+            live=True,
+            client=feed(StubProvider()),
+            snapshot=SNAP,
+            clock=lambda: next(ticks),
+            use_cache=False,
+        )
+    assert resolution.source == "snapshot"
+    line = next(
+        r for r in caplog.records if getattr(r, "event", None) == "market_universe_refresh_timeout"
+    )
+    assert line.levelname == "WARNING"
+    # Every ticker the deadline took, not only the first one past it: the loop
+    # used to stop at that one, which is the same set of figures and a count
+    # that reads as a single slow name.
+    assert (line.count, line.total) == (3, 3)
+    assert line.limit == mu.REFRESH_TIMEOUT_SECONDS
+    # Both facts are true here and both are said: nothing came back live, and
+    # the reason it did not is the budget rather than the provider.
+    assert ("market_universe_degraded", "WARNING") in _events(caplog.records)
+
+
+def test_the_reason_list_is_bounded(caplog):
+    big = tuple(
+        Company(f"T{i}", f"Name {i}", "7372", "Prepackaged Software", "Sector", 1e9, 5.0, 20.0, 0.1)
+        for i in range(30)
+    )
+    with caplog.at_level("WARNING", logger="market_universe"):
+        mu.resolve_universe(
+            live=True,
+            client=feed(StubProvider(fails=[c.ticker for c in big])),
+            snapshot=big,
+            use_cache=False,
+        )
+    line = next(r for r in caplog.records if getattr(r, "event", None) == "market_universe_degraded")
+    assert len(line.detail) <= 500
+    assert "and 25 more" in line.detail
+
+
+def test_the_degrade_words_reach_the_scrape():
+    """The channel this line is alertable through: every warning-or-worse
+    record carrying an `event` is counted into `log_degraded_events_total` at
+    the formatter, so neither word needs an instrument of its own."""
+    from app.observability import _count_degraded, set_degraded_event_sink
+
+    seen = []
+    set_degraded_event_sink(lambda event, level: seen.append((event, level)))
+    try:
+        record = logging.LogRecord("market_universe", logging.WARNING, __file__, 1, "x", None, None)
+        record.event = "market_universe_degraded"
+        _count_degraded(record)
+    finally:
+        set_degraded_event_sink(None)
+    assert seen == [("market_universe_degraded", "warning")]
