@@ -110,7 +110,9 @@ function mockApi(fail: Failures = {}, links: unknown[] = [SUBMITTED], detail: un
           );
     }
     if (method === 'DELETE') {
-      return fail.revoke ? problem(fail.revoke, 'gone') : new Response(null, { status: 204 });
+      return fail.revoke
+        ? problem(fail.revoke, 'This link has already been used to open an engagement.')
+        : new Response(null, { status: 204 });
     }
     // A GET for one link's detail, or the roster.
     if (/\/firm\/intake-links\/[^/?]+/.test(path)) {
@@ -168,12 +170,19 @@ describe('IntakeLinksPanel — each write that can fail', () => {
   });
 
   it('says the withdraw failed, because the link is still live if it did', async () => {
-    mockApi({ revoke: 500 }, [IN_PROGRESS]);
+    // The server's own reason, which the handler used to discard: it was
+    // `} catch { setError('Could not withdraw that link.') }`, with no binding,
+    // so a 409 explaining that the link is already spent read the same as a
+    // gateway timeout (R350).
+    mockApi({ revoke: 409 }, [IN_PROGRESS]);
     renderPanel();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Withdraw' }));
-    expect(await screen.findByText('Could not withdraw that link.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('This link has already been used to open an engagement.'),
+    ).toBeInTheDocument();
   });
+
 
   it('says the submission could not be opened', async () => {
     mockApi({ detail: 500 });

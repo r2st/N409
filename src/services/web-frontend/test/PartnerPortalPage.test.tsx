@@ -445,7 +445,7 @@ describe('PartnerPortalPage — API tokens', () => {
     mockServer({
       partner: null,
       tokens: [makeToken()],
-      fail: { 'DELETE /api-tokens': problem(500, 'boom') },
+      fail: { 'DELETE /api-tokens': problem(409, 'This key was already revoked from another session.') },
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
@@ -454,7 +454,9 @@ describe('PartnerPortalPage — API tokens', () => {
     await tokenRow('CRM integration');
     await user.click(screen.getByRole('button', { name: 'Revoke' }));
 
-    expect(await screen.findByText('Could not revoke the token.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('This key was already revoked from another session.'),
+    ).toBeInTheDocument();
     // The token is still listed — the failure did not half-apply.
     expect(screen.getByText('CRM integration')).toBeInTheDocument();
   });

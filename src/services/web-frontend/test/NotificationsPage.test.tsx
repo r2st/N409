@@ -57,7 +57,11 @@ function mockApi(initial: AppNotification[], opts: { writeFails?: boolean } = {}
     const method = init?.method ?? 'GET';
     calls.push({ url: path, method });
     if (method === 'POST') {
-      if (opts.writeFails) return jsonResponse({ status: 500, detail: 'nope' }, 500);
+      if (opts.writeFails)
+        return jsonResponse(
+          { status: 503, detail: 'The notification store is temporarily unavailable. Nothing was changed.' },
+          503,
+        );
       if (path.endsWith('/read-all')) {
         items = items.map((n) => ({ ...n, read_at: n.read_at ?? '2026-07-02T00:00:00Z' }));
       } else {
@@ -177,7 +181,12 @@ describe('NotificationsPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Mark all read' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not mark notifications as read.');
+    // The server's own sentence, which the handler used to discard: it was a
+    // bare `} catch { setError('Could not mark notifications as read.') }` and
+    // could not reach the problem body at all (R350).
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The notification store is temporarily unavailable. Nothing was changed.',
+    );
   });
 
   it('invites the reader in rather than showing an empty list', async () => {

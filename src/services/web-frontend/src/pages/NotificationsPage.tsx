@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import type { AppNotification } from '../lib/types';
 import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton } from '../components/ui';
@@ -108,8 +108,8 @@ export function NotificationsPage() {
       headingRef.current?.focus();
       setNotice('All notifications marked as read.');
       await load();
-    } catch {
-      setError('Could not mark notifications as read.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not mark notifications as read.'));
     }
   };
 

@@ -193,9 +193,21 @@ describe('CommentsSection', () => {
   });
 
   it('reports a message the server would not accept, keeping the draft', async () => {
+    /*
+     * The server's own sentence, not this component's (R350).
+     *
+     * `POST /valuations/:id/comments` runs `refuseIfRetired`, so the commonest
+     * refusal here is a closed engagement — permanent, and explained. The
+     * handler used to be `} catch { setError('Could not post — try again.') }`,
+     * which threw that sentence away and replaced it with advice to do the one
+     * thing that cannot work.
+     */
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       if (String(url).includes('/comments') && init?.method === 'POST')
-        return jsonResponse({ title: 'Too long' }, 422);
+        return jsonResponse(
+          { title: 'Conflict', detail: 'This engagement is retired and is no longer accepting comments.' },
+          409,
+        );
       return jsonResponse({ comments: [chat] });
     });
     renderSection();
@@ -204,8 +216,29 @@ describe('CommentsSection', () => {
     await userEvent.type(screen.getByLabelText('Write a message'), 'Next Friday.');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not post/i);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('no longer accepting comments');
+    expect(alert).not.toHaveTextContent(/try again/i);
     expect(screen.getByLabelText('Write a message')).toHaveValue('Next Friday.');
+  });
+
+  it('names the post when the refusal carried no explanation', async () => {
+    // The other half: a body with no `detail` still has to say which action
+    // failed, which is what `describeActionFailure`'s operation argument is.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).includes('/comments') && init?.method === 'POST')
+        return jsonResponse({ title: 'Internal Server Error' }, 500);
+      return jsonResponse({ comments: [chat] });
+    });
+    renderSection();
+
+    await screen.findByText('When is the draft due?');
+    await userEvent.type(screen.getByLabelText('Write a message'), 'Next Friday.');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Your comment was not posted.');
+    expect(alert).not.toHaveTextContent('Internal Server Error');
   });
 
   it('will not send whitespace', async () => {

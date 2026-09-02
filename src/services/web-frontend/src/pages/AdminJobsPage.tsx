@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { usePoll } from '../lib/usePoll';
@@ -443,8 +443,8 @@ export function AdminJobsPage() {
               try {
                 await api('/admin/jobs/alerts/scan', { method: 'POST' });
                 await load();
-              } catch {
-                setError('Could not re-check the queues.');
+              } catch (err) {
+                setError(describeActionFailure(err, 'Could not re-check the queues.'));
               } finally {
                 setScanning(false);
               }

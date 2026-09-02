@@ -149,8 +149,8 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
     try {
       await api(`/valuations/${valuationId}/accounting/${provider}`, { method: 'DELETE' });
       void load();
-    } catch {
-      setError('Could not disconnect.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not disconnect the ledger.'));
     } finally {
       setBusy(null);
     }

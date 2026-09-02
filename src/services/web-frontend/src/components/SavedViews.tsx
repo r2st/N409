@@ -150,8 +150,8 @@ export function SavedViews() {
       await api(`/saved-views/${view.id}`, { method: 'DELETE' });
       if (active?.id === view.id) setParams(new URLSearchParams(), { replace: true });
       await load();
-    } catch {
-      setError('Could not delete the view.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not delete the view.'));
     }
   };
 

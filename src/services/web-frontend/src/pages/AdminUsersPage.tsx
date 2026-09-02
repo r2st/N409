@@ -544,7 +544,7 @@ export function AdminUsersPage() {
                 .then(({ truncated }) => {
                   if (truncated) setExportNote(EXPORT_CAPPED);
                 })
-                .catch(() => setError('Could not export CSV.'));
+                .catch((err: unknown) => setError(describeActionFailure(err, 'The user export was not produced.')));
             }}
           >
             ↓ Export CSV

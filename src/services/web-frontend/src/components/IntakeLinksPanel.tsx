@@ -198,8 +198,8 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
     try {
       await api(scoped(`/firm/intake-links/${link.id}`), { method: 'DELETE' });
       await load();
-    } catch {
-      setError('Could not withdraw that link.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not withdraw that link.'));
     }
   };
 

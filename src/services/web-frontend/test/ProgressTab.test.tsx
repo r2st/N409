@@ -248,14 +248,20 @@ describe('ProgressTab (client portal §5.6)', () => {
    */
   it('says so when the report download fails', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-      if (String(url).includes('report.pdf')) return jsonResponse({ detail: 'nope' }, 503);
+      // `report.pdf`'s own 404 for an engagement whose deliverable has not been
+      // produced. The hook answered it with "try again" — advice pointing away
+      // from the only thing that helps, which is waiting to be told it is ready
+      // (R350).
+      if (String(url).includes('report.pdf')) return jsonResponse({ detail: 'No report yet' }, 404);
       return jsonResponse(PROGRESS);
     });
     const user = userEvent.setup();
     renderTab();
 
     await user.click(await screen.findByRole('button', { name: 'Download your report' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/download did not start/i);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('No report yet');
+    expect(alert).not.toHaveTextContent(/try again/i);
   });
 
   it('keeps the progress it was showing when the download fails', async () => {

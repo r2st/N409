@@ -482,7 +482,16 @@ describe('PartnerDetailPage — the API token panel', () => {
       },
       {
         when: (path, method) => method === 'DELETE' && path.includes('/api-tokens/'),
-        reply: () => problem(500, 'boom'),
+        // The 403 this door actually raises. `AdminApiTokensPage` already
+        // routed its identical operation through `describeActionFailure`;
+        // this handler was a bare `catch` and answered the firm's own
+        // administrator with a retry suggestion instead (R350).
+        reply: () =>
+          problem(
+            403,
+            'Revoking this key is restricted to user administrators. Ask an administrator, or ' +
+              'someone with the supervisor role, to do this for you.',
+          ),
       },
     ]);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -492,7 +501,7 @@ describe('PartnerDetailPage — the API token panel', () => {
     await screen.findByRole('table', { name: 'API tokens' });
     await user.click(screen.getByRole('button', { name: 'Revoke' }));
 
-    expect(await screen.findByText('Could not revoke the token.')).toBeInTheDocument();
+    expect(await screen.findByText(/restricted to user administrators/)).toBeInTheDocument();
   });
 
   it('sends nothing when the revoke confirm is declined', async () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { formatDateTime } from '../lib/format';
@@ -69,8 +69,8 @@ export function CommentsSection({
       });
       reset();
       load();
-    } catch {
-      setError('Could not post — try again.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Your comment was not posted.'));
     } finally {
       setBusy(false);
     }
@@ -80,8 +80,8 @@ export function CommentsSection({
     try {
       await api(`/comments/${id}`, { method: 'DELETE' });
       load();
-    } catch {
-      setError('Could not delete the comment.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not delete the comment.'));
     }
   };
 
@@ -89,8 +89,8 @@ export function CommentsSection({
     try {
       await api(`/comments/${comment.id}`, { method: 'PATCH', body: { pinned: !comment.pinned } });
       load();
-    } catch {
-      setError('Could not update the note.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not update the note.'));
     }
   };
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { useAuth } from '../lib/auth';
@@ -301,8 +301,8 @@ export function InboxPage() {
     try {
       await api('/inbox/read-all', { method: 'POST' });
       await load();
-    } catch {
-      setError('Could not clear the inbox.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not clear the inbox.'));
     } finally {
       setBusy(false);
     }

@@ -92,8 +92,8 @@ export function PartnerPortalPage() {
     try {
       await api(`/api-tokens/${token.id}`, { method: 'DELETE' });
       loadTokens();
-    } catch {
-      setTokenError('Could not revoke the token.');
+    } catch (err) {
+      setTokenError(describeActionFailure(err, 'Could not revoke the token.'));
     }
   };
 

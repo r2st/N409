@@ -377,8 +377,8 @@ export function ValuationsPage() {
       // The XLSX and the PDF say this on their own face; the CSV cannot, so
       // the only place a capped CSV can be reported is here.
       if (truncated) setExportNote(EXPORT_CAPPED);
-    } catch {
-      setExportError('Export failed.');
+    } catch (err) {
+      setExportError(describeActionFailure(err, 'The export was not produced.'));
     }
   };
 
@@ -389,8 +389,8 @@ export function ValuationsPage() {
       const q = new URLSearchParams({ ids: [...selected].join(','), format });
       const { truncated } = await apiDownload(`/valuations/export?${q}`, `valuations-selected.${format}`);
       if (truncated) setBulkNote(EXPORT_CAPPED);
-    } catch {
-      setBulkNote('Export of selected valuations failed.');
+    } catch (err) {
+      setBulkNote(describeActionFailure(err, 'The export of the selected engagements was not produced.'));
     }
   };
 

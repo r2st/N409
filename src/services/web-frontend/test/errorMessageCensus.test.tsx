@@ -206,6 +206,64 @@ describe('a page that cannot reach the server says so', () => {
       .map((m) => m[1]!);
     expect(new Set(spellings)).toEqual(new Set(['err', 'e']));
   });
+
+  /**
+   * The half of the population the two assertions above cannot see (R350).
+   *
+   * Both of them are about handlers that *caught something* — the
+   * `err instanceof ApiError ? err.message : '…'` idiom and its replacement.
+   * Fourteen write handlers were written `} catch { setError('…') }`, with no
+   * binding at all, so there was no `err` for either pattern to match and the
+   * census read a clean tree.
+   *
+   * A bare catch is not a milder version of the shape R255 fixed; it is the
+   * complete version of it. `err.message` at least renders the server's
+   * `detail` when there is one, and these render it never. Every string they
+   * substituted was a retry suggestion for a refusal that will be made again
+   * identically: "Could not post — try again." over `refuseIfRetired`'s
+   * sentence about a closed engagement, "Could not revoke the token." over a
+   * `forbidden()` that says whose access this needs, "Could not disconnect."
+   * over whatever the ledger said. That is the `bufferUpload` failure —
+   * advice pointing away from the only thing that would help — and the same
+   * files were already reaching for the helper on the handler above or below.
+   *
+   * Scoped to the writes, deliberately. A failed *load* has a defensible
+   * constant: the page is visibly missing its content, and the reader's next
+   * move is the retry the message suggests either way. A failed write is the
+   * case where the server's sentence is the whole answer.
+   */
+  it('consults the error at every handler that changed something', () => {
+    const findings: string[] = [];
+    for (const { rel, text } of sources) {
+      if (rel === 'lib/api.ts') continue; // where the removed idiom is quoted in prose
+      const stripped = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      const catches = /\bcatch\s*(\(\s*\w+\s*\))?\s*\{/g;
+      let m: RegExpExecArray | null;
+      while ((m = catches.exec(stripped))) {
+        let depth = 0;
+        let i = m.index + m[0].length - 1;
+        const start = i + 1;
+        for (; i < stripped.length; i++) {
+          const ch = stripped[i]!;
+          if (ch === '{') depth++;
+          else if (ch === '}' && --depth === 0) break;
+        }
+        const body = stripped.slice(start, i);
+        if (!/set\w*(?:Error|Note|Message)\s*\(/.test(body)) continue;
+        // Already reading the failure, however it does it.
+        if (/describeActionFailure|describeRequestFailure|instanceof ApiError|\berr\b/.test(body)) continue;
+        // The try block this catch belongs to. A method other than GET, or a
+        // `.catch` hung off a download, is what makes this a write.
+        const preceding = stripped.slice(Math.max(0, m.index - 2000), m.index);
+        const tryAt = preceding.lastIndexOf('try {');
+        const guarded = tryAt >= 0 ? preceding.slice(tryAt) : preceding;
+        if (!/method:\s*'(?:POST|PATCH|PUT|DELETE)'/.test(guarded)) continue;
+        const line = stripped.slice(0, m.index).split('\n').length;
+        findings.push(`${rel}:${line}`);
+      }
+    }
+    expect(findings, 'write handlers that discard the server’s refusal unread').toEqual([]);
+  });
 });
 
 describe('describeRequestFailure', () => {

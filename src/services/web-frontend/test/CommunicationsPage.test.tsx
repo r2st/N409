@@ -794,12 +794,24 @@ describe('CommunicationsPage', () => {
 
     it('reports a toggle that did not take', async () => {
       const user = userEvent.setup();
-      mockApi({ fail: { 'PATCH /admin/auto-emails': { status: 500 } } });
+      // The server's reason reaches the reader. These three handlers were bare
+      // `catch` blocks with no binding, so a refusal that explained itself read
+      // identically to one that did not (R350).
+      mockApi({
+        fail: {
+          'PATCH /admin/auto-emails': {
+            status: 409,
+            problem: { detail: 'This campaign is mid-send; pause it before changing it.', status: 409 },
+          },
+        },
+      });
       renderPage();
       await autoEmailsTab(user);
 
       await user.click(screen.getByRole('button', { name: 'Disable' }));
-      expect(await screen.findByText('Could not update the campaign.')).toBeInTheDocument();
+      expect(
+        await screen.findByText('This campaign is mid-send; pause it before changing it.'),
+      ).toBeInTheDocument();
     });
 
     it('asks before deleting a campaign, and names it', async () => {
@@ -831,24 +843,36 @@ describe('CommunicationsPage', () => {
 
     it('reports a delete the server refused', async () => {
       const user = userEvent.setup();
-      mockApi({ fail: { 'DELETE /admin/auto-emails': { status: 500 } } });
+      mockApi({
+        fail: {
+          'DELETE /admin/auto-emails': {
+            status: 409,
+            problem: { detail: 'Messages from this campaign are still queued.', status: 409 },
+          },
+        },
+      });
       const confirmSpy = confirming(true);
       renderPage();
       await autoEmailsTab(user);
 
       await user.click(screen.getByRole('button', { name: 'Delete' }));
-      expect(await screen.findByText('Could not delete the campaign.')).toBeInTheDocument();
+      expect(await screen.findByText('Messages from this campaign are still queued.')).toBeInTheDocument();
       confirmSpy.mockRestore();
     });
 
     it('reports a scan that failed', async () => {
       const user = userEvent.setup();
+      // No `detail` on this one, which is the other half: the operation still
+      // has to be named, and "Scan failed." was a fragment rather than a
+      // sentence the status prose could follow.
       mockApi({ fail: { 'POST /admin/auto-emails/run': { status: 500 } } });
       renderPage();
       await autoEmailsTab(user);
 
       await user.click(screen.getByRole('button', { name: 'Run scan now' }));
-      expect(await screen.findByText('Scan failed.')).toBeInTheDocument();
+      const alert = await screen.findByText(/The campaign scan did not run\./);
+      expect(alert).toHaveTextContent('500');
+      expect(alert).not.toHaveTextContent('Failed');
     });
   });
 

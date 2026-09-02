@@ -929,8 +929,8 @@ function AutoEmailsTab() {
     try {
       await api(`/admin/auto-emails/${c.id}`, { method: 'PATCH', body: { enabled: !c.enabled } });
       void load();
-    } catch {
-      setError('Could not update the campaign.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not update the campaign.'));
     }
   };
 
@@ -939,8 +939,8 @@ function AutoEmailsTab() {
     try {
       await api(`/admin/auto-emails/${c.id}`, { method: 'DELETE' });
       void load();
-    } catch {
-      setError('Could not delete the campaign.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not delete the campaign.'));
     }
   };
 
@@ -951,8 +951,8 @@ function AutoEmailsTab() {
         method: 'POST',
       });
       setRunResult(`Scan complete — ${r.queued} queued, ${r.skipped} skipped.`);
-    } catch {
-      setError('Scan failed.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'The campaign scan did not run.'));
     }
   };
 

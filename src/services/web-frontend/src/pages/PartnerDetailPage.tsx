@@ -333,8 +333,8 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
     try {
       await api(`/api-tokens/${target.id}`, { method: 'DELETE' });
       await load();
-    } catch {
-      setError('Could not revoke the token.');
+    } catch (err) {
+      setError(describeActionFailure(err, 'Could not revoke the token.'));
     } finally {
       setBusy(false);
     }

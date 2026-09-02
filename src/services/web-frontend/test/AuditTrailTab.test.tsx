@@ -229,7 +229,11 @@ describe('AuditTrailTab', () => {
    */
   it('says so when the CSV export fails', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-      if (String(url).includes('audit-trail.csv')) return jsonResponse({ detail: 'nope' }, 503);
+      if (String(url).includes('audit-trail.csv'))
+        return jsonResponse(
+          { detail: 'The change log is being rebuilt and will be available in a few minutes.' },
+          503,
+        );
       return jsonResponse(RESPONSE);
     });
     const user = userEvent.setup();
@@ -237,7 +241,9 @@ describe('AuditTrailTab', () => {
     await screen.findByTestId('audit-entries');
 
     await user.click(screen.getByRole('button', { name: /Download change log/ }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/download did not start/i);
+    // The server's own sentence. `useDownload` used to answer every status with
+    // one constant, so a written refusal arrived as "try again" (R350).
+    expect(await screen.findByRole('alert')).toHaveTextContent('being rebuilt');
   });
 
   it('says nothing when the export succeeds', async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { apiDownload } from './api';
+import { apiDownload, describeActionFailure } from './api';
 
 /**
  * A download button that can say it failed.
@@ -58,11 +58,31 @@ export function useDownload(): {
     setTruncated(false);
     void apiDownload(path, filename)
       .then((res) => setTruncated(res.truncated))
-      .catch(() =>
-        // The message deliberately does not repeat the status code: the caller
-        // cannot act on a 502 differently from a 503, and "try again" is the
-        // true and only advice for both.
-        setError('The download did not start. Try again, and let us know if it keeps failing.'),
+      .catch((err: unknown) =>
+        /*
+         * The server's own sentence first, and only then the status prose.
+         *
+         * The message this replaced was one sentence for every failure —
+         * "The download did not start. Try again, and let us know if it keeps
+         * failing." — and its comment justified that by the gateway case: a
+         * caller cannot act on a 502 differently from a 503, so "try again" is
+         * the only advice either licenses. True, and it is the wrong half of
+         * the population to reason from. `apiDownload` throws `ApiError` with
+         * whatever problem body the endpoint sent, and the two paths behind
+         * this hook send written ones: `report.pdf` answers "No report yet" on
+         * an engagement whose deliverable has not been produced, and a render
+         * that failed upstream arrives through `toProblem` already carrying
+         * what to do about it. Both are permanent for as long as they last,
+         * and "try again" is advice pointing away from the only thing that
+         * would help — which is exactly the shape `bufferUpload` was fixed for
+         * on the upload side.
+         *
+         * `describeActionFailure` keeps the old sentence for the case it was
+         * written about: a body with no `detail` still gets the operation
+         * followed by `describeDetaillessFailure`, which says the same thing
+         * about a 502 in more words.
+         */
+        setError(describeActionFailure(err, 'The download did not start.')),
       )
       .finally(() => setBusy(false));
   }, []);
