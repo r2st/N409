@@ -491,7 +491,7 @@ const RESULT_ORDER: Array<[key: string, name: string, kind: 'money' | 'rate' | '
   ['modified_duration', 'Modified duration', 'number'],
   ['convexity', 'Convexity', 'number'],
   ['shares_received', 'Shares received on conversion', 'number'],
-  ['ownership_pct', 'Ownership on conversion', 'rate'],
+  ['ownership_pct', 'Ownership of existing and converted shares', 'rate'],
   ['conversion_price', 'Conversion price', 'money'],
   ['moic', 'Multiple on invested capital', 'number'],
   ['structure', 'Amortization structure', 'text'],
@@ -514,9 +514,30 @@ function valuationExhibit(data: DebtReportData, ctx: ExhibitContext): ReportPdfS
     rows.push([name, kind === 'money' ? moneyCell(n, ctx, 2) : kind === 'rate' ? pct(n, 3) : n.toFixed(4)]);
   }
   if (rows.length === 0) return null;
+  /*
+   * The ownership figure states its own denominator, because the denominator is
+   * not the one the reader assumes. `safe_conversion` divides the converted
+   * shares by `next_round_shares + safe_shares`, and `next_round_shares` is the
+   * count the round price was struck off — the company as it stands *before*
+   * the new round's money. The shares that money buys are not in it, because
+   * the engine is never told the round size, so the percentage is an upper
+   * bound on the holder's post-round position rather than the position. Under
+   * the bare word "Ownership" in a signed exhibit that is a figure a reader
+   * cannot reconcile to the cap table that follows the round.
+   */
+  const ownershipNote =
+    result.ownership_pct === null || result.ownership_pct === undefined || num(result.ownership_pct) === null
+      ? null
+      : P(
+          'Ownership is stated over the existing share count plus the shares this instrument converts ' +
+            'into. It excludes the shares issued for the new round\u2019s own subscription, which is not an ' +
+            'input to the conversion, so the holder\u2019s position after the round closes is lower than ' +
+            'the figure above.',
+        );
   return section('Exhibit — Valuation Result', [
     P(`The measurement produced by the credit engine at ${esc(isoDate(data.valuation!.valuation_date))}.`),
     table({ head: ['Measure', 'Value'], rows }),
+    ownershipNote,
   ]);
 }
 

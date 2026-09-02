@@ -678,7 +678,12 @@ describe('DebtInstrumentsPage — per-type results', () => {
 
     await screen.findByRole('heading', { name: 'Valuation result' });
     expect(screen.getByText('Shares received').nextSibling).toHaveTextContent('200,000');
-    expect(screen.getByText('Ownership').nextSibling).toHaveTextContent('1.96%');
+    // Not "Ownership": `safe_conversion` divides by the pre-money share count
+    // plus the SAFE's own conversion shares, so the shares the new round's
+    // money buys are missing from the denominator and the bare word overstates
+    // the position the holder ends up with.
+    expect(screen.getByText('Ownership on conversion').nextSibling).toHaveTextContent('1.96%');
+    expect(screen.getByText(/before the new round.s own shares/)).toBeInTheDocument();
     // Cap or discount — which one won is the whole question a founder asks.
     expect(screen.getByText('Converts via').nextSibling).toHaveTextContent('cap');
     expect(screen.getByText('MOIC').nextSibling).toHaveTextContent('1.63×');

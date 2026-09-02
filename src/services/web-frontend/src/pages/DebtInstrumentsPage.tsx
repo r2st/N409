@@ -779,8 +779,18 @@ function ResultCard({
         {num('shares_received') != null && (
           <Metric label="Shares received" value={num('shares_received')!.toLocaleString()} />
         )}
+        {/* `safe_conversion` divides by `next_round_shares + safe_shares`, and
+            `next_round_shares` is the share count the round price was struck
+            off — the company before the new money. The round's own investors
+            are not in the denominator, because the engine is never told the
+            round size, so the figure is an upper bound on what the holder ends
+            up owning. "Ownership", unqualified, is the one word it is not. */}
         {num('ownership_pct') != null && (
-          <Metric label="Ownership" value={`${(num('ownership_pct')! * 100).toFixed(2)}%`} />
+          <Metric
+            label="Ownership on conversion"
+            value={`${(num('ownership_pct')! * 100).toFixed(2)}%`}
+            hint="of existing plus converted shares — before the new round's own shares"
+          />
         )}
         {typeof result.converted_via === 'string' && (
           <Metric label="Converts via" value={result.converted_via as string} />
@@ -928,7 +938,18 @@ function CreditTermsCard({
   );
 }
 
-function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+function Metric({
+  label,
+  value,
+  accent = false,
+  hint,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  /** What the figure is struck over, when the label alone would overstate it. */
+  hint?: string;
+}) {
   return (
     <div
       className={`rounded-lg border p-3 ${accent ? 'border-bond-200 bg-bond-50' : 'border-paper-200 bg-surface'}`}
@@ -937,6 +958,7 @@ function Metric({ label, value, accent = false }: { label: string; value: string
       <div className={`tnum mt-1 text-base font-semibold ${accent ? 'text-bond-700' : 'text-ink-800'}`}>
         {value}
       </div>
+      {hint && <div className="mt-1 text-xs font-normal text-ink-400">{hint}</div>}
     </div>
   );
 }

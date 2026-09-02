@@ -518,6 +518,23 @@ describe('debt instrument exhibits', () => {
     expect(out).toContain('3.250%');
     expect(out).toContain('Cap'); // converted_via humanized
     expect(out).not.toContain('Macaulay');
+    /*
+     * The denominator is not the one the word "Ownership" implies:
+     * `safe_conversion` divides by `next_round_shares + safe_shares`, and the
+     * shares the new round's own money buys are not in it. Both the row label
+     * and the note under the table say so.
+     */
+    expect(out).toContain('Ownership of existing and converted shares');
+    expect(out).toContain('excludes the shares issued for the new round');
+  });
+
+  it('leaves the ownership note off a measurement that reports no ownership', () => {
+    const bond = debtData({
+      valuation: debtValuation({ result: { fair_value: 990_000, clean_price: 98.5 } }),
+    });
+    const out = html(buildDebtExhibits(bond, ctx));
+    expect(out).toContain('$990,000.00');
+    expect(out).not.toContain('excludes the shares issued for the new round');
   });
 
   it('builds nothing for an engagement with no linked instrument', () => {
