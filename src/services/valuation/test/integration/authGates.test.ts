@@ -147,6 +147,7 @@ describe.skipIf(!dbUp)('auth refusals that depend on how the deployment is set u
         method: 'POST',
         url: '/api/v1/account/mfa/setup',
         headers: authHeader(user.token),
+        payload: { password },
       });
       expect(setup.statusCode, setup.body).toBe(200);
       const secret = setup.json().secret as string;

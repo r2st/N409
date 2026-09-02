@@ -106,17 +106,36 @@ export function MfaCard() {
     );
   }
 
-  const beginSetup = async () => {
+  /*
+   * Password-gated, like the other things on this card (R354).
+   *
+   * Starting an enrolment is what a stolen session does to finish a takeover:
+   * stage its own authenticator, confirm it with a code only it can produce,
+   * and the account is protected by the attacker — the owner meets a challenge
+   * they cannot answer, and while the organisation requires 2FA the Disable
+   * button below is not even offered. The server refuses it without the
+   * password now; this is the box to type it into.
+   *
+   * Through `passwordForm`, the same rule the disable and regenerate buttons
+   * use, so an empty box is a message beside the field rather than a round trip.
+   */
+  const beginSetup = passwordForm.handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
-      setSetup(await api<SetupResponse>('/account/mfa/setup', { method: 'POST' }));
+      const started = await api<SetupResponse>('/account/mfa/setup', {
+        method: 'POST',
+        body: { password: secrets.password },
+      });
+      setSecrets((v) => ({ ...v, password: '' }));
+      passwordForm.reset();
+      setSetup(started);
     } catch (err) {
       setError(describeActionFailure(err, 'Could not start setup.'));
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const confirm = codeForm.handleSubmit(async () => {
     setError(null);
@@ -280,9 +299,25 @@ export function MfaCard() {
           </div>
         </form>
       ) : (
-        <Button type="button" disabled={busy} onClick={beginSetup}>
-          {busy ? 'Starting…' : 'Set up two-factor authentication'}
-        </Button>
+        <form onSubmit={beginSetup} className="space-y-4" noValidate>
+          <Field
+            label="Password"
+            hint="Confirm it's you before a new authenticator is set up."
+            error={passwordForm.errorFor('password')}
+          >
+            <TextInput
+              type="password"
+              autoComplete="current-password"
+              required
+              value={secrets.password}
+              onChange={(e) => setSecrets((v) => ({ ...v, password: e.target.value }))}
+              onBlur={passwordForm.blurHandler('password')}
+            />
+          </Field>
+          <Button type="submit" disabled={busy}>
+            {busy ? 'Starting…' : 'Set up two-factor authentication'}
+          </Button>
+        </form>
       )}
     </section>
   );

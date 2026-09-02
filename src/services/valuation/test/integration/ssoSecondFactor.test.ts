@@ -87,6 +87,7 @@ describe.skipIf(!dbUp)('SSO hand-off — an account with 2FA is challenged, not 
       method: 'POST',
       url: '/api/v1/account/mfa/setup',
       headers: authHeader(token),
+      payload: { password: PASSWORD },
     });
     expect(setup.statusCode).toBe(200);
     const secret = setup.json().secret as string;

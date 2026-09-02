@@ -246,6 +246,7 @@ describe.skipIf(!dbUp)('identity and credential events reach the audit spine', (
       method: 'POST',
       url: '/api/v1/account/mfa/setup',
       headers: authHeader(user.token),
+      payload: { password: PASSWORD },
     });
     expect(setup.statusCode).toBe(200);
     const secret = setup.json().secret as string;

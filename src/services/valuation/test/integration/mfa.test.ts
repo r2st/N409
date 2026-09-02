@@ -42,6 +42,7 @@ async function enroll(ctx: TestApp, token: string): Promise<{ secret: string; ba
     method: 'POST',
     url: '/api/v1/account/mfa/setup',
     headers: authHeader(token),
+    payload: { password: PASSWORD },
   });
   expect(setup.statusCode).toBe(200);
   const { secret, qr, otpauth_uri } = setup.json();
@@ -153,6 +154,7 @@ describe.skipIf(!dbUp)('MFA / 2FA (feature 2)', () => {
       method: 'POST',
       url: '/api/v1/account/mfa/setup',
       headers: authHeader(user.token),
+      payload: { password: PASSWORD },
     });
     const { secret } = setup.json();
     const enrolCode = totp(secret);

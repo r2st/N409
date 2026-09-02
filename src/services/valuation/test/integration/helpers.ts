@@ -198,12 +198,22 @@ export async function setupTestApp(
 }
 
 /** Registers a user with the given roles directly in the DB and returns a bearer token. */
+/**
+ * The password every `seedUser` account is created with.
+ *
+ * Named because a suite that has to *re-authenticate* one of these accounts
+ * needs the same string: `/account/mfa/setup` joined the re-authentication
+ * prompts in R354, so enrolling a seeded admin is now a call that carries a
+ * password, and a second copy of the literal is a copy that goes stale.
+ */
+export const SEEDED_PASSWORD = 'test-password-123';
+
 export async function seedUser(
   ctx: TestApp,
   args: { email?: string; roles: RoleKey[]; partnerId?: string | null },
 ): Promise<{ id: string; email: string; token: string }> {
   const email = args.email ?? `${newUlid().toLowerCase()}@test.example.com`;
-  const password = 'test-password-123';
+  const password = SEEDED_PASSWORD;
   const user = await createUser(ctx.pool, {
     email,
     passwordDigest: await hashPassword(password),

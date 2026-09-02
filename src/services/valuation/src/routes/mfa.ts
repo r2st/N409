@@ -49,6 +49,35 @@ import { invalidBody } from '../domain/validationProblem.js';
 const ConfirmBody = z.object({ code: z.string().min(6).max(10) });
 const PasswordBody = z.object({ password: z.string().min(1) });
 
+/**
+ * Starting an enrolment is a credential-level action, and it was the one that
+ * did not ask (R354, methodology M6).
+ *
+ * `auth/reauth.ts` names why these prompts exist: "the case where the session
+ * is not the owner's — a stolen token, a walk-up on an unlocked laptop, an
+ * XSS-borrowed cookie", where "the attacker already has the session, so the
+ * password is the only thing still in their way". It then lists the six actions
+ * behind one: changing the password or the login email, closing the account,
+ * disabling 2FA, regenerating backup codes, minting an API token.
+ *
+ * *Enrolling* a second factor was not among them, and the file above this one
+ * says it is one of the three actions "that decide whether an account can be
+ * taken over". It is the completing move of a takeover rather than a step in
+ * one: the attacker stages their own authenticator, confirms it with a code
+ * only they can produce, and the account is now protected — by them. The owner
+ * meets a challenge they cannot answer at the next sign-in, `/disable` needs a
+ * password *and* is refused outright while `require_mfa` is on, and the backup
+ * codes that would rescue them were shown once, to somebody else.
+ *
+ * Asked on `/setup` rather than on `/confirm` because that is where the damage
+ * begins: refused here, no secret is staged and no QR is shown, so there is
+ * nothing for a `/confirm` to attest to. Every account that can reach this
+ * route has a password — the SSO refusal below is the same predicate — so
+ * there is no caller this locks out. The budget is `reauth.ts`'s own, shared
+ * with the other six, which is what stops a seventh prompt widening it.
+ */
+const SetupBody = PasswordBody;
+
 export function registerMfaRoutes(
   app: FastifyInstance,
   deps: { pool: pg.Pool; settings?: SystemSettingsStore },
@@ -68,13 +97,20 @@ export function registerMfaRoutes(
 
   // Stage a new secret and return the QR + manual-entry secret. Overwrites any
   // prior un-confirmed staging; harmless because it isn't enabled until /confirm.
+  // Password-gated — see `SetupBody` for why enrolment is a re-authentication
+  // prompt and why it is this half of the two that carries it.
   app.post('/api/v1/account/mfa/setup', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
+    const parsed = SetupBody.safeParse(req.body);
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
+
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
     if (!user.password_digest)
       throw problems.badRequest('This account signs in with Google SSO and manages 2FA there');
     if (user.totp_enabled) throw problems.conflict('2FA is already enabled — disable it first to re-enrol');
+    if (!(await verifyReauthPassword(user.id, parsed.data.password, user.password_digest)))
+      throw problems.badRequest('Password is incorrect');
 
     const secret = generateTotpSecret();
     // The refusal above again, this time as the write's own predicate. Staging

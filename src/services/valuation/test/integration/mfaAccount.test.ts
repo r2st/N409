@@ -7,6 +7,7 @@ import {
   authHeader,
   interceptPoolQueries,
   isDbAvailable,
+  SEEDED_PASSWORD,
   seedUser,
   setupTestApp,
   type TestApp,
@@ -55,13 +56,19 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
     return { id: user.id, token: user.token };
   }
 
-  async function enroll(token: string): Promise<string[]> {
+  /**
+   * Walks an account through enrolment. `password` because `/setup` is a
+   * re-authentication prompt since R354 and the accounts here come from two
+   * seeders with two passwords.
+   */
+  async function enroll(token: string, password: string = PASSWORD): Promise<string[]> {
     const setup = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/account/mfa/setup',
       headers: authHeader(token),
+      payload: { password },
     });
-    expect(setup.statusCode).toBe(200);
+    expect(setup.statusCode, setup.body).toBe(200);
     const secret = setup.json().secret as string;
     const confirm = await ctx.app.inject({
       method: 'POST',
@@ -126,6 +133,7 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
         method: 'POST',
         url: '/api/v1/account/mfa/setup',
         headers: authHeader(user.token),
+        payload: { password: PASSWORD },
       });
       expect(again.statusCode).toBe(409);
     });
@@ -158,6 +166,7 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
           method: 'POST',
           url: '/api/v1/account/mfa/setup',
           headers: authHeader(user.token),
+          payload: { password: PASSWORD },
         });
       } finally {
         restore();
@@ -176,12 +185,69 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
       expect(rows[0]!.totp_confirmed_at).not.toBeNull();
     });
 
+    /*
+     * THE PROMPT THIS ROUTE DID NOT HAVE (R354, methodology M6).
+     *
+     * `auth/reauth.ts` says what these password prompts are for — "a stolen
+     * token, a walk-up on an unlocked laptop, an XSS-borrowed cookie", where
+     * "the attacker already has the session, so the password is the only thing
+     * still in their way" — and lists the six actions behind one. Enrolling a
+     * second factor was not among them, while *disabling* one was, and this
+     * file's own header calls enrolment one of the three actions that decide
+     * whether an account can be taken over.
+     *
+     * It is the completing move rather than a step: a session that is not the
+     * owner's stages its own authenticator, confirms it with a code only it can
+     * produce, and the account is now protected by the attacker. The owner
+     * meets a challenge they cannot answer, `/disable` wants a password and is
+     * refused outright while `require_mfa` is on, and the backup codes that
+     * would rescue them were shown once, to somebody else.
+     */
+    it('refuses to stage a secret without the account password', async () => {
+      const user = await seedPasswordUser();
+      const noPassword = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/account/mfa/setup',
+        headers: authHeader(user.token),
+        payload: {},
+      });
+      expect(noPassword.statusCode).toBe(422);
+
+      const wrong = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/account/mfa/setup',
+        headers: authHeader(user.token),
+        payload: { password: 'not-the-password' },
+      });
+      expect(wrong.statusCode).toBe(400);
+      expect(wrong.json().detail).toContain('Password is incorrect');
+
+      // Nothing was staged, so a `/confirm` has nothing to attest to — which is
+      // why the prompt is on this half of the enrolment rather than the next.
+      const { rows } = await ctx.pool.query<{ totp_secret: string | null }>(
+        'SELECT totp_secret FROM users WHERE id = $1',
+        [user.id],
+      );
+      expect(rows[0]!.totp_secret).toBeNull();
+      expect(
+        (
+          await ctx.app.inject({
+            method: 'POST',
+            url: '/api/v1/account/mfa/confirm',
+            headers: authHeader(user.token),
+            payload: { code: '123456' },
+          })
+        ).statusCode,
+      ).toBe(400);
+    });
+
     it('refuses enrolment on an SSO-only account', async () => {
       const sso = await seedThenStripPassword();
       const res = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/account/mfa/setup',
         headers: authHeader(sso.token),
+        payload: { password: PASSWORD },
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().detail).toContain('Google SSO');
@@ -221,6 +287,7 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
         method: 'POST',
         url: '/api/v1/account/mfa/setup',
         headers: authHeader(user.token),
+        payload: { password: PASSWORD },
       });
       expect(first.statusCode).toBe(200);
       const mine = first.json().secret as string;
@@ -232,6 +299,7 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
           method: 'POST',
           url: '/api/v1/account/mfa/setup',
           headers: authHeader(user.token),
+          payload: { password: PASSWORD },
         });
         theirs = other.json().secret as string;
         return undefined;
@@ -295,6 +363,7 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
         method: 'POST',
         url: '/api/v1/account/mfa/setup',
         headers: authHeader(user.token),
+        payload: { password: PASSWORD },
       });
       const res = await ctx.app.inject({
         method: 'POST',
@@ -421,7 +490,7 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
       // The administrator enrols first, because turning the setting on closes
       // the authenticated surface to *them* too — including the settings route
       // they would turn it back off with. See MFA_ENROLMENT_ROUTES.
-      await enroll(admin.token);
+      await enroll(admin.token, SEEDED_PASSWORD);
       const user = await seedPasswordUser();
       await enroll(user.token);
 
@@ -470,7 +539,7 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
       const admin = await seedUser(ctx, { roles: ['admin'] });
       // The administrator is subject to the gate as well, so they enrol before
       // flipping it — otherwise the route that turns it back off is closed.
-      await enroll(admin.token);
+      await enroll(admin.token, SEEDED_PASSWORD);
       const set = await ctx.app.inject({
         method: 'PUT',
         url: '/api/v1/admin/settings',

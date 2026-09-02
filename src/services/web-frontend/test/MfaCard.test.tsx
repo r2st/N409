@@ -56,6 +56,18 @@ function mockApi(overrides: Partial<Record<string, () => Response>> = {}) {
   });
 }
 
+/**
+ * Types the account password and presses the enrol button.
+ *
+ * `/account/mfa/setup` joined the re-authentication prompts in R354: starting
+ * an enrolment is what a session that is not the owner's does to finish a
+ * takeover, so the QR is not shown until the password is given.
+ */
+async function startSetup(u: ReturnType<typeof userEvent.setup>) {
+  await u.type(await screen.findByLabelText('Password'), 'hunter2hunter2');
+  await u.click(screen.getByRole('button', { name: /set up two-factor/i }));
+}
+
 describe('MfaCard (feature 2)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -67,6 +79,31 @@ describe('MfaCard (feature 2)', () => {
     render(<MfaCard />);
     expect(await screen.findByTestId('mfa-state')).toHaveTextContent('Disabled');
     expect(screen.getByRole('button', { name: /set up two-factor/i })).toBeInTheDocument();
+  });
+
+  /*
+   * The prompt this card did not have (R354, methodology M6).
+   *
+   * Every other credential-level action here is password-gated, and the server
+   * refuses each without one. Starting an enrolment was not — and it is the
+   * move a stolen session makes to *finish* a takeover: stage its own
+   * authenticator, and the account is protected by the attacker, who is also
+   * the only one holding the backup codes.
+   */
+  it('will not start an enrolment until the password is given', async () => {
+    const u = userEvent.setup();
+    const fetchSpy = mockApi({
+      'POST /account/mfa/setup': () => jsonResponse({ secret: 'x', otpauth_uri: 'x', qr: 'x' }),
+    });
+    render(<MfaCard />);
+
+    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    // Refused here rather than by a round trip that comes back 422.
+    expect(await screen.findByText(/password is required/i)).toBeInTheDocument();
+    expect(
+      fetchSpy.mock.calls.filter(([url]) => String(url).endsWith('/account/mfa/setup')),
+    ).toHaveLength(0);
+    expect(screen.queryByAltText('TOTP QR code')).not.toBeInTheDocument();
   });
 
   it('walks through QR setup and confirmation, surfacing backup codes', async () => {
@@ -83,7 +120,7 @@ describe('MfaCard (feature 2)', () => {
     });
     render(<MfaCard />);
 
-    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await startSetup(u);
     expect(await screen.findByAltText('TOTP QR code')).toBeInTheDocument();
     expect(screen.getByText('ABCDEF234567')).toBeInTheDocument();
 
@@ -112,7 +149,7 @@ describe('MfaCard (feature 2)', () => {
     });
     render(<MfaCard />);
 
-    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await startSetup(u);
     await u.type(await screen.findByLabelText('Authenticator code'), 'abcdef');
     await u.click(screen.getByRole('button', { name: /enable 2fa/i }));
 
@@ -134,7 +171,7 @@ describe('MfaCard (feature 2)', () => {
     });
     render(<MfaCard />);
 
-    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await startSetup(u);
     await u.click(await screen.findByRole('button', { name: /enable 2fa/i }));
 
     expect(await screen.findByText('Authenticator code is required.')).toBeInTheDocument();
@@ -170,7 +207,7 @@ describe('MfaCard (feature 2)', () => {
     });
     render(<MfaCard />);
 
-    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await startSetup(u);
     expect(await screen.findByRole('alert')).toHaveTextContent('Try again in a minute.');
     expect(screen.getByRole('button', { name: /set up two-factor/i })).toBeEnabled();
   });
@@ -185,7 +222,7 @@ describe('MfaCard (feature 2)', () => {
     });
     render(<MfaCard />);
 
-    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await startSetup(u);
     await u.type(await screen.findByLabelText('Authenticator code'), '000000');
     await u.click(screen.getByRole('button', { name: /enable 2fa/i }));
 
@@ -202,7 +239,7 @@ describe('MfaCard (feature 2)', () => {
     });
     render(<MfaCard />);
 
-    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await startSetup(u);
     await u.click(await screen.findByRole('button', { name: /cancel/i }));
 
     expect(screen.queryByAltText('TOTP QR code')).not.toBeInTheDocument();

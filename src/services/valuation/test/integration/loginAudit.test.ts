@@ -159,6 +159,7 @@ describe.skipIf(!dbUp)('login audit events', () => {
       method: 'POST',
       url: '/api/v1/account/mfa/setup',
       headers: authHeader(token),
+      payload: { password: PASSWORD },
     });
     const { secret } = setup.json();
     await ctx.app.inject({
@@ -211,6 +212,7 @@ describe.skipIf(!dbUp)('login audit events', () => {
       method: 'POST',
       url: '/api/v1/account/mfa/setup',
       headers: authHeader(token),
+      payload: { password: PASSWORD },
     });
     const { secret } = setup.json();
     await ctx.app.inject({
