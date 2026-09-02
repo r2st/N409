@@ -95,6 +95,12 @@ function isScalarValue(code: number): boolean {
 
 /** Resolve the five predefined entities plus numeric character references. */
 export function decodeXmlText(text: string): string {
+  // Every reference this function resolves starts with `&`, so a value without
+  // one is already its own answer. Worth the check because of where this is
+  // called from: every attribute and every `<v>` of every cell, two million of
+  // them at the grid budget, and a spreadsheet's cells are numbers and names
+  // that carry no entity at all.
+  if (!text.includes('&')) return text;
   return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
     if (body.startsWith('#')) {
       const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : Number(body.slice(1));
@@ -107,9 +113,36 @@ export function decodeXmlText(text: string): string {
   });
 }
 
+/**
+ * The pattern `attr` uses, one per attribute name rather than one per call.
+ *
+ * There are ten names in this file and they are all literals; the cell reader
+ * asks for two or three of them per `<c>`, so a `new RegExp` inside `attr` was
+ * a compile per cell — two hundred thousand of them for a forty-thousand-row
+ * import, and the grid budget allows two million cells. Cached by name, which
+ * is the only thing the pattern varies by.
+ *
+ * The map is keyed by a name this module supplies, never by anything off the
+ * uploaded part, so it cannot be grown by an upload. `Map` rather than an
+ * object literal for the reason `prototypeChainLookups` gives: a plain object
+ * answers `__proto__` with something that is not a RegExp.
+ */
+const ATTR_PATTERNS = new Map<string, RegExp>();
+
+function attrPattern(name: string): RegExp {
+  let re = ATTR_PATTERNS.get(name);
+  if (re === undefined) {
+    re = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`);
+    ATTR_PATTERNS.set(name, re);
+  }
+  return re;
+}
+
 /** Read an attribute off a raw element tag (`<c r="A1" t="s">`). */
 function attr(tag: string, name: string): string | undefined {
-  const m = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`).exec(tag);
+  // Not a `g` pattern, so there is no `lastIndex` to reset between calls — a
+  // cached regex is safe to share only because of that.
+  const m = attrPattern(name).exec(tag);
   return m ? decodeXmlText(m[1]!) : undefined;
 }
 
