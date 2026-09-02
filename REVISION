@@ -10323,3 +10323,89 @@
 #            offending keyword too, which is the half a caller needs, so it is
 #            left — but it is the one place in the estate where an upstream
 #            language runtime's wording reaches a `detail` unread.
+#
+# R375 — Performance (M8), at `cd71bb9..a61743a`. Two findings, no migration, no
+#            index, 11 new tests. The fifteenth performance round, and the
+#            second in a row to leave SQL alone: the R231 diff over R368-R374
+#            has one new statement (R372's `supersedes` guard, which came with
+#            migration 0205) and no loop, so both findings are the same shape
+#            one tier out — *a bound on the input is not a bound on the work* —
+#            and both were on R367's own measured-and-not-taken list.
+#
+#            cd71bb9 — `extract_texts` allowed 60 000 characters across an
+#            upload. Every AI pipeline then fitted what it got into a budget of
+#            its own — 45 000, 30 000, and on `run_missing_data` 15 000 — and
+#            `_corpus` stopped at the first document that did not fit, because a
+#            corpus is filled in order. Everything between those two numbers was
+#            decoded, parsed, redacted and dropped. Redaction is `re` holding
+#            the GIL: on a ten-document upload against the smallest budget, 52.8
+#            of 26.2 ms was spent on text no model was ever going to see.
+#            `iter_extracted` is the extractor one document at a time and
+#            `_load_corpus` walks it, redacting and pricing each block as it
+#            arrives, so the pipeline's budget is what stops the parse. Verified
+#            as output identity — 60 randomised uploads, colliding redacted
+#            filenames, five limits including two degenerate ones, corpus equal
+#            character for character. Three narrowings fall out and each is the
+#            truer claim: `anonymization` counts what was struck out of the text
+#            that actually left the trust boundary; `by_shown_filename` covers
+#            what the model was shown, so a name it never saw is no longer
+#            resolved to a real filename and written into a work product as a
+#            citation's source; and `run_missing_data` reads uploaded document
+#            kinds off the request, because the checklist asks which required
+#            *uploads* are absent and a workbook a budget stopped before is
+#            still one the client sent.
+#
+#            a61743a — `buildZip` writes every .xlsx this platform exports as
+#            well as the auditor's evidence bundle, and it deflated with
+#            `deflateRawSync`, so the API process stopped answering for the
+#            length of every compression it did. At the list-export cap the
+#            workbook's parts are 27 ms of a 40 ms `buildXlsx` — two thirds of
+#            building a workbook, with `node:zlib`'s `processChunkSync` above
+#            everything the writer itself does in a CPU profile — and R367
+#            measured the bundle's `calculations.json` at 40 ms on its own.
+#            `zlib`'s callback form runs the byte pass on libuv's threadpool.
+#            Same level, same input, same order, so the archive is byte-
+#            identical; entries are still compressed one at a time so a
+#            twenty-part bundle cannot claim four pool threads. The async
+#            signature is the churn R367 named as the reason not to take it:
+#            four call sites in `src`, sixty-odd in the test tree, and two test
+#            shapes that needed more than an `await` — three `expectSubQuadratic`
+#            probes whose `run` built *and* read (an async `run` would time the
+#            promise, so the workbooks are built up front and `run` is
+#            `readXlsx`), and `zipDeflateFailure`'s `node:zlib` stub, which is
+#            the callback form now because the refusal arrives as a rejection.
+#
+#            Both guards assert the work, because both answers are identical
+#            either way: how many documents the extractor decodes (with the
+#            fits-in-the-budget case beside it as the discriminator, since a
+#            reader that simply stopped early passes the first and fails that),
+#            and how many turns the event loop gets while an entry compresses.
+#            Both fail against the pre-fix source — 6 documents decoded against
+#            2, 51 emails struck against 1, and 0 loop turns against 1694.
+#
+#            gap: R314's shape at the Node tier is *stated* rather than closed.
+#            `volatility`'s estimate makes up to `MAX_SERIES` = 20 sequential
+#            engine fetches at `FEED_TIMEOUT_MS` = 12 s each, and `comparables`'
+#            refresh up to `REFRESH_BATCH` = 25 at 8 s, so one button press is
+#            bounded at four minutes and at 200 s respectively, with no
+#            `requestTimeout` on the Fastify instance. Both were sized against
+#            Node's five-minute socket destroy deliberately and say so, so a
+#            whole-fan-out budget of the kind `MULTIPLES_BUDGET_S` gives the
+#            tier below would be reversing a stated decision, not fixing an
+#            oversight. Left for a round that wants to argue the trade rather
+#            than the arithmetic.
+#            gap: the seven `BaseHTTPMiddleware` layers per Python unit are
+#            **1.0 ms of a 1.63 ms bare `/health`** (measured against a bare
+#            FastAPI app through the same client). Recovering it means seven
+#            pure-ASGI rewrites across two services' twin files — R367 said this
+#            wants its own round and it still does.
+#            gap: `xmlEscape` + `stripInvalidXmlChars` are six passes over every
+#            cell string, ~3.2 ms of the ~13 ms `buildXlsx` still spends on the
+#            loop after the deflate moved off it. One combined scan is
+#            mechanical and safe, and it is below the bar R351 set when it
+#            measured and declined `_assert_finite_results`' leaf loop.
+#            gap: the realtime hub's `broadcast` serialises the same payload
+#            once per connection (`stream.ts`'s `send` does the `JSON.stringify`),
+#            so a full room pays `maxPerRoom` = 64 encodings of one object. The
+#            payloads are two scalars, so it is real and unmeasurable; a frame
+#            built once would need `send` to take pre-serialised text.
