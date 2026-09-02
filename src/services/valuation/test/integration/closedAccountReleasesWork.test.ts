@@ -3,7 +3,14 @@ import { createValuation, findValuationById, patchValuation } from '../../src/re
 import { createTask, findTaskById, patchTask } from '../../src/repos/tasks.js';
 import { softDeleteUser } from '../../src/repos/adminUsers.js';
 import { setUserActive } from '../../src/repos/users.js';
-import { forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  forceState,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -140,6 +147,48 @@ describe.skipIf(!dbUp)('closing an account releases the work it was holding', ()
     // the second pass must find nothing left and write no second event.
     const again = await setUserActive(ctx.pool, scim.id, false, scimActor);
     expect(again).toEqual({ valuations: [], reviewTasks: [] });
+  });
+
+  /**
+   * What the release costs does not grow with what the leaver was holding
+   * (R351, M8).
+   *
+   * The two `UPDATE … RETURNING` statements are set-based and take a row lock
+   * on every engagement they touch — and `assigned_reviewer_id` bumps `version`
+   * — so every lock is held until the COMMIT. Writing the spine one row at a
+   * time held all of them for the length of the batch: a reviewer with three
+   * hundred live engagements was three hundred round trips of an open write
+   * transaction with three hundred engagements locked inside it.
+   *
+   * Asserted as a *difference*, not as a ceiling. The number of statements a
+   * close issues for other reasons is not this test's business and will change;
+   * what must hold is that doubling the work released does not move it.
+   */
+  it('writes the same number of statements however much work it releases', async () => {
+    const count = async (held: number): Promise<number> => {
+      const holder = await seedUser(ctx, { roles: ['reviewer'] });
+      for (let i = 0; i < held; i += 1) {
+        const v = await createValuation(
+          ctx.pool,
+          { kind: '409a', companyName: `Batch ${holder.id}-${i}`, userId: admin.id },
+          actor(),
+        );
+        await patchValuation(ctx.pool, v, { assigned_reviewer_id: holder.id }, actor());
+      }
+      let issued = 0;
+      const restore = interceptPoolQueries(ctx.pool, (_sql, phase) => {
+        if (phase === 'before') issued += 1;
+      });
+      try {
+        const released = await softDeleteUser(ctx.pool, holder.id, actor());
+        expect(released?.valuations).toHaveLength(held);
+      } finally {
+        restore();
+      }
+      return issued;
+    };
+
+    expect(await count(8)).toBe(await count(2));
   });
 
   it('closes an account holding nothing without inventing work to release', async () => {

@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { recordEvent, type EventActor } from '../events/record.js';
+import { recordEvents, type EventActor } from '../events/record.js';
 import { EVENT_TYPES } from '../domain/valuation.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { invalidateValuation } from './valuations.js';
@@ -97,17 +97,24 @@ export async function releaseAssignedWork(
       RETURNING id`,
     [userId],
   );
-  for (const row of valuations) {
-    // The shape `patchValuation` writes for the same column, so the change log
-    // and the evidence bundle read it as the reassignment it is rather than as
-    // an event with no descriptor — see `extractChanges`.
-    await recordEvent(client, {
+  // The shape `patchValuation` writes for the same column, so the change log
+  // and the evidence bundle read it as the reassignment it is rather than as
+  // an event with no descriptor — see `extractChanges`.
+  //
+  // One statement rather than one per engagement (round 351, methodology M8).
+  // This runs inside the transaction that closes the account, and the UPDATE
+  // above holds a row lock on every engagement it touched until the COMMIT — so
+  // a serial insert per row held all of them for the length of the batch. See
+  // `recordEvents`.
+  await recordEvents(
+    client,
+    valuations.map((row) => ({
       valuationId: row.id,
       type: EVENT_TYPES.updated,
       actor,
       payload: { changes: { assigned_reviewer_id: { from: userId, to: null } }, reason },
-    });
-  }
+    })),
+  );
 
   const { rows: tasks } = await client.query<{ id: string; valuation_id: string }>(
     `UPDATE review_tasks
@@ -118,14 +125,15 @@ export async function releaseAssignedWork(
       RETURNING id, valuation_id`,
     [userId],
   );
-  for (const row of tasks) {
-    await recordEvent(client, {
+  await recordEvents(
+    client,
+    tasks.map((row) => ({
       valuationId: row.valuation_id,
       type: PIPELINE_EVENT_TYPES.taskUpdated,
       actor,
       payload: { task_id: row.id, changes: { assignee_id: { from: userId, to: null } }, reason },
-    });
-  }
+    })),
+  );
 
   return { valuations: valuations.map((r) => r.id), reviewTasks: tasks.map((r) => r.id) };
 }
