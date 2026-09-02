@@ -9086,3 +9086,103 @@
 #            than trusting a summary — a cancelled grant is counted on one sheet
 #            and excluded on the other with nothing saying which question each
 #            answered.
+#
+# R365 — Input-validation consistency (M4). Two findings, and the round's
+#            shape is the same in both: the rule was already written down and
+#            was keyed on a *spelling* rather than on the thing it is about.
+#
+#            **A refused number the refusal could not print.** `1e999` and
+#            `NaN` are ordinary JSON tokens — every parser in use here accepts
+#            them and hands back a Python `inf`/`nan`, which `json.dumps`
+#            refuses. So on any field of any endpoint of either Python service
+#            whose declared type will not take a float (a string, an int, an
+#            enum, a list element), pydantic refused the body correctly and
+#            named the field in `loc`, and then `_scrubbed` echoed the offending
+#            value back under `input` and killed the encoder inside
+#            `JSONResponse`. What the caller got was `Internal Server Error`
+#            with the field name lost; what the log got was an
+#            unhandled-exception traceback; what the metrics got was the service
+#            counted as broken by a request that was merely wrong — and in the
+#            engine's case that is exactly the distinction the tier's 4xx/5xx
+#            split exists to carry. 52 field/token pairs answered 5xx in the
+#            engine and 60 in the AI service. `_scrubbed` is the one funnel
+#            every error body in this tier passes through and its own docstring
+#            already named `input` as the field that "echoes the offending
+#            payload" — it had been made disclosure-safe and not JSON-safe. A
+#            non-finite float is now rendered rather than returned, and the
+#            depth cap renders a container instead of handing it back untouched,
+#            which was the same hole one level down: `input` is the caller's own
+#            payload, so its depth is the caller's choice. The rendering goes
+#            through `redact` for the same reason a string does — the scrub must
+#            not have a depth past which it stops.
+#
+#            **Twenty-three bodies that answered 200 to a request of typos.**
+#            `schemaBoundaryCensus` already says a patch body must refuse an
+#            unknown key, and reads `.partial()` to find one. A schema whose
+#            every field carries its own `.optional()` or `.default()` is the
+#            same object — it accepts `{}`, so nothing in it is required, so a
+#            request made entirely of misspelt keys is indistinguishable from an
+#            empty one. Twenty-three body schemas were written that way and none
+#            was strict, two of them spelled `PatchBody` on the line above the
+#            handler that applies them. `PATCH /valuations/:id/grants/:grantId`
+#            is the one that matters: its ten fields are the option grant a
+#            409A's dilution is computed from, and `{"vesting_month": 48}`
+#            changed nothing, answered 200 and serialised the grant back, so the
+#            field an analyst had just corrected read as saved. `PATCH
+#            /saved-views/:id` carried a `.refine(Object.keys(b).length > 0)`
+#            that counted the keys which *survived* the strip, so a patch of
+#            nothing but typos passed the emptiness check too. The census now
+#            states the rule about the shape rather than the spelling, and names
+#            `grants.ts:PatchBody` so a rename cannot empty it. Bodies only,
+#            deliberately: the query string is the other half of the same
+#            argument with the opposite answer, since a link carrying
+#            `?utm_source=` is ordinary and refusing over it breaks a page for a
+#            reason its reader cannot act on.
+#
+#            And `debtRefusals.test.ts` asked for a 404 on a malformed
+#            `valuation_id` and has been red on `main` since R331 — the same
+#            expectation, in the same shape, that R364 found in
+#            `communicationsRefusals.test.ts`. Each id now gets its own answer:
+#            422 naming the field for a malformed one, 404 for a well-formed
+#            absent one.
+#
+#            The dead-parameter question the round was also asked came back
+#            clean. Every repo column allow-list — `ADMIN_PATCH_COLUMNS`,
+#            `TEMPLATE_PATCH_COLUMNS`, `AUTO_EMAIL_PATCH_COLUMNS`,
+#            `TASK_PATCH_COLUMNS`, `OWN_PROFILE_COLUMNS`, help and blog — agrees
+#            field-for-field with the route schema above it, so there is no
+#            endpoint accepting a field its repo silently drops.
+#
+#            gap: `npm run format:check` is red on `main` independently of this
+#            round. `routes/exports.ts`, `routes/funds.ts`, `routes/scim.ts` and
+#            `routes/valuations.ts` are Prettier-dirty at HEAD, each on a
+#            pre-existing line this round did not touch. It is a CI gate the
+#            local `npm test` cannot see (see the CI-gates note), which is how
+#            it stayed red.
+#            gap: the report service's `RenderBody` is not `.strict()`, and
+#            `renderContract.test.ts` compares only the *top-level* fields of
+#            `ReportPdfInput`. A nested drift is invisible to both: a new
+#            `summary` field, a fifth `ChartSpec` variant, or a new member of a
+#            section would be stripped by the schema and the render would
+#            succeed without it — which is precisely the `watermark` failure the
+#            file's own prose describes, one level down. `ReportPdfSection`'s
+#            `schedules` is already absent from the wire and harmless only
+#            because the renderer ignores it.
+#            gap: `MarketFeedRequest` was typed and bounded (`list[str]`,
+#            `max_length`) because a bare `list` accepted `[[]]` and answered a
+#            malformed request with a 500. Its siblings were not:
+#            `MarketDataRequest.tickers`, `VolatilityRequest.comparables`,
+#            `FundValuationRequest.positions` and
+#            `RollForwardRequest.value_adjustments` are all still bare `list`.
+#            Each is in fact defended a layer down — `market_data.lookup` opens
+#            with `isinstance(tickers, list)` and a `MAX_TICKERS` cap — so the
+#            answers are right today; the guarantee is just held somewhere the
+#            schema does not say, and the fifth one added will not inherit it.
+#            gap: `POST /engine/v1/comparables` with `inputs.sic_code = 1e999`
+#            answers 200 with every candidate screened out as "different
+#            industry". A screen handed a non-finite code reads, to the caller,
+#            as a screen that found nothing — which is the same sentence a
+#            correct code with no comps produces. The other numeric inputs on
+#            that endpoint (`revenue`, `revenue_growth`) are refused by name;
+#            `sic_code` is compared rather than measured, so nothing looked at
+#            it.
