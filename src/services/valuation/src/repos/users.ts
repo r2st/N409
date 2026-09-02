@@ -468,18 +468,61 @@ export async function setUserActive(
 /**
  * Grant a set of roles, in one statement rather than one per role.
  *
- * `key = ANY($2)` matches the whole set at once. A role key with no `roles` row
- * inserts nothing, which is what the per-role loop did too — the set is
- * validated where it is chosen, not here.
+ * `key = ANY($2)` matches the whole set at once.
+ *
+ * A KEY WITH NO `roles` ROW IS REFUSED, NOT DROPPED (round 390, methodology
+ * M5). `SELECT id FROM roles WHERE key = ANY(…)` inserts one row per key it
+ * *finds*, so a key the platform declares and the database has never heard of
+ * contributed nothing and said nothing: the insert affected fewer rows, no
+ * statement failed, the transaction committed, and the route answered 2xx. The
+ * old note here said "the set is validated where it is chosen" — and it is,
+ * against `ROLE_KEYS`, which is a TypeScript constant. The other side of this
+ * join is a seed migration (0002, plus `auditor` in 0081). Two lists, two
+ * files, no compiler between them, and the failure mode is not a smaller grant
+ * than asked for but the wrong one:
+ *
+ *  - `createUser` and `createProvisionedUser` both `return { ...row, roles:
+ *    args.roles }` — the set they *asked* for, so the caller, the SCIM
+ *    response and the admin console all report a role the account does not
+ *    hold.
+ *  - `adminPatchUser` replaces the set: `DELETE FROM user_roles` and then this.
+ *    An operator moving somebody onto an unseeded key leaves the account with
+ *    **no roles at all**, over a 204, and finds out when that person cannot
+ *    sign in.
+ *
+ * So the statement reports what it matched and an unmatched key raises. The
+ * caller is inside `withTransaction` in every case, so the user creation or the
+ * role replacement rolls back with it: no account exists holding a set nobody
+ * chose. `roleSeedCensus.test.ts` is what makes this unreachable rather than
+ * merely loud — it derives both sides and fails on a laptop, with no database,
+ * the day a key is added without its seed.
+ *
+ * The data-modifying CTE runs to completion whether or not the outer query
+ * reads it (Postgres executes `WITH` writes exactly once, independently of the
+ * primary query), so this is still one round trip and one insert.
  */
 export async function assignRoles(client: pg.PoolClient, userId: string, roles: RoleKey[]): Promise<void> {
   if (roles.length === 0) return;
-  await client.query(
-    `INSERT INTO user_roles (user_id, role_id)
-     SELECT $1, id FROM roles WHERE key = ANY($2::text[])
-     ON CONFLICT DO NOTHING`,
+  const { rows } = await client.query<{ key: string }>(
+    `WITH matched AS (
+       SELECT id, key FROM roles WHERE key = ANY($2::text[])
+     ), granted AS (
+       INSERT INTO user_roles (user_id, role_id)
+       SELECT $1, id FROM matched
+       ON CONFLICT DO NOTHING
+     )
+     SELECT key FROM matched`,
     [userId, roles as readonly string[]],
   );
+  const seeded = new Set(rows.map((r) => r.key));
+  const missing = [...new Set<string>(roles)].filter((key) => !seeded.has(key));
+  if (missing.length > 0) {
+    throw new Error(
+      `no roles row for ${missing.join(', ')} — this build declares the role and the database has ` +
+        'never been seeded with it, so the grant would have been silently dropped. ' +
+        'Apply the seed migration that adds it.',
+    );
+  }
 }
 
 /**
