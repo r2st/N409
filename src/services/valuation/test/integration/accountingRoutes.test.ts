@@ -366,6 +366,69 @@ describe.skipIf(!dbUp)('accounting routes', () => {
         await other.teardown();
       }
     });
+
+    it('says the provider granted access when the exchange worked and the store did not', async () => {
+      /*
+       * R382, methodology M5. The exchange and the write that stores its result
+       * shared one `try`, so this answered `accounting=error` — whose sentence
+       * on the page is "nothing was connected — press Connect to try again".
+       * The exchange had returned: Xero minted an access token and a refresh
+       * token against this deployment's OAuth app, and nothing here recorded
+       * them, so nothing here can spend them or revoke them. Pressing Connect
+       * again mints a second grant beside the first.
+       *
+       * The store is failed at the table, which is the honest way to write
+       * this: there is no request shape that makes `upsertConnection` fail —
+       * the query-string guard already refuses a NUL and `external_org_id` is
+       * unbounded `text` — and the failures this outcome is for are a pool that
+       * ran out, a replica in recovery, a migration mid-flight. A `CHECK
+       * (false)` on this app's own throwaway database is the same thing to the
+       * handler and says exactly what it is doing.
+       */
+      const stub = xeroStub({});
+      const other = await setupTestApp(
+        { PUBLIC_BASE_URL: BASE_URL, XERO_CLIENT_ID: 'xero-client', XERO_CLIENT_SECRET: 'xero-secret' },
+        { accountingFetch: stub.fetchFn },
+      );
+      try {
+        const user = await seedUser(other, { roles: ['valuation_user'] });
+        const created = await other.app.inject({
+          method: 'POST',
+          url: '/api/v1/valuations',
+          headers: authHeader(user.token),
+          payload: { kind: '409a', company_name: 'Store Fails Co' },
+        });
+        const id = created.json().valuation.id as string;
+        const started = await other.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/accounting/xero/connect`,
+          headers: authHeader(user.token),
+        });
+        const state = new URL(started.json().authorize_url).searchParams.get('state')!;
+
+        await other.pool.query(
+          'ALTER TABLE accounting_connections ADD CONSTRAINT r382_store_fails CHECK (false) NOT VALID',
+        );
+        const res = await other.app.inject({
+          method: 'GET',
+          url: `/api/v1/accounting/callback?state=${encodeURIComponent(state)}&code=abc`,
+        });
+        await other.pool.query('ALTER TABLE accounting_connections DROP CONSTRAINT r382_store_fails');
+
+        expect(res.statusCode).toBe(302);
+        // Not `error`: the page's `error` sentence claims nothing was connected,
+        // and Xero has just handed us an access token and a refresh token.
+        expect(res.headers.location).toContain('accounting=unstored');
+        expect(res.headers.location).not.toContain('accounting=error');
+        // And the claim `unstored` does make is true — nothing is stored here.
+        expect(await findConnection(other.pool, id, 'xero')).toBeNull();
+        // The exchange did happen, which is the whole difference between the
+        // two words: the code was spent and the grant exists at the provider.
+        expect(stub.grants).toContain('authorization_code');
+      } finally {
+        await other.teardown();
+      }
+    });
   });
 
   describe('importing', () => {

@@ -110,6 +110,35 @@ describe('the integration callback outcome counter', () => {
     }
   });
 
+  it('does not answer a granted-but-unstored connection with the refusal word', () => {
+    /*
+     * R382, methodology M5. The exchange and the write that stores its result
+     * used to share one `try`, so a Postgres failure on the write came back as
+     * `back('error')` under a `warn` reading "token exchange failed" — the half
+     * that had just worked. The two are different incidents: a failed exchange
+     * leaves nothing anywhere, while a failed store leaves an access token and
+     * a refresh token minted at the provider against this deployment's OAuth
+     * app, which nothing here recorded and so nothing here can spend or revoke.
+     *
+     * Held on the source because it is a shape rather than a value: one guard
+     * around the exchange alone, and the store's own guard answering with the
+     * word that says access was granted.
+     */
+    for (const route of ROUTES) {
+      const src = sourceOf(route);
+      expect(src, route).toMatch(
+        /tokens = await exchangeCode\([^)]*\);\s*\} catch \(err\) \{[\s\S]{0,200}?return back\('error'\);/,
+      );
+      expect(src, route).toContain("return back('unstored');");
+      // At `error`, with `alert: true`: nothing is coming back for this one,
+      // and this line is the only place the credential is named at all.
+      expect(src, route).toContain(
+        "'integration callback: the provider granted access and it could not be stored'",
+      );
+      expect(src, route).toMatch(/req\.log\.error\(\s*\{[\s\S]{0,220}?alert: true,/);
+    }
+  });
+
   it('is registered on the app, or nothing above reaches a scrape', () => {
     const app = readFileSync(path.resolve(HERE, '../../src/app.ts'), 'utf8');
     expect(app).toContain('registerIntegrationCallbackMetrics(metricsRegistry)');

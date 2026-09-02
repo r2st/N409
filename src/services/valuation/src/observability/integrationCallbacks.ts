@@ -57,8 +57,24 @@ export type IntegrationFamily = 'hris' | 'accounting' | 'cap-table';
  * or the person who started it can no longer finish it. The second pair is a
  * security-relevant refusal of a stale thirty-minute token, and it left nothing
  * behind at all.
+ *
+ * `unstored` is the sixth, added in R382 (methodology M5), and it is the only
+ * one of them that is not a refusal. The three callbacks each wrapped the
+ * authorisation-code exchange and the `upsertConnection` that stores its result
+ * in one `try`, so a Postgres failure on the write answered `error` — the same
+ * word as a provider that refused us, under a log line reading "token exchange
+ * failed", which is the half that had just worked.
+ *
+ * They are not the same incident and the difference is not cosmetic. A failed
+ * exchange leaves nothing anywhere. A failed *store* leaves an access token and
+ * a refresh token minted at the provider against this deployment's OAuth app,
+ * granting standing access to a client's payroll or cap table, which nothing
+ * here recorded and so nothing here can use or revoke. The page said "nothing
+ * was connected — press Connect to try again", and pressing it mints a second
+ * one.
  */
-export type IntegrationCallbackOutcome = 'connected' | 'denied' | 'retired' | 'unauthorized' | 'error';
+export type IntegrationCallbackOutcome =
+  'connected' | 'denied' | 'retired' | 'unauthorized' | 'error' | 'unstored';
 
 export function registerIntegrationCallbackMetrics(registry: MetricsRegistry): void {
   outcomes = registry.counter(

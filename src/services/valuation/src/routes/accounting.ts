@@ -291,8 +291,34 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
     const creds = deps.credentials[provider];
     if (!creds) throw providerUnavailable(provider);
 
+    /*
+     * The exchange and the store, in separate guards (R382, methodology M5).
+     *
+     * One `try` used to hold both, so every failure answered `back('error')`
+     * under a line reading "'accounting token exchange failed'" — and after the exchange has
+     * returned, that sentence names the half that worked. The two are not the
+     * same incident. A failed exchange leaves nothing anywhere. A failed store
+     * leaves an access token and a refresh token minted at the provider against
+     * this deployment's OAuth app — standing access to the client's accounting ledger
+     * — which nothing here recorded, so nothing here can spend it and nothing
+     * here can revoke it.
+     *
+     * What the reader was told about that is the part that decided this:
+     * `describeCallbackOutcome`'s `error` sentence is "nothing was connected —
+     * press Connect to try again", and its module header states the reasoning
+     * out loud ("a failed exchange stored nothing"). It was true of the
+     * exchange and false of the store, on the one page whose whole job is to
+     * say what a third party was just granted; and pressing Connect again mints
+     * a second grant beside the first.
+     */
+    let tokens;
     try {
-      const tokens = await exchangeCode(provider, creds, redirectUri, q.code, fetchFn);
+      tokens = await exchangeCode(provider, creds, redirectUri, q.code, fetchFn);
+    } catch (err) {
+      req.log.warn({ err, provider }, 'accounting token exchange failed');
+      return back('error');
+    }
+    try {
       await upsertConnection(
         deps.pool,
         {
@@ -308,8 +334,23 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       );
       return back('connected');
     } catch (err) {
-      req.log.warn({ err, provider }, 'accounting token exchange failed');
-      return back('error');
+      // `error` rather than this, and `warn` rather than this level, is what a
+      // provider refusing us deserves. This is a credential that exists at a
+      // third party and nowhere here: no retry reaches it, no revoke reaches
+      // it, and the only way anyone learns of it is this line. `alert: true`
+      // for the same reason `autoPipeline` raises it — a failure nothing is
+      // coming back for is the one that wants a person.
+      req.log.error(
+        {
+          err,
+          provider,
+          valuationId: state.valuationId,
+          userId: state.userId,
+          alert: true,
+        },
+        'integration callback: the provider granted access and it could not be stored',
+      );
+      return back('unstored');
     }
   });
 

@@ -34,7 +34,8 @@
  */
 
 /** The result codes the three callbacks redirect with. */
-export type IntegrationCallbackOutcome = 'connected' | 'denied' | 'error' | 'retired' | 'unauthorized';
+export type IntegrationCallbackOutcome =
+  'connected' | 'denied' | 'error' | 'retired' | 'unauthorized' | 'unstored';
 
 /** A provider label the page is willing to print, or the neutral stand-in. */
 export function providerLabel(labels: Record<string, string>, named: string | null): string {
@@ -56,9 +57,20 @@ export function providerLabel(labels: Record<string, string>, named: string | nu
  *
  * Every branch says whether anything was connected, because that is what
  * somebody who has just granted a third party access to their cap table most
- * wants to be told — and it is true of all three refusals: the retirement check
- * and the `denied` branch both sit above the token exchange, and a failed
- * exchange stored nothing.
+ * wants to be told. It is true of the three refusals — the retirement check and
+ * the `denied` branch both sit above the token exchange, and a failed exchange
+ * stored nothing.
+ *
+ * `error` used to carry a fourth case for which it was false. The callbacks
+ * guarded the exchange and the write that stores its result in one `try`, so a
+ * database failure on the write came back as `error` and this sentence told the
+ * reader nothing was connected — while the provider held a live access token
+ * and refresh token against this deployment's OAuth app. R382 split the guards
+ * and gave that case `unstored`, which is the one outcome here that is neither
+ * a success nor a refusal: access *was* granted, and this side has no record of
+ * it. Its sentence therefore does the opposite of the others — it does not
+ * offer the button again, because pressing it mints a second grant beside the
+ * one nobody can see.
  */
 export function describeCallbackOutcome(
   outcome: string,
@@ -96,6 +108,15 @@ export function describeCallbackOutcome(
           `Your access to this engagement ended while you were connecting to ${provider}, so ` +
           'nothing was connected and no access was granted. Ask an administrator to check your ' +
           'account, or have a colleague who can open this engagement connect it.',
+      };
+    case 'unstored':
+      return {
+        ok: false,
+        message:
+          `${provider} granted access, but this workspace could not save the connection — so it ` +
+          'is not usable here and will not appear below. Do not press Connect again: ask an ' +
+          `administrator to check the service log, and revoke this workspace's access in ` +
+          `${provider} if you did not mean to grant it.`,
       };
     default:
       return {

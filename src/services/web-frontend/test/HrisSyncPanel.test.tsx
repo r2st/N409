@@ -512,6 +512,27 @@ describe('HrisSyncPanel (feature 11)', () => {
       expect(note).not.toHaveTextContent(/Press Connect to try again/);
     });
 
+    it('does not claim nothing was connected when the provider granted access', async () => {
+      /*
+       * R382, methodology M5. `unstored` is the callback's word for the one
+       * outcome that is neither a success nor a refusal: the exchange returned,
+       * so the provider minted an access token and a refresh token against this
+       * deployment's OAuth app, and the write that stores them failed. It used
+       * to arrive as `error`, whose sentence is "nothing was connected — press
+       * Connect to try again" — false about a third party's standing access to
+       * the client's payroll, on the one screen whose job is to say what was
+       * just granted, and an instruction that mints a second grant.
+       */
+      mockApi();
+      renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />, '/?hris=unstored&provider=gusto');
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/Gusto granted access/);
+      expect(note).not.toHaveTextContent(/nothing was connected/);
+      // The remedy is to revoke, not to retry.
+      expect(note).not.toHaveTextContent(/Press Connect to try again/);
+      expect(note).toHaveTextContent(/revoke/);
+    });
+
     it('will not print a provider name the server did not send', async () => {
       mockApi();
       renderPanel(
