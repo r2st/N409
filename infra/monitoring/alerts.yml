@@ -49,12 +49,21 @@
 # healthy volume beside it — and the summaries that did fire named nobody, since
 # `{{ $labels.service }}` on a series without one renders empty.
 # `alertRulesCensus.test.ts` now holds every label a rule groups by, selects on
-# or interpolates to one the metrics in that rule actually carry. Note that it
-# reads the **TypeScript** registrations only: the Python tier's instruments
-# live in `src/services/{ai,engine-wrapper}/app/metrics.py` and are pinned by
-# `test_metrics_endpoint.py` in each service instead, which asserts the series
-# these rules name by hand. A rule that only the Python units would fire is
-# therefore not covered by the census — keep the two names identical.
+# or interpolates to one the metrics in that rule actually carry. It reads both
+# tiers as of R369 (methodology M11): it used to scan `.ts` only, on the
+# argument that every Python instrument was a second copy of a TypeScript one
+# and the TS registration stood in for both — which stopped being true when
+# `market_feed_provider` was registered by the engine unit and by nothing else,
+# leaving `MarketFeedProviderMisbuilt` indistinguishable from a rule watching
+# nothing. The Python scan carries its own vacuity guard, naming metrics and
+# label sets it must find, because a scan that matched nothing would make every
+# assertion in that file pass by having nothing left to ask.
+#
+# The twins are still hand-kept: `cgroup_memory.py` and `metrics.py` exist once
+# per Python service and nothing derives them from `cgroupMemory.ts` or
+# `prometheus.ts`. `test_metrics_endpoint.py` and `test_cgroup_memory.py` in
+# each service pin the series these rules name by hand — keep the names
+# identical across all four files.
 #
 # The AI (:3002) and engine (:3003) services became scrape targets in R361
 # (methodology M11) and now publish `n409_build_info`, `process_uptime_seconds`

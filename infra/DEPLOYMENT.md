@@ -140,16 +140,35 @@ journalctl -u n409-report --since '-1d' | grep -i 'memory\|oom\|killed'
 systemctl show n409-report -p MemoryPeak -p MemoryCurrent -p MemoryMax
 ```
 
-The Python pair serves `/metrics` too since R361, but publishes the *process*
-facts only — build, uptime and the RED trio. It does not export cgroup state:
-`cgroupMemory.ts` reads `/sys/fs/cgroup` through a Node-side reader that has no
-Python twin, so those two units' ceilings are still visible through
-`systemctl show` and the journal only.
+The Python pair serves `/metrics` too since R361, and since R369 publishes the
+same cgroup family under the same names — `cgroup_memory.py` is a hand-kept twin
+of `cgroupMemory.ts` in each of `src/services/{ai,engine-wrapper}/app`. Those
+two units hold the tightest ceilings on the box (256M each, against 384M for
+valuation and 512M for report), so every rule in the memory group now covers all
+five rather than three:
 
 ```bash
 curl -H "authorization: Bearer $INTERNAL_SERVICE_TOKEN" localhost:3003/metrics \
-  | grep -E 'n409_build_info|process_uptime_seconds|http_requests_total'
+  | grep -E 'n409_build_info|process_uptime_seconds|http_requests_total|n409_cgroup_memory'
 ```
+
+The engine unit publishes one instrument nothing else does:
+`market_feed_provider{state="misbuilt"}` is 1 when this image declares yfinance
+in `requirements.txt` and cannot import it, which makes every valuation on the
+box run on substituted figures while returning 200s. The caller-side ratio
+(`MarketFeedFallingBack`) needs an hour of valuation traffic to notice; this
+answers before anybody asks for a valuation:
+
+```bash
+curl -H "authorization: Bearer $INTERNAL_SERVICE_TOKEN" localhost:3003/metrics \
+  | grep market_feed_provider
+journalctl -u n409-engine-wrapper --grep=market_feed_provider_unavailable
+```
+
+What the Python pair still does not publish is `seriesCensus` —
+`n409_metric_series` and `n409_metric_series_folded` — so
+`MetricAttributionFolded` covers three units of five. It does publish
+`n409_metric_collect_failures_total`, so `MetricCollectFailing` covers all five.
 
 Both spellings of the secret work there — `X-Internal-Token`, which is what the
 valuation service sends, and `Authorization: Bearer`, which is what a scrape

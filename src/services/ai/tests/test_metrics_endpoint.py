@@ -191,3 +191,39 @@ def test_histogram_buckets_are_cumulative_and_end_at_inf():
     assert 'd_seconds_bucket{route="/a",le="1"} 1' in body
     assert 'd_seconds_bucket{route="/a",le="+Inf"} 2' in body
     assert 'd_seconds_count{route="/a"} 2' in body
+
+
+def test_a_collect_that_raises_is_reported_on_the_endpoint_the_rule_scrapes(_token):
+    """`MetricCollectFailing` covers these units, and the module says so.
+
+    Asserted through the live endpoint rather than a bare registry, because the
+    claim in `metrics.py`'s header is about what a *scrape of this unit*
+    publishes — it read "there is no `n409_metric_collect_failures_total`" until
+    R369 while `render` had always written one, which would send an operator
+    looking for the Python units outside a rule that covers them.
+    """
+    from app.main import _metrics
+
+    _metrics.gauge("r369_probe", "help", lambda: (_ for _ in ()).throw(RuntimeError("no")))
+    try:
+        body = _scrape({"x-internal-token": TOKEN}).text
+        assert 'n409_metric_collect_failures_total{metric="r369_probe"}' in body
+        # And the scrape survived it: the other instruments are still there.
+        assert "# TYPE process_uptime_seconds gauge" in body
+    finally:
+        _metrics._gauges.pop("r369_probe", None)
+
+
+def test_the_module_header_states_the_series_census_it_does_not_have():
+    """The other half of the same claim, and the one that is still true.
+
+    `MetricAttributionFolded` selects `n409_metric_series_folded`, which these
+    units do not publish. A header that said they did would be worse than one
+    that says nothing — so the absence is asserted, and the day somebody ports
+    `seriesCensus` this fails and the paragraph gets rewritten with it.
+    """
+    from app.metrics import MetricsRegistry
+
+    body = MetricsRegistry().render()
+    assert "n409_metric_series" not in body
+    assert "seriesCensus" in __import__("app.metrics", fromlist=["x"]).__doc__

@@ -39,12 +39,29 @@ near-misses of them: ``alerts.yml`` groups by ``job`` and selects on ``method``,
 matches three units out of five is worse than one that matches none, because it
 looks like it is working.
 
-Deliberately *not* a port of the whole TS file. There is no ``seriesCensus``
-here and no ``n409_metric_collect_failures_total``: those describe a registry
-carrying dozens of instruments across four hundred routes, and this one carries
-seven across a fixed handful. The cap is kept, because the thing it defends
-against — a scanner minting one series per invented path — reaches these ports
-the same way it reaches the others.
+Deliberately *not* a whole port of the TS file, and the half that is missing
+decides which rules cover these units — so it is stated exactly rather than
+approximately (R369, methodology M11; this paragraph previously said there was
+no ``n409_metric_collect_failures_total`` here, and ``render`` has always
+written one).
+
+  * ``n409_metric_collect_failures_total`` **is** here, minted by ``render``
+    when a gauge's ``collect`` raises. ``MetricCollectFailing`` therefore covers
+    all five units, and it has to: most of the page-severity rules on this
+    estate are gauge-backed, and a ``collect`` that throws drops its series
+    silently, leaving a rule matching nothing — which is indistinguishable from
+    a healthy system.
+  * ``seriesCensus`` is **not**, so ``n409_metric_series`` and
+    ``n409_metric_series_folded`` are published by the three Fastify services
+    and by neither of these, and ``MetricAttributionFolded`` covers three units
+    of five. That is a gap with a bounded blast radius rather than a live one:
+    the rule already excludes the ``http_request*`` family by name, and every
+    other instrument on these units carries a fixed handful of label values —
+    four states, five kernel events, one metric name each — so nothing here can
+    currently reach the cap on a metric that rule would look at.
+  * The cap itself **is** kept, because the thing it defends against — a scanner
+    minting one series per invented path — reaches these ports the same way it
+    reaches the others.
 """
 
 from __future__ import annotations
