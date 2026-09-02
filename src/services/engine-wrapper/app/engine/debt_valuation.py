@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 
 from .errors import EngineInputError
+from .kwargs_refusal import describe_unbindable
 from .newton import newton_raphson
 
 # Illustrative credit-rating → implied spread over the benchmark, in basis
@@ -761,10 +762,28 @@ def value_instrument(instrument_type: str, params: dict) -> dict:
         ) from exc
 
 
+#: The entry point each instrument's free-form ``params`` is called with. Also
+#: what the caller is told they may name: a params object that cannot be bound
+#: is refused here, in the instrument's own input names, rather than reaching
+#: the endpoint as a TypeError naming an internal function (kwargs_refusal).
+_ENTRY_POINTS = {
+    "bond": yield_dcf,
+    "term_loan": term_loan_fair_value,
+    "credit_spread": credit_spread_valuation,
+    "convertible": convertible_note,
+    "safe": safe_conversion,
+}
+
+
 def _dispatch(instrument_type: str, params: dict) -> dict:
     if not isinstance(params, dict):
         raise EngineInputError("params must be an object")
     it = str(instrument_type or "").strip()
+    entry = _ENTRY_POINTS.get(it)
+    if entry is not None:
+        unbindable = describe_unbindable(entry, params)
+        if unbindable is not None:
+            raise EngineInputError(f"invalid params for {it}: {unbindable}")
     if it == "bond":
         base = yield_dcf(**params)
         dur = duration_convexity(

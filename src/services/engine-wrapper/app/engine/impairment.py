@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 
 from .errors import EngineInputError
+from .kwargs_refusal import describe_unbindable
 
 MAX_FLOW_YEARS = 100
 
@@ -155,7 +156,15 @@ def run_impairment_test(kind, params) -> dict:
         raise EngineInputError(f"unknown impairment test {kind!r}; expected one of {sorted(_TESTS)}")
     if not isinstance(params, dict):
         raise EngineInputError("impairment params must be an object")
+    # See kwargs_refusal: the caller gets this test's own input names, not the
+    # TypeError's account of an internal function's signature.
+    unbindable = describe_unbindable(fn, params)
+    if unbindable is not None:
+        raise EngineInputError(f"invalid params for {kind}: {unbindable}")
     try:
         return fn(**params)
     except TypeError as exc:
-        raise EngineInputError(f"invalid params for {kind}: {exc}") from exc
+        raise EngineInputError(
+            f"invalid params for {kind}: the names are all ones this test takes, but one of "
+            "the values is not of a type it can use"
+        ) from exc

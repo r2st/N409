@@ -28,6 +28,7 @@ from __future__ import annotations
 import math
 
 from .errors import EngineInputError
+from .kwargs_refusal import describe_unbindable
 
 EMI_GROSS_ASSET_LIMIT = 30_000_000.0
 EMI_EMPLOYEE_LIMIT = 250
@@ -220,12 +221,20 @@ def emi_csop_valuation(scheme, params) -> dict:
     # while the same omission on `/debt-valuation` and `/projection` — the two
     # other routes with a free-form `params` dict — is a 422 naming the fields.
     rest = {k: v for k, v in params.items() if k not in value_keys}
+    check = emi_qualification if name == "emi" else csop_grant_check
+    # One object, two signatures, so the names it may carry are the union of
+    # them less `umv_per_share`, which this function concludes rather than
+    # accepts. Refused here so the caller reads the scheme's own input names
+    # instead of a TypeError about `share_values()` — see kwargs_refusal.
+    unbindable = describe_unbindable((share_values, check), params, provided={"umv_per_share"})
+    if unbindable is not None:
+        raise EngineInputError(f"invalid params for {name}: {unbindable}")
     try:
         values = share_values(**{k: v for k, v in params.items() if k in value_keys})
-        if name == "emi":
-            qualification = emi_qualification(umv_per_share=values["umv_per_share"], **rest)
-        else:
-            qualification = csop_grant_check(umv_per_share=values["umv_per_share"], **rest)
+        qualification = check(umv_per_share=values["umv_per_share"], **rest)
     except TypeError as exc:
-        raise EngineInputError(f"invalid params for {name}: {exc}") from exc
+        raise EngineInputError(
+            f"invalid params for {name}: the names are all ones this scheme takes, but one of "
+            "the values is not of a type it can use"
+        ) from exc
     return {**values, "qualification": qualification}

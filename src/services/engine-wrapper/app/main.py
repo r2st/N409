@@ -5,6 +5,7 @@ plan wrapped the legacy R/Plumber engine; per the gap analysis the engine is
 reimplemented natively in Python instead.
 """
 
+import logging
 import time
 from contextlib import asynccontextmanager
 
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .engine.approaches import EngineInputError
 from .engine.compute import ENGINE_VERSION, compute
+from .engine.kwargs_refusal import describe_unbindable
 from .engine.validate import split_issues, validate_payload
 from .build_info import build_info
 from .config_check import enforce_env_valid
@@ -57,6 +59,7 @@ from .engine.volatility import estimate_volatility
 from .engine.wacc import compute_wacc
 
 SERVICE = "engine-wrapper"
+_log = logging.getLogger(SERVICE)
 _started = time.monotonic()
 
 # Compute payloads are JSON (params + inputs), far smaller than the AI service's
@@ -549,23 +552,13 @@ def engine_volatility(request: VolatilityRequest) -> dict:
 @app.post("/engine/v1/wacc")
 def engine_wacc(request: WaccRequest) -> dict:
     """Build the cost of equity (modified CAPM) and blend into WACC."""
-    try:
-        return compute_wacc(**request.inputs)
-    except EngineInputError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except TypeError as exc:  # unexpected/duplicate kwargs from the inputs dict
-        raise HTTPException(status_code=422, detail=f"invalid wacc inputs: {exc}") from exc
+    return _engine_input_kwargs(compute_wacc, request.inputs, "wacc")
 
 
 @app.post("/engine/v1/projection")
 def engine_projection(request: ProjectionRequest) -> dict:
     """Project revenue/expenses into unlevered free cash flows for the DCF."""
-    try:
-        return project_financials(**request.inputs)
-    except EngineInputError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except TypeError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid projection inputs: {exc}") from exc
+    return _engine_input_kwargs(project_financials, request.inputs, "projection")
 
 
 @app.post("/engine/v1/rollforward")
@@ -672,13 +665,40 @@ def engine_debt_rating_spread(request: RatingSpreadRequest) -> dict:
 def _engine_input_kwargs(fn, inputs: dict, label: str) -> dict:
     """Call an engine entry point on a free-form inputs dict, mapping the two
     failure shapes to 422: EngineInputError from the engine's own validation,
-    TypeError from unexpected/missing keyword names."""
+    and an object the signature cannot be called with.
+
+    The second one is described here rather than left to the ``TypeError``.
+    CPython's text names the internal function it was raised in, spells the
+    problem in Python's vocabulary, and never lists what the calculation
+    accepts — and this ``detail`` is not for an operator: the valuation service
+    shows an upstream 4xx's ``detail`` to the analyst verbatim. See
+    :mod:`app.engine.kwargs_refusal`.
+    """
+    unbindable = describe_unbindable(fn, inputs)
+    if unbindable is not None:
+        raise HTTPException(status_code=422, detail=f"invalid {label} inputs: {unbindable}")
     try:
         return fn(**inputs)
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TypeError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid {label} inputs: {exc}") from exc
+        # It bound, so every name was one this calculation has and the problem
+        # is a value. The engine's own `_num`-style guards name the field
+        # wherever they cover it; this is the remainder, and the caller cannot
+        # act on `unsupported operand type(s) for *: 'str' and 'float'`.
+        # Kept for whoever can: a 4xx is not otherwise logged here.
+        _log.warning(
+            "engine inputs bound but could not be used",
+            extra={"event": "engine_input_type_error", "endpoint": label, "detail": str(exc)},
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"invalid {label} inputs: the names are all ones this calculation takes, "
+                "but one of the values is not of a type it can use — check that each is a "
+                "number, a list or an object as the input expects"
+            ),
+        ) from exc
 
 
 @app.post("/engine/v1/qsbs")

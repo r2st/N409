@@ -39,6 +39,7 @@ import math
 
 from .compounding import compound_factor
 from .errors import EngineInputError
+from .kwargs_refusal import describe_unbindable
 
 # IRC §197 amortization period for purchased intangibles.
 TAX_AMORTIZATION_YEARS = 15
@@ -441,11 +442,18 @@ def value_intangible(method, params) -> dict:
         )
     if not isinstance(params, dict):
         raise EngineInputError("intangible params must be an object")
+    # Unexpected/missing keys in the free-form params dict, named in this
+    # method's own terms rather than in the TypeError's — see kwargs_refusal.
+    unbindable = describe_unbindable(fn, params)
+    if unbindable is not None:
+        raise EngineInputError(f"invalid params for {method}: {unbindable}")
     try:
         return fn(**params)
     except TypeError as exc:
-        # Unexpected/missing kwargs from the free-form params dict.
-        raise EngineInputError(f"invalid params for {method}: {exc}") from exc
+        raise EngineInputError(
+            f"invalid params for {method}: the names are all ones this method takes, but one "
+            "of the values is not of a type it can use"
+        ) from exc
 
 
 def purchase_price_allocation(

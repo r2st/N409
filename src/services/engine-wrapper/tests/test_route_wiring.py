@@ -139,7 +139,14 @@ def test_debt_valuation_answers_a_missing_param_with_422():
         json={"instrument_type": "bond", "params": {"face": 1000}},
     )
     assert res.status_code == 422
-    assert "invalid debt params" in res.json()["detail"]
+    detail = res.json()["detail"]
+    # Named for the instrument the caller asked for, not for `yield_dcf`, and
+    # it lists both what is missing and what a bond takes.
+    assert detail.startswith("invalid params for bond:")
+    assert "missing required inputs" in detail
+    for field in ("coupon_rate", "frequency", "maturity_years", "market_yield"):
+        assert field in detail
+    assert "Accepted inputs:" in detail and "settlement_fraction" in detail
 
 
 # ── market-feed: the per-kind required fields, checked before any fetch ───────
