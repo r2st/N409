@@ -112,7 +112,11 @@ const DECIDED: Record<string, Verdict> = {
   'repos/valuationTags.ts :: valuation_tags': {
     guard:
       "the upsert's CASE refuses to move a tag an ai re-suggestion did not decide — a human " +
-      "'accepted' or 'rejected' survives the next tagging run",
+      "'accepted' or 'rejected' survives the next tagging run; `decideValuationTag` is the " +
+      'operator\'s own write and is deliberately outside that CASE, because `source` records where ' +
+      'a tag came from and not who is writing — R356 found an accepted AI tag that could not be ' +
+      'rejected, nor demoted by the exclusivity rule, because the decision doors handed the row\'s ' +
+      'own origin back to a clause that reads it as a machine',
   },
   'repos/tasks.ts :: review_tasks': {
     unguarded:
