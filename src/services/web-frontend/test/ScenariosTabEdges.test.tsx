@@ -426,12 +426,60 @@ describe('ScenariosTab — failures', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('That scenario is gone.');
   });
 
-  it('hides the comparison rather than failing the tab when the list cannot be read', async () => {
+  it('says why the comparison is missing rather than failing the tab (R352)', async () => {
+    // The tab still works — the sandbox above does not depend on the list —
+    // but a 500 is not the same statement as "you have saved none", and
+    // silence beside a form inviting a save is the wrong one of the two.
     mockApi({ listStatus: 500 });
     renderTab();
 
     expect(await screen.findByText(/Sandbox only/)).toBeInTheDocument();
     expect(screen.queryByTestId('scenario-comparison')).not.toBeInTheDocument();
+    // The server's own reason, as `describeActionFailure` publishes it.
+    expect(await screen.findByRole('alert')).toHaveTextContent('nope');
+  });
+
+  it('keeps the list a save just joined when the refresh behind it fails (R352)', async () => {
+    // `loadSaved` runs after a save that landed. Emptying the state on its
+    // failure made the scenario the user had just stored disappear, which
+    // reads as the save having done nothing.
+    const stored = {
+      scenarios: [
+        {
+          id: '01JSCENARIOAAAAAAAAAAAAAAA',
+          name: 'Bear case',
+          label: 'bear',
+          inputs: {},
+          equity_value: '30000000',
+          fmv_per_share: '3',
+          created_at: '2026-07-02T00:00:00Z',
+        },
+      ],
+      baseline: BASELINE,
+      currency: 'USD',
+      max_scenarios: 12,
+    };
+    let listReads = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (path.includes('/scenarios/baseline')) return jsonResponse(BOOT);
+      if (path.includes('/scenarios/preview')) return jsonResponse(PREVIEW_DOWN);
+      if (init?.method === 'POST') return jsonResponse({}, 201);
+      listReads += 1;
+      return listReads === 1 ? jsonResponse(stored) : problem(503, 'The scenario store is unavailable.');
+    });
+    renderTab();
+
+    expect(await screen.findByTestId('scenario-comparison')).toBeInTheDocument();
+    await userEvent.type(await screen.findByLabelText(/Scenario name/i), 'Bull case');
+    await userEvent.click(screen.getByRole('button', { name: /^Save scenario$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('The scenario store is unavailable.');
+    });
+    // Still there, still the row that was read.
+    expect(screen.getByTestId('scenario-comparison')).toBeInTheDocument();
+    expect(screen.getByText('Bear case')).toBeInTheDocument();
   });
 });
 

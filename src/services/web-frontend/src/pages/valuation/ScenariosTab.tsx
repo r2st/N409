@@ -165,16 +165,31 @@ export function ScenariosTab() {
 
   // Saved bull/base/bear cases (§5.7) — side-by-side comparison state.
   const [saved, setSaved] = useState<ScenarioListResponse | null>(null);
+  const [savedError, setSavedError] = useState<string | null>(null);
   const [saveName, setSaveName] = useState('');
   const [saveLabel, setSaveLabel] = useState<ScenarioLabel>('custom');
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  /*
+   * A failed read is said, and does not erase what was read before (R352, M5).
+   *
+   * `setSaved(null)` hid the whole comparison section, which is the one place
+   * a saved bull/base/bear case is ever shown: a 403, a 503 or a dropped
+   * connection rendered as *this engagement has no saved scenarios*, beside a
+   * form still inviting one to be saved. Worse on the refresh path — this runs
+   * after `saveScenario` and `deleteScenario` succeed, so a save that landed
+   * followed by a reload that did not made the case the user had just stored
+   * vanish, which reads as the save having done nothing.
+   *
+   * So: keep the last list that did arrive, and put the reason above it.
+   */
   const loadSaved = useCallback(async () => {
     try {
       setSaved(await api<ScenarioListResponse>(`/valuations/${valuation.id}/scenarios`));
-    } catch {
-      setSaved(null); // comparison section simply hides on failure
+      setSavedError(null);
+    } catch (err) {
+      setSavedError(describeActionFailure(err, 'Could not load the saved scenarios.'));
     }
   }, [valuation.id]);
 
@@ -431,16 +446,24 @@ export function ScenariosTab() {
         </section>
       </WriteGate>
 
-      {saved && saved.scenarios.length > 0 && (
+      {(savedError || (saved && saved.scenarios.length > 0)) && (
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="mb-4 flex items-center justify-between">
             <h2 id="scenario-comparison-heading" className="overline text-ink-400">
               Scenario comparison
             </h2>
-            <span className="text-xs text-ink-400">
-              {saved.scenarios.length} of {saved.max_scenarios}
-            </span>
+            {saved && saved.scenarios.length > 0 && (
+              <span className="text-xs text-ink-400">
+                {saved.scenarios.length} of {saved.max_scenarios}
+              </span>
+            )}
           </div>
+          {savedError && (
+            <p role="alert" className="mb-4 text-sm text-red-600">
+              {savedError}
+            </p>
+          )}
+          {saved && saved.scenarios.length > 0 && (
           <div className="overflow-x-auto overscroll-x-contain">
             <table
               className="w-full text-left text-sm"
@@ -514,6 +537,7 @@ export function ScenariosTab() {
               </tbody>
             </table>
           </div>
+          )}
         </section>
       )}
     </div>
