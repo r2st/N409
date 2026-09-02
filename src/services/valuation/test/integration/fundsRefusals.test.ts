@@ -516,16 +516,26 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
       return res.json().valuation.id as string;
     }
 
-    it('404s an engagement id the caller cannot see, malformed or merely absent', async () => {
+    it('404s an engagement id the caller cannot see, and 422s one that is not an id', async () => {
+      // Two different refusals, deliberately. A well-formed id the caller
+      // cannot see is a 404, because distinguishing "no such engagement" from
+      // "not yours" is the leak the scope rule exists to close. A string that
+      // is not a ULID at all names no engagement anybody could own, so it is
+      // the body that is wrong and `ulidField` (R331) says which field — this
+      // assertion read 404 for both until that landed, and went unnoticed.
       const id = await createFund();
-      for (const valuationId of ['not-a-ulid', '01ARZ3NDEKTSV4RRFFQ69G5FAV']) {
+      const cases: [string, number][] = [
+        ['not-a-ulid', 422],
+        ['01ARZ3NDEKTSV4RRFFQ69G5FAV', 404],
+      ];
+      for (const [valuationId, status] of cases) {
         const res = await app.inject({
           method: 'PUT',
           url: `/api/v1/funds/${id}/valuation`,
           headers: opsAuth(),
           payload: { valuation_id: valuationId },
         });
-        expect(res.statusCode, valuationId).toBe(404);
+        expect(res.statusCode, valuationId).toBe(status);
       }
     });
 

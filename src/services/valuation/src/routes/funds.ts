@@ -858,7 +858,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     if (valuationId !== null) {
       const valuation = isUlid(valuationId) ? await findValuationById(deps.pool, valuationId) : null;
       // 404 rather than 422 for an id the caller cannot see, matching the
-      // scope rule everywhere else: an out-of-scope id does not exist.
+      // scope rule everywhere else: an out-of-scope id does not exist. A
+      // string that is not a ULID never reaches here — `LinkBody`'s
+      // `ulidField` refuses it as a 422 naming the field, which is a different
+      // question: that id is nobody's, so saying so leaks nothing.
       if (!valuation) throw problems.notFound();
       // The kind is the check that matters. Linking a portfolio to a 409A
       // engagement would put a NAV schedule into a common-stock opinion.
