@@ -8398,3 +8398,96 @@
 #            after issue has no second field to say so, and the schedule is a
 #            contract — the platform has no amendment model for any of the three
 #            month figures.
+#
+# R356 — State machine & transition verification (M3). Four findings, and three
+#            of them are the same sentence at four different doors: a write that
+#            reports whether it moved the row, and a caller that recorded the
+#            transition without asking. The fourth is the one with teeth — a
+#            guard written to stop a machine, refusing the human it was never
+#            about, on a door with no other way out.
+#
+#            **An accepted AI tag could not be demoted, rejected, or moved at
+#            all.** `valuation_tags.source` records where a tag *came from* and
+#            is write-once by design — "the model proposed this and an analyst
+#            agreed" and "an analyst concluded this" are different facts. So a
+#            tag the tagging agent suggested keeps `source = 'ai'` after an
+#            analyst accepts it, and both decision doors carried that value back
+#            into `upsertValuationTag`, whose conflict clause reads it as "a
+#            machine is writing over a human decision" and refuses. Two operator
+#            actions became no-ops answering 200. The exclusivity demotion left
+#            an AI-sourced `seed` accepted while promoting `series_a`, so the
+#            engagement carried two mutually exclusive stages at once — the
+#            state `lockTagCategories` was added to make impossible, reached
+#            with no race at all and read that way by the list filter, the
+#            precedent query and `acceptedTagSlugs`. And `PATCH /tags/:slug` on
+#            an already-decided AI tag was inert, while `DELETE` refuses an AI
+#            row and tells the analyst to reject it instead: the tag was stuck
+#            accepted with no transition out of it by any route. The existing
+#            exclusivity tests all used manual-sourced tags, which is why a rule
+#            with a lock, a census entry and six tests behind it was broken for
+#            every row the feature exists to handle. `decideValuationTag` is the
+#            operator's own write — origin untouched, status unconditional — and
+#            the agent's door still writes `suggested` through the upsert and is
+#            still refused by its clause.
+#
+#            **Two deletes off one read recorded the removal twice.**
+#            `deleteDocument` and `deleteRound` both ask whether their DELETE
+#            matched anything before writing the event beside it, on the ground
+#            that the route's existence check is a statement earlier and on
+#            another connection. `deleteScenario` and `deleteBoardMember` were
+#            left out of that roster. The second is the worse one:
+#            `board_member_removed` is the single event on this spine that keeps
+#            a director's address — `piiInventory.test.ts` declares it, because
+#            the row it names is deleted in the same transaction — so a repeat
+#            wrote a second copy of that address for a removal that happened
+#            once, told the trail the board had lost a member it no longer had,
+#            and re-ran the aggregate recomputation the winner had already done.
+#
+#            **Stopping a watch that had already stopped said so again.**
+#            `disableMonitor` wrote `enabled = false` by primary key and
+#            recorded `monitoring_disabled` unconditionally, while `findMonitor`
+#            — the whole of the route's existence check — returns the row
+#            whether the watch is on or off. Not a race: the same request twice,
+#            204 both times, and the spine reporting a watch stopped as many
+#            times as anybody pressed the control. The enable door stays
+#            unguarded on purpose — re-enabling takes a fresh baseline and clears
+#            the dedupe rows, so it is a re-arming somebody asked for.
+#
+#            **Revoking an already-revoked API token withdrew it twice.** Same
+#            shape on the credential surface, where it costs more.
+#            `revokeApiToken` carries `revoked_at IS NULL` and returns whether it
+#            moved the row; both doors discarded that and wrote
+#            `api_token_revoked` regardless, and both lists put revoked tokens
+#            back on screen (`listPersonalApiTokens` unfiltered, the admin
+#            listing on `?revoked=true`). So `admin_events` — the trail the
+#            identity audit reads — carried two answers to "who withdrew this
+#            credential and when", the later one naming whoever pressed a stale
+#            button rather than the person who withdrew it.
+#            `DELETE /admin/sso/scim-tokens/:id` is the same door one credential
+#            over and has always asked; both token doors now match it.
+#
+#            gap: there is no census for the shape the last three share — a
+#            guarded write whose boolean the caller drops on the floor before
+#            recording the transition. `terminalStatusWrites` reads `status`
+#            columns only, so a `revoked_at`/`deleted_at`/`enabled` door is
+#            invisible to it, and the four found here were found by reading. The
+#            question a census would have to ask is not about SQL but about the
+#            call site: which repo functions return `boolean` or `{ changed }`
+#            and which callers ignore it.
+#            gap: `verifyEmailWithToken` collapses three situations into
+#            `invalid` — unknown token, closed account, and an address the
+#            account has since moved away from — and writes nothing on any of
+#            them. R344 gave the password-reset door its refusal vocabulary and
+#            its spine rows for exactly this reason; the verification token, one
+#            file over and with the same address-binding guard, still answers
+#            all three the same way and silently.
+#            gap: `markRollforwardRunApplied` leaves every previously adopted run
+#            marked applied, and `findAppliedRollforwardRun` takes the newest.
+#            An engagement whose analyst adopted run A, recalculated, then
+#            adopted run B has two rows claiming to be the anchor and only the
+#            ordering says which. `markProjectionApplied` is the same statement
+#            one subject over.
+#            gap: `refreshInvitation` re-mints a token and pushes the deadline
+#            without asking `LIVE_PARTNER_SQL`, which `acceptInvitation` asks
+#            (R348). Harmless today — the redemption refuses — but the two
+#            halves of one invitation's liveness now disagree about the firm.

@@ -152,9 +152,7 @@ export async function findScenarioById(pool: pg.Pool, id: string): Promise<Scena
  */
 export async function deleteScenario(pool: pg.Pool, scenario: ScenarioRow, actor: EventActor): Promise<void> {
   await withTransaction(pool, async (client) => {
-    const { rowCount } = await client.query('DELETE FROM valuation_scenarios WHERE id = $1', [
-      scenario.id,
-    ]);
+    const { rowCount } = await client.query('DELETE FROM valuation_scenarios WHERE id = $1', [scenario.id]);
     if ((rowCount ?? 0) === 0) return;
     await recordEvent(client, {
       valuationId: scenario.valuation_id,
