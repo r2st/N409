@@ -11215,3 +11215,94 @@
 #            gap: format:check is red on main for files this round did not touch;
 #            the two files it adds are clean. The AI service's full pytest suite
 #            still has ~30 pre-existing failures (`test_websearch.py`'s 152 pass).
+
+# R386 — Computation / business-logic audit (M2). Two fixes, both figures a
+#            deliverable prints, no SQL, no migration, 6 tests, at
+#            `68f28fe3..1d133163`.
+#
+#            Re-derived from the source rather than from the code: Finnerty
+#            (2012) and Ghaidarov (2009) against their published effective
+#            variances, Longstaff (1995)'s E[max]/S0, Hamada in both directions,
+#            the TAB step-up 1/(1 - t*A/n), FCFF = NOPAT + D&A - capex - dNWC,
+#            IRC 1202 (both regimes, the OBBBA tiering and the 2009/2010
+#            exclusion dates), ITEPA Sch. 4/5, ASC 350-20/350-30/360-10, and the
+#            mid-year stub on a Gordon terminal value. All correct. The two
+#            fixes are not in the formulas — they are in figures the arithmetic
+#            never touched and a report prints anyway.
+#
+#            e1bff6a — `volatility.estimate_volatility`. A full set of comps with
+#            no measurable price movement, rescued by a pinned `manual_override`,
+#            was rescued as `vols = [manual_override]` — and every aggregate is
+#            struck from `vols`. So the analyst's own number came back as the
+#            `median_volatility`, the `mean_volatility`, the `min_volatility` and
+#            the `max_volatility` of a set no comparable had entered, with a
+#            `coefficient_of_variation` of 0.0 saying they agreed and a
+#            `company_count` of 1. `compute._resolve_auto` files the whole
+#            estimate under `meta["volatility"]`, `shapeEstimate` copies those
+#            five into `volatility_estimates`, and `reportExhibits` prints them
+#            as a "Distribution" table directly under a "Guideline companies
+#            measured" line it derives from `companies` — so the exhibit read
+#            `0` companies above four identical percentages. Null now, which is
+#            the shape the chain already handles (`fin()` maps it through,
+#            `push()` drops the row, `measuredCount` never trusted the count).
+#            The empty-`comparables` branch says the same thing by omitting the
+#            keys.
+#
+#            1d13316 — `debt_valuation.yield_dcf`. Since `schedule_periods` began
+#            dating backwards from maturity there have been *two* ways to say
+#            settlement sits inside a coupon period — a `maturity_years` that is
+#            not a whole number of periods, and `settlement_fraction` — and the
+#            accrual was struck from only the second
+#            (`first_interest * settlement_fraction`). A 6% semiannual $1,000
+#            note maturing 2027-06-30 valued 2026-08-30 is 1.8356 years out;
+#            written that way it reported `accrued_interest: 0.00` and a clean
+#            price equal to its own dirty price, which is not a state a bond
+#            between coupon dates can be in. Written as a 2.0-year note at a
+#            settlement fraction of 0.3288 it produces the same four dates to the
+#            digit, the same dirty price to the microdollar, and a clean price
+#            9.86 lower — ~1% of face, decided by which spelling the caller used,
+#            and the natural one (a maturity computed from two dates) was the
+#            wrong one. `1 - t1*m` now, which is true of whatever schedule was
+#            actually priced; the aligned cases are unchanged and
+#            `accrual_fraction` is reported so the figure can be checked against
+#            the dates.
+#
+#            The shape both share: a figure that is *reported* rather than
+#            computed, derived from a variable that stopped meaning what it did
+#            when a neighbouring fix moved the meaning. Neither is reachable by
+#            an assertion on the concluded value, which is why the model-free
+#            invariant suites do not see them.
+#
+#            Probed and clean, do not re-derive. Randomised over 4,000 cap
+#            tables and 8 exit values: `exit_allocation` conserves exactly,
+#            every class is monotone in the exit value and none goes negative,
+#            with participation caps, 2:1 conversion ratios, two seniority ranks
+#            and option pools in the mix. Over 800 more: `allocate_waterfall`
+#            conserves, `delta_total` is 1.0 to 1e-5, and the sigma->0 / t->0
+#            limit reproduces `exit_allocation` class by class. The four DLOM
+#            models are monotone in sigma over 400 points, continuous across
+#            `_SMALL_VAR_T`, and Finnerty and Ghaidarov agree to 1e-4 relative at
+#            sigma^2*T = 1e-6 and part company exactly where the docstring says.
+#            R385's three pre-truncations are output-identical to the forms they
+#            replaced (re-derived by hand for each: cleaning maps one character
+#            to at most one, dropped whitespace always lands past the cut).
+#
+#            gap: `comparables._quartiles`' docstring claims it is "the same
+#            answer" as `statistics.quantiles` where both are defined. It is not
+#            — the stdlib default is the exclusive method and this is the
+#            inclusive one — but nothing calls the stdlib here, so it is a wrong
+#            sentence rather than a wrong number. Left.
+#            gap: `safe_conversion`'s `ownership_pct` divides by
+#            `next_round_shares + safe_shares`, which omits the new round's own
+#            newly issued shares. The function is not told the round size, so it
+#            cannot do better; the field name promises more than it delivers.
+#            gap: `qsbs_eligibility`'s `qualified_trade_or_business` test passes
+#            on an empty `industry` — `"" not in EXCLUDED_INDUSTRIES` — and the
+#            detail line reads `industry=unknown` beside a pass. The vacuous-check
+#            shape, on an attestation letter.
+#            gap: `goodwill_impairment` refuses a reporting unit with a negative
+#            carrying amount that carries goodwill, rather than answering it.
+#            ASU 2017-04 has a rule for that case.
+#            gap: no census over "a reported figure derived from a variable a
+#            rescue branch reassigned". Both fixes were found by reading the
+#            function whole; the next one will be found the same way.
