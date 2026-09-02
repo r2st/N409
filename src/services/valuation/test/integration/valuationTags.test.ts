@@ -622,6 +622,61 @@ describe.skipIf(!dbUp)('engagement tags', () => {
       expect(seed.status).toBe('rejected'); // history still shows what it was
     });
 
+    it('demotes an incumbent the agent proposed and an analyst accepted', async () => {
+      // `source` is write-once, so a tag the model suggested keeps `source =
+      // 'ai'` after an analyst accepts it. The demotion used to re-state that
+      // value at `upsertValuationTag`, whose conflict clause reads it as "a
+      // machine is writing over a human decision" and refuses — so the
+      // incumbent stayed accepted and the engagement carried two stages at
+      // once, which is the exact state the category lock exists to prevent,
+      // reached with no race at all (round 356, methodology M3).
+      const id = await newEngagement('AI Ladder Co');
+      await upsertValuationTag(
+        ctx.pool,
+        id,
+        { slug: 'seed', source: 'ai', status: 'suggested', confidence: 0.8 },
+        ops.id,
+      );
+      expect((await decide(id, 'seed', 'accepted')).statusCode).toBe(200);
+      expect((await getTags(id)).json().accepted).toEqual(['seed']);
+
+      expect((await addTag(id, { slug: 'series_a' })).statusCode).toBe(200);
+      const body = (await getTags(id)).json();
+      expect(body.accepted).toEqual(['series_a']);
+      const seed = body.tags.find((t: { slug: string }) => t.slug === 'seed');
+      expect(seed).toMatchObject({ status: 'rejected', source: 'ai' });
+    });
+
+    it('lets an analyst reject an AI tag they had already accepted', async () => {
+      // The only way an AI-sourced tag leaves the list is `rejected` — DELETE
+      // refuses one and says so. The decision door carried the row's own
+      // `source` into the upsert, so once the tag was decided every later
+      // PATCH was inert and answered 200 over a row it had not moved: a tag
+      // stuck accepted with no transition out of it.
+      const id = await newEngagement('Second Thoughts Co');
+      await upsertValuationTag(
+        ctx.pool,
+        id,
+        { slug: 'marketplace', source: 'ai', status: 'suggested', confidence: 0.6 },
+        ops.id,
+      );
+      expect((await decide(id, 'marketplace', 'accepted')).statusCode).toBe(200);
+
+      const res = await decide(id, 'marketplace', 'rejected');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().tag).toMatchObject({ slug: 'marketplace', status: 'rejected', source: 'ai' });
+      expect((await getTags(id)).json().accepted).toEqual([]);
+      // And back again — the decision is a transition, not a one-way door.
+      expect((await decide(id, 'marketplace', 'accepted')).json().tag.status).toBe('accepted');
+    });
+
+    it('is a 404 when the tag went between the read and the decision', async () => {
+      // The decision write cannot insert, so a slug with no row is not quietly
+      // created by a PATCH.
+      const id = await newEngagement('Vanished Tag Co');
+      expect((await decide(id, 'saas', 'accepted')).statusCode).toBe(404);
+    });
+
     it('demotes across the whole exclusive category, not just the previous tag', async () => {
       const id = await newEngagement('Ladder Two Co');
       await upsertValuationTags(

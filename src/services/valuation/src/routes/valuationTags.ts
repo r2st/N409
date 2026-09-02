@@ -5,6 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import {
+  decideValuationTag,
   deleteValuationTag,
   findValuationTag,
   listValuationTags,
@@ -190,23 +191,15 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     const existing = await findValuationTag(deps.pool, id, params.data.slug);
     if (!existing) throw problems.notFound();
 
-    const status: TagStatus = body.data.status;
-    const row = await writeTag(
-      id,
-      {
-        slug: existing.slug,
-        // The source stays what it was. "The model proposed this and an analyst
-        // agreed" and "an analyst concluded this" are different facts, and
-        // rewriting the first into the second on acceptance would erase the
-        // only record of which one happened.
-        source: existing.source,
-        status,
-        confidence: existing.confidence,
-        rationale: existing.rationale,
-        evidence: existing.evidence,
-      },
-      principal,
-    );
+    const status: Exclude<TagStatus, 'suggested'> = body.data.status;
+    // `decideTag` rather than an upsert carrying `existing.source` back in. The
+    // source stays what it was either way — it is write-once and this door does
+    // not touch it — but handing it to the upsert made the analyst's decision
+    // look like a machine write to that function's conflict clause, and an
+    // already-decided AI tag could not be moved at all. See
+    // `decideValuationTag`.
+    const row = await decideTag(id, existing.slug, status, principal);
+    if (!row) throw problems.notFound();
     await recordAdminEvent(deps.pool, {
       type: 'valuation_tag_decided',
       actor: { actorType: 'human', actorId: principal.id },
@@ -276,16 +269,43 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     tag: TagUpsert,
     principal: Principal,
   ): Promise<ValuationTagRow> {
-    const def = TAGS_BY_SLUG.get(tag.slug);
-    const exclusive =
-      tag.status === 'accepted' && def !== undefined && EXCLUSIVE_TAG_CATEGORIES.has(def.category);
-    if (!exclusive) return upsertValuationTag(deps.pool, valuationId, tag, principal.id);
+    if (!needsExclusivity(tag.slug, tag.status))
+      return upsertValuationTag(deps.pool, valuationId, tag, principal.id);
 
     return withTransaction(deps.pool, async (client) => {
       await lockTagCategories(client, valuationId);
       await enforceExclusivity(client, valuationId, tag.slug, principal);
       return upsertValuationTag(client, valuationId, tag, principal.id);
     });
+  }
+
+  /**
+   * Move a tag that is already on the engagement, under the same invariant.
+   *
+   * The decision half of {@link writeTag}: same lock, same demotion, a write
+   * that cannot insert. Null when the row went between the caller's read and
+   * this write.
+   */
+  async function decideTag(
+    valuationId: string,
+    slug: string,
+    status: Exclude<TagStatus, 'suggested'>,
+    principal: Principal,
+  ): Promise<ValuationTagRow | null> {
+    if (!needsExclusivity(slug, status))
+      return decideValuationTag(deps.pool, valuationId, slug, status, principal.id);
+
+    return withTransaction(deps.pool, async (client) => {
+      await lockTagCategories(client, valuationId);
+      await enforceExclusivity(client, valuationId, slug, principal);
+      return decideValuationTag(client, valuationId, slug, status, principal.id);
+    });
+  }
+
+  /** Whether this write can put a second accepted tag in an exclusive category. */
+  function needsExclusivity(slug: string, status: TagStatus): boolean {
+    const def = TAGS_BY_SLUG.get(slug);
+    return status === 'accepted' && def !== undefined && EXCLUSIVE_TAG_CATEGORIES.has(def.category);
   }
 
   /**
@@ -313,19 +333,13 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     for (const row of rows) {
       if (row.slug === slug || row.status !== 'accepted') continue;
       if (TAGS_BY_SLUG.get(row.slug)?.category !== def.category) continue;
-      await upsertValuationTag(
-        client,
-        valuationId,
-        {
-          slug: row.slug,
-          source: row.source,
-          status: 'rejected',
-          confidence: row.confidence,
-          rationale: row.rationale,
-          evidence: row.evidence,
-        },
-        principal.id,
-      );
+      // A decision, not an upsert re-stating the incumbent's own `source` back
+      // at the conflict clause. An accepted tag the agent had proposed carries
+      // `source = 'ai'` for ever — the column is write-once — so the demotion
+      // read as a machine write onto a human decision and was refused, leaving
+      // the engagement accepted in two mutually exclusive tags at once. The
+      // operator promoting the new tag is the human here.
+      await decideValuationTag(client, valuationId, row.slug, 'rejected', principal.id);
     }
   }
 }

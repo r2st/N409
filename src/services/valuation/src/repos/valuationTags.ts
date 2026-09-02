@@ -239,6 +239,51 @@ export async function upsertValuationTag(
 }
 
 /**
+ * Record an operator's decision on a tag that is already there.
+ *
+ * Separate from {@link upsertValuationTag} because that function's conflict
+ * clause reads `source` as *who is writing* when the column means *where the
+ * tag came from*, and the two are only the same thing on the agent's own door.
+ * `source` is write-once, so an AI-proposed tag an analyst has accepted keeps
+ * `source = 'ai'` forever — and the decision doors carry that value back in on
+ * every later write, which made the clause refuse the writes it was never
+ * about:
+ *
+ *   * `PATCH /tags/:slug` on an already-decided AI tag was inert. Accepting is
+ *     the transition it is for, and once accepted the analyst could not reject
+ *     it again — while `DELETE` refuses an AI row and tells them to do exactly
+ *     that. The tag was stuck accepted with no transition out of it, and the
+ *     route answered 200 either way.
+ *   * The exclusivity demotion is the same write one caller over, so an
+ *     accepted `seed` that had come from the agent survived the promotion of
+ *     `series_a` and the engagement carried two stages at once — the state the
+ *     category lock exists to make impossible, reached without a race.
+ *
+ * So the origin is left alone and the decision lands unconditionally. Every
+ * caller is a human acting through an ops-only door; the machine door writes
+ * `suggested` through the upsert above and is still refused by its clause.
+ *
+ * Returns null when the row is gone — deleted between the caller's read and
+ * this write — which is the caller's signal that there was nothing to decide.
+ */
+export async function decideValuationTag(
+  pool: pg.Pool | pg.PoolClient,
+  valuationId: string,
+  slug: string,
+  status: Exclude<TagStatus, 'suggested'>,
+  actorId: string | null,
+): Promise<ValuationTagRow | null> {
+  const { rows } = await pool.query<RawValuationTagRow>(
+    `UPDATE valuation_tags
+        SET status = $3, decided_by = $4, decided_at = now()
+      WHERE valuation_id = $1 AND slug = $2
+      RETURNING *`,
+    [valuationId, slug, status, actorId],
+  );
+  return rows[0] ? hydrate(rows[0]) : null;
+}
+
+/**
  * Write a whole run's worth of suggestions in one transaction.
  *
  * All or nothing: a partially applied tagging run leaves an engagement
