@@ -11100,3 +11100,118 @@
 #            self-pin would not notice one appearing.
 #            gap: the AI service's full suite has 30 failures at HEAD, unrelated
 #            to this round and untouched by it. `test_websearch.py` (142) passes.
+#
+# R385 — Performance & efficiency audit (M8), seventeenth round. Three fixes,
+#            no SQL, no index, no migration, 18 tests, at `5f8f290e..7dabf99b`.
+#            The R231 diff over R378-R384 has one new statement (R384's
+#            membership read) and one new loop (R384's timeout counter), so
+#            there was nothing to plan — the round went to what R383 and R384
+#            actually added, which is *string handling on refusal paths*, and
+#            found one shape three times in three tiers.
+#
+#            The shape: a bound that is on what the sentence keeps and not on
+#            what is walked to fill it. Every one of these functions is correct
+#            and every one of its answers is unchanged — which is why nothing
+#            already in the tree could see any of them. A test that asserts what
+#            comes out cannot see an over-walk any more than R322's
+#            `not.toHaveProperty('results')` could see an over-fetch.
+#
+#            0ad99af — `app/engine/display_text.quote_for_message`, R383's own
+#            bound. It cleaned the whole value into a list, joined it, and cut
+#            at `MAX_QUOTED_CHARS` afterwards. The value is a key off a
+#            free-form `inputs` object or a `share_classes[].name` off an
+#            imported cap table, and the only ceiling over either is the engine's
+#            8 MB body cap: 845 ms of a GIL-held loop to produce 81 characters.
+#            And this is not a refusal-only path — `waterfall._normalise_classes`
+#            quotes a name for every one of the 200 classes it accepts,
+#            `fund_valuation` one per position, `rollforward` one per adjustment,
+#            all on the way to a 200. Each input character maps to zero or one
+#            output characters, so one character past the bound proves the bound
+#            applies. 845 -> 0.01 ms.
+#
+#            Beside it, `kwargs_refusal._unknown_clause` handed the raw name to
+#            `difflib.get_close_matches`, which indexes its *query* before it
+#            compares anything: `SequenceMatcher.set_seq2` builds a position list
+#            per distinct character of the whole string. 249 ms and 40 MB of peak
+#            heap for one 1 MB name, `MAX_NAMED` of them per refusal.
+#            `real_quick_ratio` already bounds any pair at `2*min/(la+lb)` from
+#            the two lengths alone, so nothing beyond
+#            `longest_accepted * (2 - cutoff) / cutoff` is reachable whatever its
+#            characters are. `_too_long_to_match` reaches difflib's own
+#            conclusion from two integers. 249 -> 0.03 ms.
+#
+#            ac85a04 — `websearch._provider_words`, R383's twin bound in the AI
+#            tier, and the worst-placed of the three: five of the six arms hand
+#            it `resp.text`, the provider's entire response body, and nothing on
+#            the way in bounds it ([[n409-unbounded-remote-bodies]] — these read
+#            off an `httpx.Client` with no size ceiling). 359 ms and 49 MB for a
+#            5 MB error page, to keep 201 characters, on the path taken exactly
+#            when a provider has started misbehaving. `.strip()` is what makes
+#            this more than a slice and it is now done in the same pass: leading
+#            whitespace dropped as the walk goes, an interior run held aside
+#            until text follows it and never grown past what the bound holds.
+#
+#            a1e2ec6 — `domain/displayText.quoteForMessage`, the TypeScript twin
+#            of the first, and the one on an event loop. `field_key`, `pipeline`,
+#            the communication template key and the engagement stage come off a
+#            request body at Fastify's 1 MiB default: 40 ms of the loop every
+#            other request in flight is queued behind. Compared in code units
+#            rather than code points because the threshold always was — the cut
+#            is astral-safe and the length test is not, and making them agree
+#            would move a boundary rather than move work off one.
+#
+#            All three verified as output identity rather than as a speedup,
+#            because the failure mode is a refusal that reads differently: 4,000
+#            randomised values at five limits (engine), 6,000 bodies at five
+#            limits over the characters `.isspace()` and the cleaner disagree
+#            about (AI), 3,000 seeded values against a reference implementation
+#            of the pre-fix shape (TS). Every guard was run against its own
+#            pre-fix source before being believed — 200,000 characters against
+#            81, 19.2 MB against 100 kB, one `difflib` call against none.
+#
+#            Guard shapes worth reusing. Count the walk by patching the one
+#            helper it calls per character (`is_acted_on_control` is the left arm
+#            of an `or`, so it is asked exactly once per character reached). In
+#            TypeScript, hand the function an object with a `[Symbol.iterator]`
+#            in place of the string — `for...of` consumes it and nothing else in
+#            the function touches the value. Where there is no helper to patch,
+#            assert `tracemalloc` peak while cleaning a 2 MB body; the pre-fix
+#            form holds roughly ten times the input in per-character strings.
+#
+#            7c223ff — R384's new membership events, probed and cleared, with the
+#            probe kept. The `SELECT … FOR UPDATE` ahead of each write is a real
+#            extra round trip and the right trade (the event has to say what the
+#            membership *was*, and `UPDATE … RETURNING` hands back the row as it
+#            now is). `deleteOrganization` is the one door where it could have
+#            become an N+1, because it detaches a whole book at once; its read is
+#            over `organization_id` (indexed since 0079) and its write is
+#            `recordEvents`, batched through `unnest`. Pinned as a *difference* —
+#            deepen the organization fourfold and the statement count must not
+#            move — with the discriminator a flat count needs, since a batch that
+#            dropped rows would hold it flat too.
+#
+#            Probed and clean, do not re-derive: `describe_unbindable` is 3.3 us
+#            on a successful call (the signature read is `lru_cache`d on the
+#            callable, and the accepted/required lists are tens of names);
+#            R384's `_fetch_all` counter replaced a `break` with a `continue` and
+#            reads the clock no more often than before, so the loop past the
+#            deadline is bookkeeping and nothing else; R380's `signedAtByRole`
+#            reads both roles in the one statement `mainSignedAt` used for one;
+#            R381 is tests only. The other per-character loops in the estate —
+#            `scrubFilename`, `scrubDownloadName`, the PDF face substitution,
+#            the command palette's subsequence score, `_col_index` — are all
+#            bounded by their own input and none applies a bound after the loop.
+#
+#            gap: `scrubFilename` still cleans a whole name before
+#            `MAX_FILENAME_CHARS` applies. Left alone because a filename arrives
+#            in a multipart part header rather than a body, so the ceiling over it
+#            is thousands of bytes rather than millions — the same shape, three
+#            orders of magnitude down.
+#            gap: nothing censuses this shape. All four sites were found by
+#            reading the two rounds' diff; the next helper that bounds an output
+#            after walking an unbounded input will be found the same way.
+#            gap: R384 landed without a REVISION entry. This one covers R385
+#            alone.
+#            gap: format:check is red on main for files this round did not touch;
+#            the two files it adds are clean. The AI service's full pytest suite
+#            still has ~30 pre-existing failures (`test_websearch.py`'s 152 pass).
