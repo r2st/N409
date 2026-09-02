@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   canCreateValuation,
@@ -192,5 +194,52 @@ describe('ignored suspends privilege, not just scope', () => {
     expect(isOps(admin)).toBe(true);
     expect(canManageUsers(admin)).toBe(true);
     expect(canManageBranding(admin, '01PARTNER')).toBe(true);
+  });
+});
+
+/**
+ * Census: what a suspension is, spelled once.
+ *
+ * `SUSPENDED_ROLE` exists because the question is asked on both sides of the
+ * wire — `isSuspended` for a principal the policy layer holds, and a `WHERE`
+ * clause for a row a query is filtering — and a literal written out per query
+ * is how the push half and the policy layer come to disagree. The reviewer
+ * picker binds the constant; `listUserIdsWithRoles` spelled it out until R373.
+ *
+ * Scoped to a role `key` comparison on purpose: `ignored` is also a valuation
+ * *state*, and `repos/valuations.ts` names it as one in a terminal-state list
+ * that has nothing to do with suspension.
+ */
+describe('the suspension role is not spelled out in SQL', () => {
+  const srcRoot = new URL('../../src/', import.meta.url).pathname;
+
+  function sources(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return sources(full);
+      return entry.isFile() && entry.name.endsWith('.ts') ? [full] : [];
+    });
+  }
+
+  it('compares a role key against the bound constant, never a literal', () => {
+    const offenders: string[] = [];
+    for (const file of sources(srcRoot)) {
+      if (file.endsWith('auth/rbac.ts')) continue;
+      const text = readFileSync(file, 'utf8');
+      for (const [index, line] of text.split('\n').entries()) {
+        // Prose is exempt: the notes on `SUSPENDED_ROLE`, `isLastUserAdmin` and
+        // the partner API's suspension refusal all quote the clause they are
+        // arguing about, and quoting it is the opposite of the drift here.
+        if (/^\s*(?:\*|\/\/|\/\*)/.test(line)) continue;
+        // `sr.key = 'ignored'`, `key IN ('ignored')`, `key = ANY('{ignored}')` —
+        // a role-key *comparison* written out rather than parameterised. The
+        // operator is required, so `key: 'ignored'` (the workflow bucket, which
+        // is a valuation state and not a role) is not this.
+        if (/\bkey\b\s*(?:=|<>|!=|\bIN\b)[^\n]{0,24}ignored/i.test(line)) {
+          offenders.push(`${file.slice(srcRoot.length)}:${index + 1}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
-import { isSuspended } from '../auth/rbac.js';
+import { isSuspended, SUSPENDED_ROLE } from '../auth/rbac.js';
 import type { RoleKey } from '../domain/roles.js';
 import { revokeInvitationsFrom } from './invitations.js';
 import {
@@ -374,6 +374,12 @@ export async function createProvisionedUser(
  * `isLastUserAdmin` records — the suspension is the absence of a row to join
  * to, and `r.key = ANY($1) AND r.key <> 'ignored'` would still match the
  * account through its other role.
+ *
+ * Bound as `SUSPENDED_ROLE` rather than written out, which is the rule that
+ * constant exists for and the one the reviewer picker in `adminUsers.ts`
+ * already follows: this is the third SQL predicate asking what a suspension is,
+ * and a literal spelled once per query is how the push half and the policy
+ * layer come to disagree about it.
  */
 export async function listUserIdsWithRoles(
   pool: pg.Pool,
@@ -390,11 +396,11 @@ export async function listUserIdsWithRoles(
         AND NOT EXISTS (
           SELECT 1 FROM user_roles sur
           JOIN roles sr ON sr.id = sur.role_id
-          WHERE sur.user_id = u.id AND sr.key = 'ignored'
+          WHERE sur.user_id = u.id AND sr.key = $3
         )
       ORDER BY u.created_at ASC
       LIMIT $2`,
-    [roles as readonly string[], limit],
+    [roles as readonly string[], limit, SUSPENDED_ROLE],
   );
   return rows.map((r) => r.id);
 }

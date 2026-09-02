@@ -6,6 +6,7 @@ import { signSession, type JwtConfig } from '../auth/jwt.js';
 import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { verifyReauthPassword } from '../auth/reauth.js';
 import { toPublicUser } from '../domain/publicUser.js';
+import { SUSPENDED_ROLE } from '../auth/rbac.js';
 import { USER_ADMIN_ROLES } from '../domain/roles.js';
 import {
   bumpSessionEpoch,
@@ -443,6 +444,10 @@ export function registerAccountRoutes(
  * `NOT EXISTS` rather than a second join, because the suspension is the
  * *absence* of a row to join to: `r.key = ANY($2) AND r.key <> 'ignored'`
  * would count a suspended admin twice over, once for each of their two rows.
+ *
+ * Bound as `SUSPENDED_ROLE` rather than written out — the constant is the one
+ * spelling of what a suspension is, and this guard and the notification
+ * fan-out are the two SQL predicates its note is about.
  */
 export async function isLastUserAdmin(pool: pg.Pool, userId: string): Promise<boolean> {
   const { rows } = await pool.query<{ count: string }>(
@@ -454,9 +459,9 @@ export async function isLastUserAdmin(pool: pg.Pool, userId: string): Promise<bo
        AND NOT EXISTS (
          SELECT 1 FROM user_roles sur
          JOIN roles sr ON sr.id = sur.role_id
-         WHERE sur.user_id = u.id AND sr.key = 'ignored'
+         WHERE sur.user_id = u.id AND sr.key = $3
        )`,
-    [userId, [...USER_ADMIN_ROLES]],
+    [userId, [...USER_ADMIN_ROLES], SUSPENDED_ROLE],
   );
   return Number(rows[0]?.count ?? 0) === 0;
 }
