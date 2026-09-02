@@ -35,6 +35,7 @@ import {
 import type { GoogleOidc } from '../auth/google.js';
 import { refuseSso } from '../auth/ssoRefusal.js';
 import { recordSsoOutcome } from '../observability/ssoOutcomes.js';
+import { recordSignInOutcome } from '../observability/signInOutcomes.js';
 import {
   bumpSessionEpoch,
   createUser,
@@ -333,6 +334,13 @@ export function registerAuthRoutes(
       !allow(emailKey, 10, LOGIN_WINDOW_MS, { peek: true }) ||
       !allow(ipKey, 100, LOGIN_WINDOW_MS, { peek: true })
     ) {
+      // Counted before any credential is read, because it is refused before any
+      // credential is read. Nothing else can see this: the spine deliberately
+      // writes no row past the lock (see the failure branch below), so a
+      // stuffing run and an owner locked out of their own account are both a
+      // 429 in a status class this box has no rule on. See
+      // `observability/signInOutcomes.ts`.
+      recordSignInOutcome('password', 'throttled');
       throw problems.tooManyRequests(
         'Too many sign-in attempts for this account',
         retryAfter([emailKey, 10, LOGIN_WINDOW_MS], [ipKey, 100, LOGIN_WINDOW_MS]),
@@ -390,6 +398,12 @@ export function registerAuthRoutes(
        * that point write nothing, which is why the one that trips the lock says
        * so.
        */
+      // One word, two readers. The spine row is what an investigator reads
+      // afterwards and the counter is what a rule fires on, and computing the
+      // reason once is what stops them becoming two vocabularies for one thing
+      // — the same construction that puts the sweep name in `scheduleSweep`.
+      const reason = !user ? 'unknown_account' : user.deleted_at ? 'closed_account' : 'bad_password';
+      recordSignInOutcome('password', reason);
       await recordAdminEvent(deps.pool, {
         type: 'user_login_failed',
         actor: { actorType: 'human', actorId: user?.id ?? null },
@@ -398,7 +412,7 @@ export function registerAuthRoutes(
         subjectLabel: email,
         payload: {
           method: 'password',
-          reason: !user ? 'unknown_account' : user.deleted_at ? 'closed_account' : 'bad_password',
+          reason,
           ip: req.ip,
           locked_out: lockedOut,
         },
@@ -412,12 +426,18 @@ export function registerAuthRoutes(
       const deviceToken = req.cookies?.[DEVICE_COOKIE];
       const trusted = deviceToken ? await isDeviceTrusted(deps.pool, user.id, deviceToken) : false;
       if (!trusted) {
+        // Answered, not refused — and neither is it a sign-in. Its own outcome
+        // so the refusal ratio can exclude it, and so challenges issued can be
+        // read against verifications completed at the door below: a second
+        // factor that has stopped verifying shows up as the gap between them.
+        recordSignInOutcome('password', 'mfa_challenged');
         return {
           mfa_required: true,
           challenge: await signMfaChallenge(user.id, deps.jwt),
         };
       }
     }
+    recordSignInOutcome('password', 'signed_in');
     await recordAdminEvent(deps.pool, {
       type: 'user_login',
       actor: { actorType: 'human', actorId: user.id },
@@ -439,15 +459,24 @@ export function registerAuthRoutes(
     try {
       userId = await verifyMfaChallenge(parsed.data.challenge, deps.jwt);
     } catch {
+      // Counted, and it is the one outcome here that is routinely benign: a
+      // challenge has a short life and a user who left the tab open gets this.
+      // Its *rate* is not benign — the challenge is signed with the same key
+      // the session is, so a key rotated out from under a running process
+      // refuses every 2FA account on the estate through this branch and
+      // through no other.
+      recordSignInOutcome('mfa', 'challenge_invalid');
       throw problems.unauthorized('This 2FA challenge is invalid or has expired — sign in again');
     }
     const user = await findUserById(deps.pool, userId);
     if (!user || user.deleted_at || !user.totp_enabled || !user.totp_secret) {
+      recordSignInOutcome('mfa', 'not_enrolled');
       throw problems.unauthorized('2FA is not enabled for this account');
     }
 
     // Throttle second-factor guessing per user.
     if (!allow(`mfa:${user.id}`, 10, LOGIN_WINDOW_MS)) {
+      recordSignInOutcome('mfa', 'throttled');
       throw problems.tooManyRequests(
         'Too many verification attempts',
         retryAfter([`mfa:${user.id}`, 10, LOGIN_WINDOW_MS]),
@@ -475,6 +504,7 @@ export function registerAuthRoutes(
       // for the minutes before it works. It was recorded nowhere: the throttle
       // counted it in memory and the successful verification a few attempts
       // later was the only row either way.
+      recordSignInOutcome('mfa', 'bad_code');
       await recordAdminEvent(deps.pool, {
         type: 'user_mfa_challenge_failed',
         actor: { actorType: 'human', actorId: user.id },
@@ -492,6 +522,7 @@ export function registerAuthRoutes(
       await trustDevice(deps.pool, user.id, raw, expires);
       if (deps.cookie) setDeviceCookie(reply, raw, deps.cookie.secure);
     }
+    recordSignInOutcome('mfa', 'signed_in');
     await recordAdminEvent(deps.pool, {
       type: 'user_login',
       actor: { actorType: 'human', actorId: user.id },

@@ -795,6 +795,64 @@ groups:
         annotations:
           summary: 'the directory connector is being throttled; the tail of its resync is not being applied'
 
+      # The door people use, and the last one in this group to get a rule.
+      #
+      # Every machine door above is here because its refusal is answered in a
+      # status class nothing watches — a 302 for SSO and the OAuth callbacks, a
+      # 401 for SCIM and the API keys below. The interactive door is the same
+      # failure in the plainest form: `POST /auth/login` answers a refusal with
+      # 401 and a lockout with 429, and there is no 4xx rule on this box at all.
+      # A password verifier that stopped verifying after a deploy, a session
+      # issuer throwing inside a branch that catches, a `users` table that came
+      # back from a migration with the digests where nothing reads them — every
+      # one of those refuses every sign-in on the estate with no 5xx, no slow
+      # request and no open circuit, because the identity store is our own
+      # Postgres and it is answering perfectly well.
+      #
+      # A ratio, and `mfa_challenged` excluded from both halves of it. An
+      # account with 2FA on is *answered* by the password door with a challenge
+      # rather than a session: counting those as refusals would make a firm that
+      # has mandated 2FA look like a firm that cannot get in, and counting them
+      # as sign-ins would let a wall of them hide a door refusing everybody else.
+      #
+      # `by (door)` so the two halves are judged apart. They fail for unrelated
+      # reasons, and the second fails alone far more often — a clock that has
+      # drifted on the box, or a TOTP secret encrypted under a key that was
+      # rotated, locks out every 2FA account while password sign-in, which is
+      # the half somebody would think to test, keeps working.
+      - alert: SignInsFailing
+        expr: |
+          sum by (door) (rate(sign_in_outcomes_total{outcome!~"signed_in|mfa_challenged"}[30m]))
+            / sum by (door) (rate(sign_in_outcomes_total{outcome!="mfa_challenged"}[30m])) > 0.8
+        for: 30m
+        labels: { severity: page }
+        annotations:
+          summary: 'most attempts at the {{ $labels.door }} sign-in door are being refused'
+          runbook: "the spine carries the reason per attempt: SELECT payload->>'reason', count(*) FROM admin_events WHERE type = 'user_login_failed' AND occurred_at > now() - interval '1 hour' GROUP BY 1"
+
+      # Somebody walking an address list, which is the one condition in this
+      # group that is not the platform doing something to itself.
+      #
+      # `unknown_account` is its own outcome rather than folded in with the
+      # other refusals precisely so this can be asked separately. A handful is
+      # Tuesday — a typo, an old work address, somebody who signed up with the
+      # other one — and a sustained rate of addresses that have never existed
+      # here is a credential list being tried against the platform. A ticket
+      # rather than a page for the reason SCIM keeps `unauthenticated` out of
+      # its numerator: this door faces the open internet, and a stranger must
+      # not be able to wake anybody.
+      #
+      # A floor on the real rate, not a measure of it: an address is locked at
+      # its tenth attempt and everything past that counts as `throttled`.
+      - alert: SignInAddressSweep
+        expr: |
+          sum(rate(sign_in_outcomes_total{door="password",outcome="unknown_account"}[30m])) > 0.1
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'sign-ins are being attempted against addresses that have no account here — an address list is being walked'
+          runbook: "SELECT payload->>'ip', count(*) FROM admin_events WHERE type = 'user_login_failed' AND payload->>'reason' = 'unknown_account' AND occurred_at > now() - interval '1 hour' GROUP BY 1 ORDER BY 2 DESC"
+
   - name: n409-api-keys
     rules:
       # The door with no person behind it to notice, which is this estate's own

@@ -165,6 +165,7 @@ import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
 import { registerSsoMetrics } from './observability/ssoOutcomes.js';
 import { registerScimMetrics } from './observability/scimRequests.js';
+import { registerSignInMetrics } from './observability/signInOutcomes.js';
 import { registerIntegrationCallbackMetrics } from './observability/integrationCallbacks.js';
 import { registerApiTokenAuthMetrics } from './observability/apiTokenAuth.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
@@ -858,6 +859,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Three of those five are conditions this platform caused, by archiving a
   // firm, moving the member who minted the key, or closing their account.
   registerApiTokenAuthMetrics(metricsRegistry);
+  // And the door people use, which is the one every round above left for last.
+  // A sign-in refusal is a 401 and a lockout is a 429, and this deployment has
+  // no rule on either class — `scimRequests.ts` says so in as many words — so a
+  // password verifier that stopped verifying, a second factor that rejects
+  // every correct code, and a credential-stuffing run walking the address list
+  // are all invisible to every instrument on this box. The audit spine has had
+  // the rows since R215; what it has never had is a channel anybody is woken by.
+  registerSignInMetrics(metricsRegistry);
   // Whether we are still dialling the engine, the AI service and the report
   // unit at all. The breaker's own view was reachable only from the ops
   // incident endpoint, which is a page somebody visits once they already
