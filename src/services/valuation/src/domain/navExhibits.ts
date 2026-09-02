@@ -150,6 +150,65 @@ function markedPositions(data: FundReportData): MarkedPosition[] {
   });
 }
 
+/**
+ * When the marks this schedule sums do not all speak for the same day.
+ *
+ * `latestMarks` takes the newest mark each holding has — `ORDER BY
+ * measurement_date DESC LIMIT 1`, with no date on the query and none on the
+ * fund. So the three fund exhibits are a portfolio schedule, a hierarchy table
+ * and a NAV built from marks that need not share a date with each other or
+ * with the valuation date the report is written as of, under prose that says
+ * "at the measurement date" in the singular.
+ *
+ * Every row carried its own date and no exhibit printed it: `MarkedPosition`
+ * has had `measurementDate` since this module was written and nothing read it.
+ * A holding last marked eighteen months ago and one marked after the report's
+ * own valuation date were both just a figure in the Fair value column, and the
+ * NAV underneath added them together.
+ *
+ * A mark dated *after* the valuation date is the sharp case and is called out
+ * separately: ASC 820 measures at the measurement date, using what was
+ * knowable then, and a later round or a later quote is not evidence the
+ * measurement date had. The others are staleness, which is ordinary in a
+ * quarterly portfolio and is disclosed rather than corrected — this module
+ * renders what was recorded and must not restate it.
+ */
+function markDateNote(positions: MarkedPosition[], ctx: ExhibitContext): string | null {
+  const dated = positions.map((p) => p.measurementDate).filter((d): d is string => d !== null);
+  if (dated.length === 0) return null;
+  // ISO days sort and compare as text, which is the whole reason this module
+  // carries them as `YYYY-MM-DD` rather than as Dates.
+  const dates = [...new Set(dated)].sort();
+  const first = dates[0]!;
+  const last = dates[dates.length - 1]!;
+  const asOf = ctx.valuationDate ?? null;
+
+  const sentences: string[] = [];
+  if (dates.length > 1) {
+    sentences.push(
+      `The marks above are dated ${esc(first)} through ${esc(last)}, so the portfolio is not ` +
+        'measured as of a single date; each holding is stated at its most recent mark.',
+    );
+  } else if (asOf !== null && first !== asOf) {
+    sentences.push(
+      `Every mark above is dated ${esc(first)}, which is not the valuation date of this report ` +
+        `(${esc(asOf)}); the portfolio is stated at its most recent marks rather than re-marked.`,
+    );
+  }
+
+  if (asOf !== null) {
+    const ahead = positions.filter((p) => p.measurementDate !== null && p.measurementDate > asOf).length;
+    if (ahead > 0) {
+      sentences.push(
+        `${ahead} of ${positions.length} holdings carry a mark dated after the valuation date ` +
+          `(${esc(asOf)}). A fair value is measured from what was knowable at the measurement ` +
+          'date, so a later mark is subsequent evidence rather than support for the value stated here.',
+      );
+    }
+  }
+  return sentences.length === 0 ? null : sentences.join(' ');
+}
+
 function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitContext): ReportPdfSection | null {
   if (positions.length === 0) return null;
   const rows = positions.map((p) => [
@@ -159,6 +218,9 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
     moneyCell(p.costBasis, ctx),
     esc(MARK_METHOD_LABELS[p.method] ?? label(p.method)),
     `Level ${p.level}`,
+    // The date the figure beside it speaks for. An unmarked holding is carried
+    // at cost and has no measurement date of its own to state.
+    p.measurementDate === null ? '—' : esc(p.measurementDate),
     moneyCell(p.fairValue, ctx),
     moneyCell(p.fairValue - p.costBasis, ctx),
   ]);
@@ -168,10 +230,11 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
   // Named, because a reader who sees a portfolio carried at cost should be told
   // it has not been marked rather than left to infer it from a zero gain.
   const unmarked = positions.filter((p) => !p.marked).length;
+  const dateNote = markDateNote(positions, ctx);
 
   return section('Exhibit — Portfolio Schedule', [
     P(
-      'Each holding in the portfolio at the measurement date, its cost basis, the technique used to measure its fair value, and the resulting unrealized gain or loss.',
+      'Each holding in the portfolio, the date of the mark it is stated at, its cost basis, the technique used to measure its fair value, and the resulting unrealized gain or loss.',
     ),
     table({
       head: [
@@ -181,6 +244,7 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
         'Cost basis',
         'Measurement technique',
         'Level',
+        'Marked at',
         'Fair value',
         'Unrealized gain',
       ],
@@ -192,6 +256,7 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
         moneyCell(totalCost, ctx),
         '',
         '',
+        '',
         moneyCell(totalFair, ctx),
         moneyCell(totalFair - totalCost, ctx),
       ],
@@ -201,6 +266,7 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
           `${unmarked} of ${positions.length} holdings carry no mark at the measurement date and are stated at cost, which is measured as a Level 3 input.`,
         )
       : null,
+    dateNote === null ? null : P(dateNote),
   ]);
 }
 

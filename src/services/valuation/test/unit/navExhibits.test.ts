@@ -133,6 +133,76 @@ describe('fund NAV exhibits', () => {
     expect(out).toContain('28.6%');
   });
 
+  describe('the date each mark speaks for', () => {
+    /*
+     * `latestMarks` takes the newest mark a holding has, whatever day it falls
+     * on, and these exhibits sum them. So the schedule can be a NAV assembled
+     * from marks of different ages and from marks dated after the report's own
+     * valuation date, under prose that says "at the measurement date". The
+     * dates were carried on every row and printed nowhere.
+     */
+    it('prints the mark date beside the fair value it dates', () => {
+      const out = html(buildFundExhibits(fundData(), ctx));
+      expect(out).toContain('Marked at');
+      expect(out).toContain('2026-06-30');
+      // The unmarked holding is carried at cost and has no date of its own.
+      expect(out).toContain('<td>—</td>');
+    });
+
+    it('says so when the holdings are not all marked at one date', () => {
+      const data = fundData();
+      data.positions[0]!.mark = mark({ position_id: 'p1', measurement_date: '2025-03-31' });
+      const out = html(buildFundExhibits(data, ctx));
+      expect(out).toContain('dated 2025-03-31 through 2026-06-30');
+      expect(out).toContain('not measured as of a single date');
+    });
+
+    it('names a mark dated after the valuation date as subsequent evidence', () => {
+      const data = fundData();
+      data.positions[0]!.mark = mark({ position_id: 'p1', measurement_date: '2026-09-30' });
+      const out = html(buildFundExhibits(data, ctx));
+      expect(out).toContain('1 of 3 holdings carry a mark dated after the valuation date');
+      expect(out).toContain('subsequent evidence');
+    });
+
+    it('says the portfolio was not re-marked when every mark predates the report', () => {
+      const data = fundData();
+      for (const p of data.positions) if (p.mark) p.mark.measurement_date = '2026-03-31';
+      const out = html(buildFundExhibits(data, ctx));
+      expect(out).toContain('Every mark above is dated 2026-03-31');
+      expect(out).toContain('rather than re-marked');
+    });
+
+    it('says nothing when every mark falls on the valuation date', () => {
+      const out = html(buildFundExhibits(fundData(), ctx));
+      expect(out).not.toContain('not measured as of a single date');
+      expect(out).not.toContain('subsequent evidence');
+      expect(out).not.toContain('rather than re-marked');
+    });
+
+    it('makes no claim about dates for a report with no valuation date', () => {
+      const out = html(buildFundExhibits(fundData(), { ...ctx, valuationDate: null }));
+      expect(out).toContain('2026-06-30');
+      expect(out).not.toContain('rather than re-marked');
+      expect(out).not.toContain('subsequent evidence');
+    });
+
+    it('still ranges the dates when the report has no valuation date to compare to', () => {
+      const data = fundData();
+      data.positions[0]!.mark = mark({ position_id: 'p1', measurement_date: '2025-03-31' });
+      const out = html(buildFundExhibits(data, { ...ctx, valuationDate: null }));
+      expect(out).toContain('dated 2025-03-31 through 2026-06-30');
+    });
+
+    it('says nothing about dates for a portfolio nobody has marked', () => {
+      const data = fundData();
+      for (const p of data.positions) p.mark = null;
+      const out = html(buildFundExhibits(data, ctx));
+      expect(out).not.toContain('not measured as of a single date');
+      expect(out).not.toContain('rather than re-marked');
+    });
+  });
+
   it('says nothing about unmarked holdings when every position is marked', () => {
     const data = fundData();
     data.positions = data.positions.slice(0, 2);
