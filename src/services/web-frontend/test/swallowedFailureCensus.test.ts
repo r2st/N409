@@ -37,12 +37,14 @@ import { join } from 'node:path';
 
 /** Reasons are prose on purpose: an entry nobody can justify is a bug. */
 const SILENT_BY_DESIGN: Record<string, string> = {
-  'src/components/AppLayout.tsx\t/inbox/unread-count':
-    'A badge polled every 60s. Raising an error banner from a badge is worse than a stale number.',
-  'src/components/AppLayout.tsx\t/valuations/counts?buckets=named':
-    'Nav badge poll on a 60s timer, as above. A stale count beats a banner nobody asked for.',
-  'src/components/AppLayout.tsx\t/notifications/unread-count':
-    'Nav badge poll on a 60s timer, as above. A stale count beats a banner nobody asked for.',
+  // One entry, not three, since the three nav badges were hoisted into
+  // `useBadgePoll` — the swallow moved into the hook with them, so there is one
+  // site left and the census keys it by the hook's parameter (R350). The
+  // justification is unchanged and covers all three callers.
+  'src/components/AppLayout.tsx\tpath':
+    'The shared nav-badge poll, every 60s for the inbox, bucket and notification counts. Raising an error banner from a badge is worse than a stale number.',
+  'src/lib/crashReport.ts\tENDPOINT':
+    'The crash reporter posting to /client-errors. The network is the other thing that might be broken, and a failed crash report has nowhere to be reported to.',
   'src/lib/auth.tsx\t/api/v1/auth/logout':
     'Best-effort POST. The local session is already cleared, and the user is on their way out.',
   'src/pages/ClientIntakePage.tsx\t/api/v1/intake/portal/answers':
@@ -108,8 +110,24 @@ function stripComments(source: string): string {
 const SWALLOW =
   /\.catch\(\(\)\s*=>\s*(?:\{\s*\}|undefined|set[A-Za-z0-9_]*\(\s*(?:\[\s*\]|null|\{[^}]*\})\s*\))\s*\)/g;
 
-/** The request a catch belongs to: the nearest path literal before it. */
-const REQUEST = /(?:api|fetch)\s*(?:<[^>]*>)?\s*\(\s*[`'"]([^`'"]*)[`'"]/g;
+/**
+ * The request a catch belongs to: the nearest call before it, named by its
+ * first argument.
+ *
+ * A literal path where there is one, and otherwise the identifier holding it.
+ * The literal-only version had a blind spot a refactor walked straight into:
+ * `AppLayout` hoisted its three nav-badge polls into one `useBadgePoll(path)`
+ * hook, so the swallow's nearest call became `api<T>(path)` with no literal
+ * anywhere before it. The entry key silently became `(none)`, which failed both
+ * assertions at once — three list entries stale and one swallow unclassified —
+ * and would have collapsed to the same opaque key for any *other* swallow in
+ * the file, so a genuinely new one would have hidden behind the settled one.
+ *
+ * Naming the identifier keeps the key specific to the call site through a
+ * refactor that moves the URL a level up, which is the ordinary way this code
+ * changes. `(none)` remains for a call whose argument is neither.
+ */
+const REQUEST = /(?:api|fetch)\s*(?:<[^>]*>)?\s*\(\s*(?:[`'"]([^`'"]*)[`'"]|([A-Za-z_$][\w$]*)\s*[,)])/g;
 
 function census(): string[] {
   const found: string[] = [];
@@ -119,7 +137,8 @@ function census(): string[] {
     for (const match of source.matchAll(SWALLOW)) {
       const before = source.slice(0, match.index);
       const requests = [...before.matchAll(REQUEST)];
-      const path = requests.length ? requests[requests.length - 1]![1] : '(none)';
+      const last = requests.length ? requests[requests.length - 1]! : null;
+      const path = last ? (last[1] ?? last[2] ?? '(none)') : '(none)';
       found.push(`${file}\t${path}`);
     }
   }
@@ -150,6 +169,18 @@ describe('swallowed request failures', () => {
     SWALLOW.lastIndex = 0;
     expect(SWALLOW.test(".catch(() => setError('Could not load.'))")).toBe(false);
     SWALLOW.lastIndex = 0;
+  });
+
+  it('names the call site when the path was hoisted into a variable', () => {
+    // The R350 regression: `useBadgePoll(path)` put the URL a level up, and a
+    // literal-only matcher keyed every swallow in the file as `(none)`.
+    const found = census();
+    expect(found).toContain('src/components/AppLayout.tsx\tpath');
+    expect(found).not.toContain('src/components/AppLayout.tsx\t(none)');
+    expect(REQUEST.test('api<T>(path)')).toBe(true);
+    REQUEST.lastIndex = 0;
+    expect(REQUEST.test("api('/inbox/unread-count')")).toBe(true);
+    REQUEST.lastIndex = 0;
   });
 
   it('does not read a doc comment about the bug as the bug', () => {
