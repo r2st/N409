@@ -372,7 +372,9 @@ export function registerAccountRoutes(
     const token = await findApiTokenById(deps.pool, id);
     // 404 rather than 403 for someone else's token — don't confirm it exists.
     if (!token || token.partner_id !== null || token.created_by !== principal.id) throw problems.notFound();
-    await revokeApiToken(deps.pool, id);
+    // Asked, as at the ops door onto the same table — see routes/apiTokens.ts.
+    if (!(await revokeApiToken(deps.pool, id)))
+      throw problems.notFound('That token has already been revoked');
     await recordAdminEvent(deps.pool, {
       type: 'api_token_revoked',
       actor: { actorType: 'human', actorId: principal.id },

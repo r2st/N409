@@ -143,7 +143,17 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
       ? canManageTokens(principal, token.partner_id)
       : token.created_by === principal.id;
     if (!allowed) throw problems.notFound();
-    await revokeApiToken(deps.pool, id);
+    // The revoke reports whether it *did* anything, and both doors onto it used
+    // to discard that. `revoked_at IS NULL` is in the statement, so a second
+    // press revokes nothing — but `findApiTokenById` returns revoked rows, and
+    // both lists put them back on screen (`listPersonalApiTokens` unfiltered,
+    // this one on `?revoked=true`), so revoking one already revoked wrote a
+    // second `api_token_revoked` to the identity spine: two answers to the
+    // question "who withdrew this credential and when", the later one naming
+    // whoever pressed a stale button rather than the person who withdrew it. `DELETE /admin/sso/scim-tokens/:id` is
+    // the same door one credential over and has always asked (round 356, M3).
+    if (!(await revokeApiToken(deps.pool, id)))
+      throw problems.notFound('That token has already been revoked');
     await recordAdminEvent(deps.pool, {
       type: 'api_token_revoked',
       actor: { actorType: 'human', actorId: principal.id },

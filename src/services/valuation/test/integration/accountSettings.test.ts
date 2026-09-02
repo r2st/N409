@@ -399,6 +399,31 @@ describe.skipIf(!dbUp)('account settings', () => {
       expect((await me(secret)).statusCode).toBe(401);
     });
 
+    it('records the withdrawal once when the control is pressed twice', async () => {
+      // The personal list returns revoked tokens unfiltered, so the control is
+      // still on screen after the first press; the second used to answer 204
+      // and write a second `api_token_revoked` (round 356, methodology M3).
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const { token } = await mint(user.token, 'pressed-twice');
+      const revoke = () =>
+        ctx.app.inject({
+          method: 'DELETE',
+          url: `/api/v1/me/tokens/${token.id}`,
+          headers: authHeader(user.token),
+        });
+      expect((await revoke()).statusCode).toBe(204);
+      const again = await revoke();
+      expect(again.statusCode).toBe(404);
+      expect(again.json().detail).toMatch(/already been revoked/i);
+
+      const { rows } = await ctx.pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM admin_events
+          WHERE type = 'api_token_revoked' AND subject_id = $1`,
+        [token.id],
+      );
+      expect(rows[0]!.n).toBe('1');
+    });
+
     it('will not let one user revoke another’s token', async () => {
       const owner = await seedUser(ctx, { roles: ['valuation_user'] });
       const stranger = await seedUser(ctx, { roles: ['valuation_user'] });

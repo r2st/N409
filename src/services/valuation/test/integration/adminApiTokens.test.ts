@@ -252,4 +252,30 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
       expect(second.json().detail).toContain('cannot mint another API token');
     });
   });
+
+  it('withdraws a credential once, however many times the control is pressed', async () => {
+    // `findApiTokenById` returns revoked rows and the listing puts them back on
+    // screen, so revoking one already revoked used to answer 204 and write a
+    // second `api_token_revoked` — two answers to "who withdrew this credential
+    // and when", the later one naming whoever pressed a stale button (round
+    // 356, methodology M3). The SCIM-token door beside it has always asked.
+    const { token } = await issue(partnerA, 'Twice Revoked');
+    const revoke = () =>
+      ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/api-tokens/${token.id}`,
+        headers: authHeader(admin.token),
+      });
+    expect((await revoke()).statusCode).toBe(204);
+    const again = await revoke();
+    expect(again.statusCode).toBe(404);
+    expect(again.json().detail).toMatch(/already been revoked/i);
+
+    const { rows } = await ctx.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM admin_events
+        WHERE type = 'api_token_revoked' AND subject_id = $1`,
+      [token.id],
+    );
+    expect(rows[0]!.n).toBe('1');
+  });
 });
