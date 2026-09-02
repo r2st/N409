@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { hasPassword } from '../lib/rbac';
@@ -53,7 +53,7 @@ export function PartnerPortalPage() {
   useEffect(() => {
     api<ValuationList>('/valuations?per_page=100')
       .then((res) => setValuations(res.valuations))
-      .catch(() => setError('Could not load your portfolio.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load your portfolio.')));
   }, []);
 
   // P1 #7 — the organisation's name/branding, set by the platform admins.
@@ -70,7 +70,7 @@ export function PartnerPortalPage() {
         setTokens(res.tokens);
         setTokensTruncated(res.truncated);
       })
-      .catch(() => setTokenError('Could not load API tokens.'));
+      .catch((err: unknown) => setTokenError(describeLoadFailure(err, 'Could not load API tokens.')));
   }, [partnerId, canMint]);
 
   useEffect(() => {

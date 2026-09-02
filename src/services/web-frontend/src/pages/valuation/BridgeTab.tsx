@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, describeActionFailure } from '../../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { formatDateTime, formatPerShare, moneyFormatter } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { WaterfallChart } from '../../components/charts';
@@ -91,7 +91,7 @@ export function BridgeTab() {
         setCandidates(r.candidates);
         setBridgeable(r.bridgeable);
       })
-      .catch(() => setError('Could not load comparable valuations.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load comparable valuations.')));
   }, [valuation.id]);
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, describeLoadFailure } from '../../lib/api';
 import { useLatestOnly } from '../../lib/useLatestOnly';
 import { useClearOnChange } from '../../lib/useClearOnChange';
 import { useAuth } from '../../lib/auth';
@@ -75,7 +75,7 @@ export function BlogIndexPage() {
   useEffect(() => {
     api<{ posts: PostSummary[] }>('/blog/posts')
       .then((res) => setPosts(res.posts))
-      .catch(() => setError('Could not load the blog just now.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load the blog just now.')));
   }, []);
 
   const categories = posts ? categoriesOf(posts) : [];

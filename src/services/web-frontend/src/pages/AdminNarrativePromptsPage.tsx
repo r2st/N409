@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, describeActionFailure } from '../lib/api';
+import { api, ApiError, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { diffLines } from '../lib/diff';
 import { formatDateTime, KIND_LABELS } from '../lib/format';
 import type { ValuationKind } from '../lib/types';
@@ -267,7 +267,7 @@ function PreviewPanel({ kind }: { kind: ValuationKind }) {
     setError(null);
     api<{ sections: ResolvedSection[] }>(`/admin/narrative-prompts/preview/${kind}`)
       .then((d) => setSections(d.sections))
-      .catch(() => setError('Could not load the preview.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load the preview.')));
   }, [kind, token]);
 
   if (error) return <LoadError message={error} {...retryProps} />;

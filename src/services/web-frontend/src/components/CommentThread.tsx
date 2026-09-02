@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { formatDateTime } from '../lib/format';
@@ -51,7 +51,7 @@ export function CommentsSection({
         setTruncated(res.truncated);
         setLoadError(null);
       })
-      .catch(() => setLoadError('Could not load the conversation.'));
+      .catch((err: unknown) => setLoadError(describeLoadFailure(err, 'Could not load the conversation.')));
   }, [valuationId]);
 
   useEffect(() => {

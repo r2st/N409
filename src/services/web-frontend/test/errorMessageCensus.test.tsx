@@ -28,7 +28,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { describeActionFailure, describeRequestFailure, ApiError, OFFLINE_DETAIL } from '../src/lib/api';
+import {
+  describeActionFailure,
+  describeLoadFailure,
+  describeRequestFailure,
+  ApiError,
+  OFFLINE_DETAIL,
+} from '../src/lib/api';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(HERE, '../src');
@@ -357,6 +363,72 @@ describe('a page that cannot reach the server says so', () => {
       }
     }
     expect(findings, 'write handlers that discard the server’s refusal unread').toEqual([]);
+  });
+
+  /**
+   * And the read half of it (R374, M19).
+   *
+   * R350 fixed the writes and left the loads with a stated argument: the page
+   * is visibly missing its content and the reader's next move is the retry the
+   * sentence suggests either way. That holds for a 503. It does not hold for a
+   * 403 — the one refusal on a read that says *why you may not see this*, and
+   * that no amount of retrying changes — and `forbidden()` in this estate
+   * carries the action, the reason and the remedy, all of which sixteen loads
+   * were throwing away in favour of "Could not load X."
+   *
+   * `describeLoadFailure` is the whole fix and is deliberately smaller than
+   * `describeActionFailure`: it surfaces a `detail` the server wrote and
+   * otherwise returns the page's own sentence untouched, because the
+   * write-flavoured prose ("Nothing was changed") says nothing true about a
+   * GET.
+   */
+  it('opens the body at every load that displays a sentence', () => {
+    const findings = sources
+      .filter(({ rel }) => rel !== 'lib/api.ts' && rel !== 'components/ApiReference.tsx')
+      .flatMap(({ rel, text }) =>
+        [...text.matchAll(/\.catch\(\(\) => set\w*(?:Error|Note|Message)\(/g)].map(() => rel),
+      );
+    expect(findings, 'loads that discard the server’s refusal unread').toEqual([]);
+  });
+
+  /**
+   * The two exemptions, asserted rather than assumed. `lib/api.ts` is where
+   * the removed idiom is quoted in prose; `ApiReference` fetches the partner
+   * OpenAPI document with its own transport, so there is no `ApiError` for the
+   * helper to read and wiring it in would be a check that cannot fire.
+   */
+  it('exempts only the file that quotes the idiom and the one with no ApiError', () => {
+    const reference = sources.find(({ rel }) => rel === 'components/ApiReference.tsx')!;
+    expect(reference.text).not.toMatch(/from '\.\.\/lib\/api'/);
+    expect(reference.text).toMatch(/\bfetch\(/);
+  });
+});
+
+describe('describeLoadFailure', () => {
+  const FALLBACK = 'Could not load your billing history.';
+
+  it('hands over the refusal a retry will not change', () => {
+    // The case R350's argument for leaving the loads alone did not cover: a
+    // 403 says why you may not see this, and `forbidden()` here carries the
+    // action, the reason and the remedy.
+    const err = new ApiError(403, {
+      status: 403,
+      title: 'Forbidden',
+      detail: 'Viewing billing needs the account owner’s access. Ask an owner to open it for you.',
+      type: 'urn:n409:problem:forbidden',
+    });
+    expect(describeLoadFailure(err, FALLBACK)).toBe(
+      'Viewing billing needs the account owner’s access. Ask an owner to open it for you.',
+    );
+  });
+
+  it('keeps the page’s own sentence when the server wrote none', () => {
+    // Deliberately *not* `describeRequestFailure`: its prose is written for a
+    // write, and "Nothing was changed" says nothing true about a GET.
+    expect(describeLoadFailure(new ApiError(500, { status: 500, title: 'Internal Server Error' }), FALLBACK)).toBe(
+      FALLBACK,
+    );
+    expect(describeLoadFailure(new TypeError('network down'), FALLBACK)).toBe(FALLBACK);
   });
 });
 

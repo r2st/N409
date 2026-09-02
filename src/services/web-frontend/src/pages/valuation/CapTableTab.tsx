@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { api, ApiError, apiUpload, ifMatch, type Problem, describeActionFailure } from '../../lib/api';
+import { api, ApiError, apiUpload, ifMatch, type Problem, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { investedForDisplay } from '../../lib/capTableFigures';
 import { csvColumns } from '../../lib/csvColumns';
 import { useAuth } from '../../lib/auth';
@@ -894,7 +894,7 @@ function StructureExplorer({ valuationId }: { valuationId: string }) {
     if (!open || graph) return;
     api<{ graph: CapTableGraphData }>(`/valuations/${valuationId}/cap-table/graph`)
       .then((d) => setGraph(d.graph))
-      .catch(() => setError('Could not build the structure graph.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not build the structure graph.')));
   }, [open, graph, valuationId]);
 
   return (

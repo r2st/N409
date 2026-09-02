@@ -253,20 +253,50 @@ describe('SettingsPage — a save the API refuses', () => {
 describe('SettingsPage — lists that will not load', () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it('says so when the notification preferences fail', async () => {
+  /**
+   * R374 (M19): a failed load hands over the server's sentence when there is
+   * one, and keeps its own when there is not.
+   *
+   * Both assertions used to read the page's constant against a mock that had
+   * sent a `detail` — so they were passing on the behaviour the round removed.
+   * The refusal that matters on a read is the 403: it says why you may not see
+   * this, and it is the one no retry changes.
+   */
+  it('shows the server’s reason when a load is refused with one', async () => {
     mockApi((p, m) =>
-      m === 'GET' && p.endsWith('/me/notification-preferences') ? problem(500, 'boom') : undefined,
+      m === 'GET' && p.endsWith('/me/notification-preferences')
+        ? problem(403, 'Notification settings are managed by your directory administrator.')
+        : undefined,
+    );
+    renderSettings();
+    await settled();
+
+    expect(
+      await screen.findByText('Notification settings are managed by your directory administrator.'),
+    ).toBeInTheDocument();
+    // The table is not rendered half-empty beside the message.
+    expect(screen.queryByRole('table', { name: 'Notification preferences' })).not.toBeInTheDocument();
+  });
+
+  it('keeps its own sentence when the refusal carried none', async () => {
+    // `registerProblemHandler`'s unhandled-500 arm: a title, no detail.
+    mockApi((p, m) =>
+      m === 'GET' && p.endsWith('/me/notification-preferences')
+        ? jsonResponse({ status: 500, title: 'Internal Server Error' }, 500)
+        : undefined,
     );
     renderSettings();
     await settled();
 
     expect(await screen.findByText('Could not load your notification preferences.')).toBeInTheDocument();
-    // The table is not rendered half-empty beside the message.
-    expect(screen.queryByRole('table', { name: 'Notification preferences' })).not.toBeInTheDocument();
   });
 
   it('says so when the personal tokens fail', async () => {
-    mockApi((p, m) => (m === 'GET' && p.endsWith('/me/tokens') ? problem(500, 'boom') : undefined));
+    mockApi((p, m) =>
+      m === 'GET' && p.endsWith('/me/tokens')
+        ? jsonResponse({ status: 500, title: 'Internal Server Error' }, 500)
+        : undefined,
+    );
     renderSettings();
     await settled();
 

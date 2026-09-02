@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
 import { Button, ErrorNote, Field, Spinner, TextInput } from './ui';
@@ -72,7 +72,7 @@ export function MfaCard() {
   const load = () =>
     api<MfaStatus>('/account/mfa')
       .then(setStatus)
-      .catch(() => setError('Could not load two-factor status.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load two-factor status.')));
 
   useEffect(() => {
     void load();

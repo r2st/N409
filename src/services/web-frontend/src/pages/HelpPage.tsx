@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, describeLoadFailure } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { Markdown } from '../lib/markdown';
 import { sanitizeHtml } from '../lib/m2';
@@ -126,7 +126,7 @@ export function HelpPage() {
     // the full static knowledge base intact.
     api<{ articles: HelpArticle[] }>('/help/articles')
       .then((d) => setCms(d.articles.filter((a) => a.published)))
-      .catch(() => setError('Some help articles could not be loaded.'))
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Some help articles could not be loaded.')))
       .finally(() => setCmsLoaded(true));
   }, []);
 

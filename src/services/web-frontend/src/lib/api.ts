@@ -236,6 +236,38 @@ export function describeActionFailure(err: unknown, operation: string): string {
 }
 
 /**
+ * The read-side twin, and deliberately a much smaller one (round 374, M19).
+ *
+ * Sixteen loads were written `.catch(() => setError('Could not load X.'))` —
+ * no binding, so the server's body was never opened. Round 350 looked at that
+ * shape, fixed the *writes*, and left the loads with a stated argument: the
+ * page is visibly missing its content and the reader's next move is the retry
+ * the sentence suggests either way. That argument holds for a 503 and does not
+ * hold for a 403, which is the one refusal on a read that says *why you may not
+ * see this* and that no amount of retrying changes — `forbidden()` in this
+ * estate carries the action, the reason and the remedy, and every one of those
+ * sentences was being discarded in favour of "Could not load X."
+ *
+ * So this consults the error for exactly one thing: a `detail` the server
+ * wrote. It does **not** fall through to `describeRequestFailure` the way
+ * `describeActionFailure` does, because that helper's prose is written for a
+ * write — "Nothing was changed", "a failure this late can leave the change
+ * either applied or not" — and neither claim means anything about a GET. When
+ * the server said nothing, the page's own sentence is still the best available
+ * answer, and it stays.
+ *
+ * `ApiReference` keeps the bare form and is exempt: it loads the partner
+ * OpenAPI document with its own `fetch`, so no `ApiError` is ever constructed
+ * and consulting one would be a check that cannot fire. The boolean setters
+ * (`setOptionsFailed(true)` and its dozen siblings) are a different pattern
+ * and are left alone — those pages draw their own sentence beside the control
+ * the load was for.
+ */
+export function describeLoadFailure(err: unknown, fallback: string): string {
+  return err instanceof ApiError && err.problem.detail ? err.message : fallback;
+}
+
+/**
  * `If-Match` headers for a write guarded by an optimistic-lock version.
  *
  * Returns nothing when the version is absent so the call site can spread this

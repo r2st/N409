@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, describeLoadFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { computeStats } from '../lib/stats';
@@ -79,7 +79,7 @@ export function DashboardPage() {
   useEffect(() => {
     api<ValuationList>('/valuations?per_page=100')
       .then((res) => setValuations(res.valuations))
-      .catch(() => setError('Could not load valuations.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load valuations.')));
   }, []);
 
   // Analytics is noise for clients with 1–2 valuations — ops and partners only

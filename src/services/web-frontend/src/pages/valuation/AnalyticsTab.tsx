@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, describeLoadFailure } from '../../lib/api';
 import { formatDate, formatPerShare, ordinal } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { CHART_COLORS, LineChart } from '../../components/charts';
@@ -54,7 +54,7 @@ export function AnalyticsTab() {
   useEffect(() => {
     api<AnalyticsResponse>(`/valuations/${valuation.id}/analytics`)
       .then(setData)
-      .catch(() => setError('Could not load analytics.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load analytics.')));
   }, [valuation.id, token]);
 
   if (error) return <LoadError message={error} {...retryProps} />;

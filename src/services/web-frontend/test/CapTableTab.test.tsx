@@ -1028,7 +1028,9 @@ describe('CapTableTab', () => {
 
     it('says the graph could not be built rather than spinning forever', async () => {
       mockApi([
-        [/\/cap-table\/graph/, () => json({ status: 500, detail: 'boom' }, 500)],
+        // No `detail`, so the tab's own sentence is the answer (R374, M19): a
+        // refusal that carries one is now shown instead of it.
+        [/\/cap-table\/graph/, () => json({ status: 500, title: 'Internal Server Error' }, 500)],
         capTable({ cap_table: STORED, can_edit: true }),
         formats(),
       ]);

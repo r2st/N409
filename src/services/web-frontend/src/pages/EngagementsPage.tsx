@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import { EmptyState, KindBadge, ListTruncationNote, LoadError, Spinner, useRetry } from '../components/ui';
@@ -60,7 +60,7 @@ export function EngagementsPage() {
         setStages(r.stages.filter((s) => !s.terminal));
         setTruncated(r.truncated);
       })
-      .catch(() => setError('Could not load the engagement pipeline.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load the engagement pipeline.')));
   }, [token]);
 
   if (error) return <LoadError message={error} {...retryProps} />;

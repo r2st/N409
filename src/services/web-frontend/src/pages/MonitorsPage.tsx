@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import { EmptyState, KindBadge, LoadError, Spinner, useRetry } from '../components/ui';
@@ -33,7 +33,7 @@ export function MonitorsPage() {
         setMonitors(r.monitors);
         setTruncated(r.truncated);
       })
-      .catch(() => setError('Could not load monitored valuations.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load monitored valuations.')));
   }, [token]);
 
   if (error) return <LoadError message={error} {...retryProps} />;

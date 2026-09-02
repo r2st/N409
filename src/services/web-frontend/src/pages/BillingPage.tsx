@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
@@ -149,7 +149,7 @@ export function BillingPage() {
   useEffect(() => {
     api<{ billing: Billing }>('/me/billing')
       .then((d) => setBilling(d.billing))
-      .catch(() => setError('Could not load your billing history.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load your billing history.')));
   }, [token]);
 
   /*

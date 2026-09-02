@@ -239,11 +239,30 @@ describe('PartnerPortalPage — portfolio', () => {
    * spinner turning forever — which reads as "still loading" and never resolves.
    */
   it('says the portfolio could not be loaded instead of spinning forever', async () => {
-    mockServer({ partner: null, fail: { 'GET /valuations': problem(500, 'boom') } });
+    // A body with no `detail` — `registerProblemHandler`'s unhandled-500 arm —
+    // so the page's own sentence is the answer. When the server does write one
+    // it wins; see the 403 below (R374, M19).
+    mockServer({ partner: null, fail: { 'GET /valuations': json({ status: 500, title: 'Error' }, 500) } });
     renderPage();
 
     expect(await screen.findByText('Could not load your portfolio.')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+  });
+
+  it('hands over a refusal that says why the portfolio is not visible', async () => {
+    // "Could not load your portfolio." over this sentence is advice to retry
+    // something that will be refused identically every time.
+    mockServer({
+      partner: null,
+      fail: {
+        'GET /valuations': problem(403, 'Your partner role was removed. Ask an owner at the firm to restore it.'),
+      },
+    });
+    renderPage();
+
+    expect(
+      await screen.findByText('Your partner role was removed. Ask an owner at the firm to restore it.'),
+    ).toBeInTheDocument();
   });
 });
 
@@ -303,7 +322,7 @@ describe('PartnerPortalPage — API tokens', () => {
   });
 
   it('reports a token list it could not load', async () => {
-    mockServer({ partner: null, fail: { 'GET /tokens': problem(500, 'boom') } });
+    mockServer({ partner: null, fail: { 'GET /tokens': json({ status: 500, title: 'Error' }, 500) } });
     renderPage();
 
     expect(await screen.findByText('Could not load API tokens.')).toBeInTheDocument();

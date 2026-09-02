@@ -9,7 +9,7 @@ import {
   password as passwordRule,
 } from '../lib/useFormValidation';
 import { PASSWORD_HINT } from '../lib/passwordPolicy';
-import { api, apiDownload, tokenExpiry, describeActionFailure } from '../lib/api';
+import { api, apiDownload, tokenExpiry, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, hasPassword, isOps, isPartner, scopeLabel } from '../lib/rbac';
@@ -386,7 +386,7 @@ function NotificationPreferencesCard() {
   useEffect(() => {
     api<{ preferences: NotificationPreference[] }>('/me/notification-preferences')
       .then((d) => setPrefs(d.preferences))
-      .catch(() => setError('Could not load your notification preferences.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load your notification preferences.')));
   }, []);
 
   const toggle = async (eventType: string, channel: 'in_app' | 'email') => {
@@ -501,7 +501,7 @@ function ApiTokensCard() {
         setTokens(d.tokens);
         setTokensTruncated(d.truncated);
       })
-      .catch(() => setError('Could not load your API tokens.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load your API tokens.')));
 
   useEffect(() => {
     void load();
