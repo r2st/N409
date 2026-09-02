@@ -115,6 +115,11 @@ describe('historical volatility', () => {
 
   it('rejects a series shorter than two points', () => {
     expect(() => historicalVolatility([100])).toThrow();
+    // Two closes is one return, and a sample standard deviation of one
+    // observation is 0/0. It used to clear the guard and return NaN, which no
+    // downstream `> 0` refusal catches.
+    expect(() => historicalVolatility([100, 110])).toThrow(/three positive closes/);
+    expect(Number.isFinite(historicalVolatility([100, 110, 105]))).toBe(true);
   });
 });
 

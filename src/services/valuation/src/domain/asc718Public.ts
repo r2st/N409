@@ -273,7 +273,23 @@ export function binomialLattice(args: {
  */
 export function historicalVolatility(closes: number[], periodsPerYear = 252): number {
   const usable = closes.filter((c) => c > 0);
-  if (usable.length < 2) throw new Error('historicalVolatility needs at least two positive closes');
+  // Three closes, not two.
+  //
+  // The statistic is a *sample* standard deviation, so it needs two returns and
+  // therefore three prices. Two closes cleared this check, produced one return,
+  // and divided by `returns.length - 1` === 0 — and the numerator is zero too,
+  // so the answer was `NaN` rather than an error or an Infinity. NaN is not
+  // nullish and is not caught by any `> 0` refusal, so it flowed into
+  // Black-Scholes and landed a `null` fair value on a 200.
+  //
+  // `routes/asc718.ts` already refuses a two-close series before calling in,
+  // and has since R305 — but the guard belongs to the statistic, not to one of
+  // its callers, and the engine's own `volatility.historical_volatility` has
+  // asked for three prices since it was written. This is the two halves
+  // agreeing rather than a second opinion about the same question.
+  if (usable.length < 3) {
+    throw new Error('historicalVolatility needs at least three positive closes (two returns)');
+  }
   const returns: number[] = [];
   for (let i = 1; i < usable.length; i++) {
     const cur = usable[i]!;
