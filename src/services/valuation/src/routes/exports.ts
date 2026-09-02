@@ -6,9 +6,7 @@ import { canEditWorkingData, canReadValuation, isOps, valuationScope, type Princ
 import {
   exportValuations,
   findValuationById,
-  listValuations,
   parseSort,
-  type ValuationRow,
 } from '../repos/valuations.js';
 import { readerSideFor, ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { toCsv as recordsToCsv } from '../domain/csv.js';
@@ -115,8 +113,16 @@ export function exportColumnsVisibleTo<T extends string | { key: string }>(
   return columns.filter((c) => !OPS_ONLY_EXPORT_COLUMNS.has(typeof c === 'string' ? c : c.key));
 }
 
-/** PDF: a narrower projection that fits a printable table. */
-function pdfRowValues(v: ValuationRow): unknown[] {
+/**
+ * PDF: a narrower projection that fits a printable table.
+ *
+ * Typed to the export reader's row rather than to `ValuationRow` (R351, M8).
+ * The three formats of this one export used to be read by two different
+ * statements — CSV and XLSX through `exportValuations`, the PDF through
+ * `listValuations` — and every column below is in the narrow projection
+ * already, so nothing needed the wide one.
+ */
+function pdfRowValues(v: Record<string, unknown>): unknown[] {
   return [
     v.number,
     v.company_name,
@@ -124,7 +130,7 @@ function pdfRowValues(v: ValuationRow): unknown[] {
     v.state,
     v.paid_status,
     v.currency,
-    v.created_at?.toISOString?.() ?? v.created_at,
+    v.created_at instanceof Date ? v.created_at.toISOString() : (v.created_at ?? ''),
     v.due_date instanceof Date ? v.due_date.toISOString().slice(0, 10) : (v.due_date ?? ''),
     v.published_at instanceof Date ? v.published_at.toISOString().slice(0, 10) : (v.published_at ?? ''),
   ];
@@ -341,12 +347,29 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         .send(xlsx);
     }
 
-    const { items: fetchedItems } = await listValuations(deps.pool, valuationScope(principal), {
-      ...filters,
-      sort,
-      page: 1,
-      perPage: MAX_EXPORT_ROWS + 1,
-    });
+    /*
+     * The same reader the CSV and the XLSX arms use, one branch up (R351, M8).
+     *
+     * This arm went through `listValuations`, which is the *screen's* reader,
+     * and paid for two things a file download has no use for. It runs a
+     * `count(*)` over the whole filtered book alongside the page — deliberately,
+     * and in parallel, because a screen prints the total — and this caller
+     * destructured `items` and dropped the number on the floor. And it selects
+     * `*`: forty-odd columns of ten thousand engagements, read out of the table
+     * and parsed by the driver, to print the nine below.
+     *
+     * Unifying them is also the answer to an asymmetry. Three formats of one
+     * export were being answered by two different statements over the same
+     * filters, so the PDF and the CSV of a single click could disagree about
+     * which engagements are in the book — the shape R283 names as the thing to
+     * look for. They now cannot.
+     */
+    const fetchedItems = await exportValuations(
+      deps.pool,
+      valuationScope(principal),
+      { ...filters, sort },
+      MAX_EXPORT_ROWS + 1,
+    );
     const { rows: items, truncated } = truncationOf(fetchedItems);
     await recordListExport(principal, format, parsed.data, items.length, truncated);
     const pdf = tablePdf(
