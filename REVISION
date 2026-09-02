@@ -10522,3 +10522,103 @@
 #            population in the valuation service was re-read this round from a
 #            fresh brace-matching scan and every one is still argued in a comment
 #            beside it, which is why the marker sweep keeps not being worth it.
+#
+# R377 — Performance (M8), at `2fe1984..4388cbc`. Three findings, no migration,
+#            no index, 18 new tests. The sixteenth performance round, and the
+#            third in a row to leave SQL alone: the R231 diff over R375-R376
+#            adds no statement and no loop — R376's whole diff is counters on
+#            refusal paths — so the round went where R375 pointed and then to
+#            the one surface no round has profiled, the import parser.
+#
+#            The shape all three share: **work that is a constant per unit and
+#            the unit is a request or a cell.** None of them is a ratio, none is
+#            a plan, and none changes an answer — which is why all three guards
+#            assert the machinery rather than the output.
+#
+#            2fe1984 — the seven middleware layers on both Python units came off
+#            `BaseHTTPMiddleware`. `@app.middleware("http")` is that class, and
+#            its convenience — `call_next` handing the layer a fully-formed
+#            `Response` — is bought with a per-request, per-layer anyio task
+#            group and a pair of memory object streams, because a response a
+#            middleware may inspect has to be decoupled from the task producing
+#            it. Not one of these seven ever used it: they short-circuit with
+#            their own response (the token gate's 401, the body cap's 413, the
+#            limiter's 429), they replace `receive` (the body cap's replay), or
+#            they read the status and add headers on `http.response.start`. All
+#            three are what plain ASGI is for. Measured: a bare FastAPI
+#            `/health` is 0.29 ms, one such layer 0.45, seven 1.09, and seven
+#            pure-ASGI layers 0.32; the real apps go 1.27 -> 0.40 ms, the
+#            overhead itself 0.98 -> 0.11, on every request either unit serves.
+#            R375 measured this at 1.0 ms of a 1.63 ms bare `/health` and left
+#            it for its own round; this is that round. Each `make_*_middleware`
+#            now returns an `(app) -> app` factory registered with
+#            `add_middleware`, which inserts at the same end of the same list —
+#            so the ordering comments in both `main.py` files still mean what
+#            they say. Two consequences named in `app/asgi.py`: the body cap
+#            hands its replayed `receive` downstream instead of patching a
+#            Request's private `_receive`, and the unhandled-error layer
+#            re-raises once the status line is on the wire, because there is no
+#            500 left to send at that point. The guard counts anyio task groups
+#            created while a request is served (zero, against seven for a
+#            deliberate `BaseHTTPMiddleware` app as discriminator), walks the
+#            built stack for the class, and pins the count at seven — "no
+#            BaseHTTPMiddleware" is also true of a stack that lost its
+#            middleware. Behaviour is pinned by the four suites that passed
+#            unchanged across the rewrite.
+#
+#            218c0ff — the .xlsx import parser did two things per *cell*.
+#            `attr(tag, name)` built a `new RegExp` on every call for ten
+#            literal names, and the cell reader asks for two or three per `<c>`:
+#            a 20,000-row sheet of five columns compiled ~250,000 patterns for
+#            ten shapes, and `MAX_GRID_CELLS` allows two million cells. Cached
+#            by name in a `Map`, safe to share because none carries `g` and so
+#            none has a `lastIndex`. And `decodeXmlText` ran its entity pattern
+#            over every attribute value and every `<v>`, when every reference it
+#            resolves begins with `&` and a spreadsheet's cells are numbers,
+#            dates and holder names. 105.3 -> 72.6 ms on that sheet. The
+#            remaining profile is `elements`, the hand-written forward scan,
+#            which is shaped that way because the regex it replaced was
+#            quadratic — untouched.
+#
+#            4388cbc — `rowByColumn` built every cell of every imported row with
+#            `Object.defineProperty`. The call is right and it stays: a column
+#            headed `__proto__` is silently dropped by a plain store, which is
+#            an import losing a column while reporting success, and
+#            `capTableAdversarialImport` has pinned that since it was found.
+#            What was never intended is paying for it on `class`, `shares` and
+#            `price`. A descriptor write takes V8's slow path and can tip the
+#            object into dictionary mode, so the row is slower to *read*
+#            afterwards too — and every cell of an imported sheet is read at
+#            least once after this, by the mapping preview, the validator and
+#            the writer. 200,000 ten-column rows: 247 -> 38 ms. A plain
+#            assignment produces exactly the descriptor the call spelled out, so
+#            the two branches build the same object; the guard pins that
+#            equivalence beside the call count, so neither branch can be edited
+#            into disagreeing with the other.
+#
+#            Every one of the three guards was run against its own pre-fix
+#            source before being believed, and each carries a discriminator so a
+#            broken spy or counter cannot pass it. Both Python suites are green
+#            (engine-wrapper 3514 passed; the AI service's 29 failures are the
+#            documented pre-existing ones, all 429s from one shared limiter
+#            across a whole-suite run).
+#
+#            gap: `xmlEscape` + `stripInvalidXmlChars` are still six passes per
+#            cell on the *export* side. A single combined-class `test()` fast
+#            path was written and measured this round: 55.7 -> 53.0 ms on a
+#            10,000x7 workbook, ~5%, because the deflate dominates. Reverted —
+#            R351 and R375 both put this below the bar, and the character class
+#            would have to be kept in sync with two functions by hand. If it is
+#            ever taken, derive the class from their source in the guard.
+#            gap: `elements` allocates two substrings and an object per element
+#            and dominates the import profile after this round. It is linear and
+#            deliberately hand-written; a faster shape means giving up the
+#            generator, which is what makes the forward scan readable.
+#            gap: R375's own two remaining items are untouched and still stated:
+#            the `volatility`/`comparables` fan-outs bounded at four minutes and
+#            200 s (both caps sized against Node's socket destroy *deliberately*,
+#            so a budget reverses a stated decision rather than fixing an
+#            oversight), and the realtime hub's `broadcast` serialising one
+#            payload per connection.
+#            gap: `listCalculations` still ships `inputs` to the Calculations tab
+#            and to `qa.ts`, neither of which reads it — R322's note, unchanged.
