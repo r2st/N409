@@ -8706,7 +8706,9 @@
 #            per document, so it is a change to the library's model, not to
 #            this call site.
 # R359 — Cross-cutting concern audit (M4), authorization boundaries. Four
-#            fixes plus a census, no migration, 30 new tests, at
+#            fixes plus a census, no migration, 29 new test cases (16 written
+#            plus the census's 13, four of which are `it.each` over the four
+#            doors), at
 #            `bc850840..a7710463`.
 #
 #            The concern swept was **re-authentication**: the password prompt
