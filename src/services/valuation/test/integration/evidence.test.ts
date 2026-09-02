@@ -1,12 +1,29 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import { inflateRawSync } from 'node:zlib';
 import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
-/** Minimal reader: central directory → { name → utf8 body }. */
+/**
+ * Minimal reader: central directory → { name → utf8 body }.
+ *
+ * INFLATES, BECAUSE THE BUNDLE DEFLATES (R344, methodology M5). This walked
+ * the central directory and read `compressed_size` bytes out of each local
+ * header as UTF-8, which is only the entry's content while the writer stores
+ * it. R330 taught `buildZip` to deflate — losslessly, and with both headers
+ * still describing the original bytes — and did not teach this, so every
+ * assertion in this file that reads a document out of the bundle has since
+ * been handed a deflate stream and thrown `SyntaxError: Unexpected token` out
+ * of `JSON.parse`. Four of the eight tests here, red on `main` since.
+ *
+ * The method comes off the entry rather than being assumed, so the mixed
+ * bundle `buildZip` now writes — deflated JSON beside a report PDF it stores
+ * because deflating it would not pay — reads correctly either way, and a later
+ * change to that policy does not break this file again.
+ */
 function zipEntries(buf: Buffer): Map<string, string> {
   const eocd = buf.subarray(buf.length - 22);
   expect(eocd.readUInt32LE(0)).toBe(0x06054b50);
@@ -17,13 +34,17 @@ function zipEntries(buf: Buffer): Map<string, string> {
     const nameLen = buf.readUInt16LE(p + 28);
     const extraLen = buf.readUInt16LE(p + 30);
     const commentLen = buf.readUInt16LE(p + 32);
-    const size = buf.readUInt32LE(p + 24);
+    const method = buf.readUInt16LE(p + 10);
+    const size = buf.readUInt32LE(p + 20);
     const offset = buf.readUInt32LE(p + 42);
     const name = buf.subarray(p + 46, p + 46 + nameLen).toString('utf8');
     const localNameLen = buf.readUInt16LE(offset + 26);
     const localExtraLen = buf.readUInt16LE(offset + 28);
     const start = offset + 30 + localNameLen + localExtraLen;
-    out.set(name, buf.subarray(start, start + size).toString('utf8'));
+    const raw = buf.subarray(start, start + size);
+    // 0 = stored, 8 = deflate. Raw deflate, not zlib: a zip member carries no
+    // zlib header, which is what `inflateRawSync` is for.
+    out.set(name, (method === 8 ? inflateRawSync(raw) : raw).toString('utf8'));
     p += 46 + nameLen + extraLen + commentLen;
   }
   return out;
