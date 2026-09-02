@@ -9866,3 +9866,121 @@
 #            `user_password_reset_sent` row does name the new one, which is why
 #            this is a trail that has to be reconstructed rather than one that
 #            is missing.
+
+# R371 — Data-flow tracing (M2). Three findings, no migration, 11 new tests, all
+#            three on one path: a per-unit conclusion travelling from the
+#            arithmetic that struck it to the surface that states it, and losing
+#            digits somewhere in between.
+#
+#            **Six per-unit conclusions rounded away above a hundred dollars.**
+#            Every per-unit fair value the ASC 718 tab prints is `round4` on the
+#            server — `asc718.ts` rounds `fairValuePerOption`, `asc718Public.ts`
+#            rounds each ESPP component and each RSU/TSR `fairValuePerUnit` —
+#            and each is quoted at four decimals by the exhibit that carries it
+#            (`sampleEngagements.ts`: `money(g.fairValuePerOption, 4)`). The tab
+#            rendered all six through `lib/pipeline`'s `formatMoney`, which
+#            chooses its digits by magnitude: four under $100 and *none* at or
+#            above it.
+#
+#            A $124.5678 grant-date fair value — ordinary after a late round —
+#            read `$125` on the screen the analyst reads the result from,
+#            against `$124.5678` in the exhibit generated from the same run. The
+#            ESPP row is worse than a rounding, because it is drawn as an
+#            addition: its purchase discount, call and put are read as summing
+#            to the FV/share beside them, and at three figures all four
+#            collapsed to whole dollars that no longer do. Below $100 the same
+#            formatter drops trailing zeros, so $2.5000 printed `$2.50` and
+#            $2.5013 printed `$2.5013` — two figures of equal precision rendered
+#            as if one were less exact. The per-unit cells now take
+#            `formatPerShare`; the totals keep `formatMoney`, because widening a
+#            six-figure compensation cost pads digits nobody reads.
+#
+#            `perShareRenderCensus.test.ts` is why this survived a census
+#            written for exactly this defect. Its token spells *one* figure
+#            under four names — `fmv_per_share`, `fmvPerShare`, `from_fmv`,
+#            `to_fmv` — and no ASC 718 field contains any of them, so the whole
+#            per-unit family was outside the rule the census exists to state.
+#            The file is even named in the census's own comment as one that
+#            "holds the figure only in a type", which is true of the 409A
+#            conclusion and false of the six it prints. A second token now
+#            carries the same rule over `fairValuePerOption`,
+#            `fairValuePerUnit`, `fair_value_per_share` and the three ESPP
+#            components.
+#
+#            **The bridge section states the conclusion in a currency it was
+#            never computed in.** `renderBridgeSection` formatted both per-share
+#            ends of the walk, the change between them and each of the four LMDI
+#            contributions through a hard-coded
+#            `$${v.toLocaleString('en-US', { maximumFractionDigits: 2 })}`.
+#            `BridgeTab` carried the identical pair and was fixed; this is its
+#            server-side twin and was left — on the section that goes into the
+#            signed opinion rather than onto a screen. A walk from £2.5013 to
+#            £2.5104 would read "$2.50 → $2.51, a change of $0.01" above an
+#            attribution table whose contributions (£0.0100 and −£0.0009 on the
+#            case now pinned) both printed $0.00 under a total change of $0.01:
+#            a waterfall that visibly does not close. It now takes the
+#            engagement's currency and formats at `PER_SHARE_DIGITS`, which
+#            `reportSummary` states once for the server the way `lib/format`
+#            states it for the client.
+#
+#            **An ESPP row whose three components need not add to the figure
+#            beside them.** `esppFairValue` rounded the three ASC 718-50
+#            components and the total independently, leaving a residual of up to
+#            1.5e-4 between them; on a grid of ordinary prices and discounts
+#            about a quarter of the points land on one. The stated fair value is
+#            now the sum of the stated components, rather than a separately
+#            rounded sum of the unrounded ones. Closed that way round because
+#            each component is a figure a reviewer recomputes directly — d·S,
+#            (1−d)·Call, d·Put — and pushing the residual into one of them takes
+#            that away, as well as being able to drive a put component negative
+#            when the true one is under a hundredth of a cent. The conclusion
+#            moves by at most $0.00015 a share.
+#
+#            The existing decomposition test asserted `toBeCloseTo(sum, 3)` — a
+#            tolerance a decimal wider than the figures it compares, which is
+#            how the residual sat under a green test for as long as it did.
+#
+#            **What the round looked at and did not find.** `compound_factor` is
+#            reached by all eight engine modules that build a compounding
+#            factor, and its three refusals (base ≤ 0, overflow, flush-to-zero)
+#            hold. `sensitivity`'s memo is keyed on the *set* of mutations and
+#            `_apply` writes each lever into a disjoint part of the payload, so
+#            the transposed-pair collapse is sound; `delta_from_base` divides
+#            the unrounded base on both the one-way and two-way paths.
+#            `marketableValuePerShare` inverts the identity `compute`
+#            guarantees. `gift_estate`'s value bridge closes on
+#            `concluded_value`, and `percent_interest` is a percentage in the
+#            questionnaire, in `giftEstateRequest`, in the engine and in the
+#            exhibit label — four surfaces, one unit. `dloc`'s premium inversion
+#            and its 6-decimal reporting agree to within a ulp. The
+#            roll-forward's calibration trail is a running total at every step
+#            and its final value is `rolled_equity_value`.
+#
+#            gap: the option-grant row on the same tab is the same shape as the
+#            ESPP one and is *not* closed. `asc718.ts` states
+#            `fairValuePerOption` at four decimals and computes
+#            `totalCompensationCost` from the unrounded figure, so
+#            "FV/option × expected-to-vest" misses the printed total by up to
+#            $2.20 on the 44,000-option grant in its own test. Left alone
+#            deliberately: unlike the ESPP components, the total here is an
+#            expense that hits the P&L, and restating it to make a display row
+#            multiply out is a different decision from restating a per-share
+#            figure by $0.00015. It wants an "amounts may not sum due to
+#            rounding" line or a decision, not a quiet change.
+#            gap: `renderBridgeSection` still has no production caller — the
+#            `value_bridge` section is offered to the report and nothing
+#            appends it. The fix above is to a renderer that does not run, which
+#            is worth saying plainly; it was fixed rather than recorded because
+#            the twin it disagreed with is live and the divergence is the thing.
+#            gap: `_prior_required_return` in `rollforward.py` selects the prior
+#            income discount rate on truthiness (`if income.get("discount_rate")`
+#            and `if dr:`), so a stored rate of exactly zero falls through to the
+#            20% default as though the field were absent. A zero cost of capital
+#            is not a valuation input, so nothing reachable is wrong today; it is
+#            the same swallowed-zero shape `n409-silent-catch-census` records.
+#            gap: the gift & estate questionnaire asks `percent_interest` with an
+#            explicit "as a percentage — 25 for a quarter interest" hint and asks
+#            `dloc`/`dlom` two fields below with no unit hint at all, under a
+#            `fraction` rule. The form refuses `25` there, so the hundredfold is
+#            caught rather than concluded — but the refusal is the only thing
+#            that says which unit the field wanted.
