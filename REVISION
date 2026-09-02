@@ -10912,3 +10912,107 @@
 #            console offers Withdraw only on `sent`/`in_progress` — so a
 #            submitted-then-withdrawn link reads `submitted` and offers Convert.
 #            The product has said what it means; the server agrees with it.
+#
+# R381 — Cross-cutting concern audit (M4). No findings in the code, two
+#            censuses, and both close a rule this estate had already decided
+#            and was enforcing by hand. M4's premise is that a concern is
+#            applied unevenly across a family; on a codebase this swept the
+#            productive question was not "which handler is wrong" but "which
+#            rule is held by a list somebody has to remember to add to".
+#
+#            304b7a6 — the relationship between two authorized ids. R185's
+#            fourth finding was `DELETE /organizations/:id/entities/:valuationId`
+#            authorizing both ids and comparing neither: the handler cleared
+#            `organization_id` unconditionally, so a stale tab or a script
+#            iterating the wrong roster detached an engagement from a roll-up
+#            the request never named, and answered 204. Three sweeps walked past
+#            it because it is not an authorization bug — every id passes its own
+#            check — and `docs/route-authorization-audit.md` has named "routes
+#            with two path params" as the place to look for the next one ever
+#            since, with nothing asking. Stated over the route table now: a
+#            route whose second path parameter names a resource row is tied when
+#            the handler passes the parent through the child's lookup
+#            (`findComparableItem(pool, valuation.id, itemId)`) or compares the
+#            child's parent column back against it (`grant.valuation_id !== id`).
+#            Both spellings are in use and neither is preferred; what is not
+#            allowed is neither. 28 routes in scope, all 28 tied, one exemption
+#            — `GET /valuations/:id/bridge/:compareId`, two peer engagements
+#            rather than a parent and a child, so there is nothing to tie the
+#            second to.
+#
+#            Two things the detector had to be taught, each found by mutating a
+#            route that was already correct and watching the census stay green.
+#            The registration's own URL is a string in the handler body naming
+#            both parameters, so `app.delete('/api/v1/organizations/:id/
+#            entities/:valuationId'` reads as a call carrying parent and child
+#            together and the route this census exists for would have certified
+#            itself; string literals are blanked. And `recordFundEvent(client,
+#            live, …, { fund_id: id, position_id: pid })` names both ids and asks
+#            the database nothing — a payload is not a lookup — so object
+#            literals are dropped and callback-taking wrappers with them. The
+#            call scan matches parentheses rather than nesting depth in a regex:
+#            a depth-limited regex matched the *registration*, whose arguments
+#            are the entire handler, and `matchAll` does not look inside a match
+#            it has already made, so one greedy hit swallowed every real call in
+#            the file and reported every route tied.
+#
+#            47fa116 — half the metric instruments are wired by nothing.
+#            `src/observability` and `src/clients` hold twelve registrars in one
+#            shape: a module-level `let counter: Counter | null = null`, a
+#            `register…Metrics(registry)` called from `app.ts`, recorders writing
+#            through `counter?.inc(…)`. The optional call is deliberate — a
+#            recorder must not throw in a path it only observes — and it is also
+#            the whole failure mode: a registrar nobody calls records nothing,
+#            forever, nothing thrown and nothing logged, with `/metrics` missing
+#            a series that was never there to be missed. Four of the eight
+#            observability modules assert `app.ts` contains their own call, one
+#            hand-added line from the round that wrote the module;
+#            `apiTokenAuth`, `inboundWebhooks`, `scimRequests` and `ssoOutcomes`
+#            assert nothing about it, because their suites register the counter
+#            on a local registry themselves and pass identically whether or not
+#            the service ever does. All twelve are wired today; four of them by
+#            nothing that would notice if they stopped being. Comments are
+#            stripped from `app.ts` before the search, since every one of these
+#            calls is introduced by a paragraph naming it. The second rule —
+#            a registrar that *assigns* an instrument exports the reset seam
+#            that drops it between suites — is asked of the registrar rather
+#            than of the file: `registerCircuitMetrics` mints pull-based gauges
+#            and leaves nothing behind, and shares `clients/internal.ts` with
+#            `registerUpstreamMetrics`, which does not.
+#
+#            came back clean: the four ETag/If-Match anchors (`capTable`,
+#            `companyProfile`, `engineInputs`, `params`) run an identical
+#            five-line `parseIfMatch` / `malformedIfMatch` / `expectedVersion`
+#            dance and every one emits `ETag` on both the read and the write —
+#            no anchor makes a client re-GET to find its next validator. The two
+#            Python services' seven-layer middleware stacks are registered in the
+#            same order with the same factories and all seven guard
+#            `scope["type"] != "http"` (R377). Every dynamic `SET` builder in
+#            `src/repos` either seeds the clause list (`updated_at = now()`, or
+#            `updated_by`) or returns the current row on an empty patch, so no
+#            PATCH body can reach Postgres as `SET  WHERE`. The five body-supplied
+#            foreign ids that name a row on another table — `prior_valuation_id`,
+#            the fund and debt `valuation_id` links, `document_ids` on the
+#            anonymize route, `parent_org_id` — are each authorized or
+#            kind-checked before the write, and the two ops-only link routes
+#            state in prose why an out-of-scope id is a 404 rather than a 422.
+#
+#            gap: R376's argument for minting `log_alert_lines_total` at
+#            registration — "a counter publishes no series until something
+#            increments it, and a rule cannot tell an absent series from a
+#            healthy one" — is made in `prometheus.ts` and applied there and in
+#            `registerCircuitMetrics`, and by none of the eight observability
+#            counters. Left because absence is the healthy state for all eight:
+#            seven are refusals-only and the eighth carries `accepted`, which any
+#            live box produces within a request or two of boot. It is the same
+#            question one step down, and the answer differs by what the series
+#            means rather than by which round wrote it.
+#            gap: the sub-resource census reads the source, so it sees what is
+#            written rather than what is mounted — the partner API's fifteen
+#            routes register from `PARTNER_API_ENDPOINTS` via `define()` and are
+#            outside its population, as they are outside all four other source
+#            scans. None of them takes two ids today; the coverage census names
+#            that surface explicitly, and this one does not.
+#            gap: nothing holds the *third* path parameter. No route has one, so
+#            the census asks only about `params[1]`, and a route with two nested
+#            children would be half-checked without saying so.
