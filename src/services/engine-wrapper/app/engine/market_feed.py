@@ -317,6 +317,34 @@ class _FetchAbandoned(Exception):
     """
 
 
+class _NothingObserved(Exception):
+    """The provider answered, and there was nothing in the answer.
+
+    Its own type for the same reason `_FetchAbandoned` is: it ends in the same
+    `_fallback`, and the sentence differs. yfinance does not raise for a symbol
+    it does not carry — `Ticker("NOTREAL").history(...)` is an empty frame, not
+    an error — so a delisted ticker, a typo, and a window with no trading days
+    in it all came back as `{"source": "yfinance", "prices": []}`: a 200
+    labelled *observed*, with nothing observed in it.
+
+    That label is read three ways downstream and every one of them was wrong
+    about it. `_fallback` writes the only log line this tier emits about a feed
+    that is not answering, and this branch skipped it. The valuation service's
+    `market_feed_answers_total` counts `source == "yfinance"` as `outcome=
+    "observed"`, which is the one series an alert on a dead market feed can be
+    written against. And `routes/asc718.ts` recorded the answer as observed and
+    then, four lines later, returned `source: 'fallback', warning: 'no live
+    prices for ticker'` — the route's own verdict, disagreeing with the counter
+    it had just written.
+
+    Only the price series is asked this question. A financials or multiples
+    answer with some fields missing is ordinary — a provider carries EBITDA for
+    one issuer and not the next — so "empty" is not a thing that shape can be.
+    A price history over a requested window either has bars or the source has
+    nothing for this ticker, and there is no third reading.
+    """
+
+
 def _run_bounded(call, timeout_s: float):
     """Run `call` on a throwaway thread and wait at most `timeout_s` for it.
 
@@ -506,6 +534,13 @@ class MarketFeedClient:
             # provider did not refuse us, we stopped waiting. See
             # `FETCH_TIMEOUT_S` for why waiting is not an option here.
             return self._fallback(f"market-data fetch abandoned: {exc}", fallback, kind=kind, ticker=ticker)
+        except _NothingObserved as exc:
+            # Not cached, and deliberately: every other `_fallback` branch here
+            # is uncached too, and a ticker the source did not carry this
+            # minute may be one it carries next week. The memo exists to spare
+            # the provider repeated work for an answer we have; there is no
+            # answer here to have.
+            return self._fallback(str(exc), fallback, kind=kind, ticker=ticker)
         except Exception as exc:  # network/parse/library errors → fallback, never raise
             return self._fallback(
                 f"market-data fetch failed: {exc}", fallback, kind=kind, ticker=ticker
@@ -518,12 +553,21 @@ class MarketFeedClient:
         key = ("prices", ticker, start, end)
 
         def produce(p):
+            bars = p.prices(ticker, start, end)
+            if not bars:
+                # See `_NothingObserved`. The reason names the window as well as
+                # the ticker, because the two readings an operator has to choose
+                # between are "this symbol is gone" and "we asked for a range
+                # with no trading days in it".
+                raise _NothingObserved(
+                    f"market-data source carried no prices for {ticker} between {start} and {end}"
+                )
             return {
                 "source": "yfinance",
                 "ticker": ticker,
                 "start": start,
                 "end": end,
-                "prices": p.prices(ticker, start, end),
+                "prices": bars,
             }
 
         return self._cached(key, produce, fallback)

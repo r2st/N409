@@ -118,6 +118,75 @@ def test_provider_error_falls_back():
     assert "network down" in out["warning"]
 
 
+class EmptyPricesProvider:
+    """yfinance for a symbol it does not carry: an empty frame, not an error."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def prices(self, ticker, start, end):
+        self.calls += 1
+        return []
+
+
+def test_an_empty_price_series_is_a_fallback_not_an_observation():
+    """`Ticker("NOTREAL").history(...)` returns nothing and raises nothing, so a
+    delisted ticker used to come back as `source: "yfinance"` with `prices: []`
+    — a 200 labelled observed, with nothing observed in it. That label is what
+    the valuation service counts as `outcome="observed"` and what
+    `routes/asc718.ts` then contradicted four lines later by returning its own
+    `source: 'fallback'`."""
+    c = MarketFeedClient(provider=EmptyPricesProvider())
+    out = c.get_historical_prices("NOTREAL", "2026-01-01", "2026-02-01")
+    assert out["source"] == "fallback"
+    assert "NOTREAL" in out["warning"]
+    assert "2026-01-01" in out["warning"] and "2026-02-01" in out["warning"]
+
+
+def test_an_empty_price_series_reaches_the_log(caplog):
+    """The fallback log line is the only record this tier emits about a feed
+    that is not answering, and this branch went straight past it."""
+    c = MarketFeedClient(provider=EmptyPricesProvider())
+    with caplog.at_level("WARNING"):
+        c.get_historical_prices("NOTREAL", "2026-01-01", "2026-02-01")
+    events = [r for r in caplog.records if getattr(r, "event", None) == "market_feed_fallback"]
+    assert len(events) == 1
+    assert events[0].ticker == "NOTREAL"
+    assert events[0].feed_kind == "prices"
+
+
+def test_an_empty_price_series_is_not_memoised():
+    """Every other fallback branch is uncached, and a ticker the source did not
+    carry this minute may be one it carries next week."""
+    stub = EmptyPricesProvider()
+    c = MarketFeedClient(provider=stub)
+    c.get_historical_prices("NOTREAL", "2026-01-01", "2026-02-01")
+    c.get_historical_prices("NOTREAL", "2026-01-01", "2026-02-01")
+    assert stub.calls == 2
+
+
+def test_the_callers_own_figures_still_ride_the_fallback():
+    c = MarketFeedClient(provider=EmptyPricesProvider())
+    out = c.get_historical_prices(
+        "NOTREAL", "2026-01-01", "2026-02-01", fallback={"prices": [{"date": "x"}]}
+    )
+    assert out["source"] == "fallback"
+    assert out["prices"] == [{"date": "x"}]
+
+
+def test_a_financials_answer_with_missing_fields_is_still_an_observation():
+    """Only the price series is asked this question. A provider that carries
+    EBITDA for one issuer and not the next is ordinary, and calling that a
+    market-data outage would make the counter useless."""
+
+    class SparseProvider:
+        def financials(self, ticker):
+            return {"market_cap": None, "beta": None}
+
+    out = MarketFeedClient(provider=SparseProvider()).get_company_financials("DDOG")
+    assert out["source"] == "yfinance"
+
+
 def test_unknown_metric_falls_back():
     c = MarketFeedClient(provider=StubProvider())
     out = c.get_company_multiples(["DDOG"], metrics=["bogus"])

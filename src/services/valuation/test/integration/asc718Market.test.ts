@@ -36,7 +36,15 @@ const SERIES = [
 ];
 
 type FeedMode =
-  'live' | 'fallback_source' | 'two_closes' | 'flat' | 'one_usable' | 'no_prices' | 'undated' | 'error';
+  | 'live'
+  | 'fallback_source'
+  | 'two_closes'
+  | 'flat'
+  | 'one_usable'
+  | 'no_prices'
+  | 'undated'
+  | 'unknown_source'
+  | 'error';
 
 describe.runIf(dbUp)('ASC 718 — public market feed', () => {
   let ctx: TestApp;
@@ -74,6 +82,10 @@ describe.runIf(dbUp)('ASC 718 — public market feed', () => {
           };
         case 'no_prices':
           return { source: 'yfinance' };
+        case 'unknown_source':
+          // A word for `source` this service has never seen. The engine has two
+          // today; nothing on this side of the wire is told when it grows a third.
+          return { source: 'stooq', prices: SERIES };
         case 'undated':
           return { source: 'yfinance', prices: SERIES.map(({ close }) => ({ close })) };
         default:
@@ -293,6 +305,31 @@ describe.runIf(dbUp)('ASC 718 — public market feed', () => {
     const res = await price(id, publicBody({ default_grant_date_fair_value: 90, default_volatility: 0.4 }));
     expect(res.statusCode).toBe(200);
     expect(res.json().asc718.market.warning).toBe('no live prices for ticker');
+  });
+
+  it('does not read a source it has never heard of as an observation', async () => {
+    /*
+     * R382, methodology M5. This arm used to ask `source !== 'fallback'`, so
+     * anything that was not literally the fallback word was measured on and
+     * counted `observed` — including a word the engine had grown since. The
+     * other two call sites ask `=== 'yfinance'`, and the two spellings fail in
+     * opposite directions: this one turned an unrecognised payload into a
+     * priced grant and a healthy-looking counter, which is precisely the
+     * outage `market_feed_answers_total` exists to make visible.
+     */
+    feedMode = 'unknown_source';
+    const id = await seedValuation();
+    const res = await price(id, publicBody({ default_grant_date_fair_value: 90, default_volatility: 0.4 }));
+    expect(res.statusCode).toBe(200);
+    expect(res.json().asc718.market).toMatchObject({
+      underlying: null,
+      volatility: null,
+      source: 'fallback',
+      warning: 'no live prices for ticker',
+    });
+
+    const metrics = await ctx.app.inject({ method: 'GET', url: '/metrics' });
+    expect(metrics.body).toMatch(/market_feed_answers_total\{kind="prices",outcome="fallback"\} [1-9]/);
   });
 
   it('survives a feed that is down, and says which of the two it was', async () => {

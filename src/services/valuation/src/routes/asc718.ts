@@ -232,8 +232,13 @@ async function resolveMarket(
     // three: the measurement carries on against the caller's substituted
     // defaults and answers 200. The counter is the one place a feed that has
     // stopped returning observed prices shows up for every caller at once.
-    recordMarketFeedAnswer('prices', res.source === 'fallback' ? 'fallback' : 'observed');
-    if (res.source !== 'fallback' && closes.length >= 2) {
+    // Tested positively — `=== 'yfinance'`, the way the other two call sites
+    // ask it — rather than `!== 'fallback'`. The two spellings agree only while
+    // the engine has exactly two words for `source`, and they fail in opposite
+    // directions: a third word read as `observed` is an outage this counter
+    // cannot see, which is the one thing it exists for.
+    recordMarketFeedAnswer('prices', res.source === 'yfinance' ? 'observed' : 'fallback');
+    if (res.source === 'yfinance' && closes.length >= 2) {
       /*
        * A sample standard deviation needs two returns, so three closes. Two
        * closes clear the length check and then divide by zero:

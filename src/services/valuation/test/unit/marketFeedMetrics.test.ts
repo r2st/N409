@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MetricsRegistry } from '@n409/shared';
 import {
@@ -62,6 +63,37 @@ describe('the market-feed outcome counter', () => {
     // module-level for the same reason `reportRender`'s is, so an unregistered
     // record has to be a no-op.
     expect(() => recordMarketFeedAnswer('prices', 'fallback')).not.toThrow();
+  });
+
+  it('is decided the same way at every call site', () => {
+    /*
+     * R382, methodology M5. Three routes classify the same payload, and until
+     * this census two of them asked `source === 'yfinance'` while `asc718.ts`
+     * asked `source !== 'fallback'`. The spellings agree only while the engine
+     * has exactly two words for `source`, and they fail in opposite
+     * directions: the allow-list reads a third word as `fallback`, which
+     * over-reports an outage and is visible; the deny-list reads it as
+     * `observed`, which is an outage this counter cannot see — the one thing
+     * it exists for.
+     *
+     * Asked of the source rather than by exercising each route, because the
+     * two that got it right have always got it right and the failure is a
+     * fourth call site written to the wrong pattern. `unreachable` is decided
+     * by a catch block rather than by a payload, so only the payload arms are
+     * in the population.
+     */
+    const files = ['src/routes/asc718.ts', 'src/routes/comparables.ts', 'src/routes/volatility.ts'];
+    const arms: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
+      for (const [, arm] of source.matchAll(/recordMarketFeedAnswer\([^)]*?,\s*([^)]*\?[^)]*)\)/g)) {
+        arms.push(arm.replace(/\s+/g, ' ').trim());
+      }
+    }
+    expect(arms.length).toBe(3);
+    for (const arm of arms) {
+      expect(arm).toContain("=== 'yfinance' ? 'observed' : 'fallback'");
+    }
   });
 
   it('carries no ticker label', () => {
