@@ -28,8 +28,8 @@ function uploadFile(
 }
 
 /** A workbook shaped like a real export: a title line above the header row. */
-function capTableWorkbook(): Buffer {
-  return buildXlsx([
+async function capTableWorkbook(): Promise<Buffer> {
+  return await buildXlsx([
     {
       name: 'Summary',
       columns: [{ header: 'note' }],
@@ -320,7 +320,7 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
     it('parses an uploaded .xlsx into sheets of rows', async () => {
       const res = await uploadFile(app, uploadUrl(), client.token, {
         filename: 'captable.xlsx',
-        content: capTableWorkbook(),
+        content: await capTableWorkbook(),
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
       expect(res.statusCode).toBe(200);
@@ -339,7 +339,7 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
     it('feeds uploaded rows straight into the existing import flow', async () => {
       const uploaded = await uploadFile(app, uploadUrl(), client.token, {
         filename: 'captable.xlsx',
-        content: capTableWorkbook(),
+        content: await capTableWorkbook(),
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
       const rows = uploaded.json().sheets[1].rows;
@@ -398,7 +398,7 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       // row at all, because by then the preamble and header are gone.
       const uploaded = await uploadFile(app, uploadUrl(), client.token, {
         filename: 'captable.xlsx',
-        content: capTableWorkbook(),
+        content: await capTableWorkbook(),
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
       const sheet = uploaded.json().sheets[1];
@@ -541,7 +541,7 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
        * states a property of our reader rather than of the file, which reads
        * as our defect and names nothing the uploader could do.
        */
-      const damaged = buildZip([
+      const damaged = await buildZip([
         {
           name: '_rels/.rels',
           data: Buffer.from(

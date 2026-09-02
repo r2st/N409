@@ -326,7 +326,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
           .send(recordsToCsv(exportColumnsVisibleTo(CSV_COLUMNS, principal), rows));
       }
       const xlsxColumns = exportColumnsVisibleTo(XLSX_LIST_COLUMNS, principal);
-      const xlsx = buildXlsx(
+      const xlsx = await buildXlsx(
         [
           {
             name: 'Valuations',
@@ -459,7 +459,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       calculation,
     });
 
-    const xlsx = buildXlsx(sheets, { mtime: generatedAt });
+    const xlsx = await buildXlsx(sheets, { mtime: generatedAt });
 
     /*
      * The working papers leaving, on the record.

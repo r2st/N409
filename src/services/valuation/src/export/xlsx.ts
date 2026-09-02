@@ -358,8 +358,14 @@ export interface XlsxOptions {
   mtime?: Date;
 }
 
-/** Builds a complete .xlsx workbook. At least one sheet is required. */
-export function buildXlsx(sheets: XlsxSheet[], opts: XlsxOptions = {}): Buffer {
+/**
+ * Builds a complete .xlsx workbook. At least one sheet is required.
+ *
+ * Asynchronous because an .xlsx is a ZIP and `buildZip` compresses off the
+ * event loop — see the note on `deflateRawAsync` there. Nothing here awaits
+ * anything else: the XML is still built in one synchronous pass.
+ */
+export async function buildXlsx(sheets: XlsxSheet[], opts: XlsxOptions = {}): Promise<Buffer> {
   if (sheets.length === 0) throw new Error('buildXlsx requires at least one sheet');
 
   const taken = new Set<string>();

@@ -39,7 +39,7 @@ interface WorkbookParts {
   sheets: Array<{ path: string; data: string }>;
 }
 
-function build(parts: WorkbookParts): Buffer {
+async function build(parts: WorkbookParts): Promise<Buffer> {
   const entries = [
     { name: 'xl/workbook.xml', data: parts.workbook },
     { name: 'xl/sharedStrings.xml', data: sharedStringsPart() },
@@ -47,7 +47,7 @@ function build(parts: WorkbookParts): Buffer {
   ];
   if (parts.rels !== undefined) entries.push({ name: 'xl/_rels/workbook.xml.rels', data: parts.rels });
   if (parts.styles !== undefined) entries.push({ name: 'xl/styles.xml', data: parts.styles });
-  return buildZip(entries);
+  return await buildZip(entries);
 }
 
 describe('column references', () => {
@@ -89,11 +89,11 @@ describe('the magic bytes', () => {
 });
 
 describe('resolving where a sheet lives', () => {
-  it('falls back to sheetN.xml when there is no relationships part at all', () => {
+  it('falls back to sheetN.xml when there is no relationships part at all', async () => {
     // Some writers omit it. The positional guess is wrong in general, which is
     // why it is a fallback — but it is right for the single-sheet file that
     // omitting it usually accompanies.
-    const wb = build({
+    const wb = await build({
       workbook: `<?xml version="1.0"?><workbook><sheets><sheet name="Only" sheetId="1" r:id="rId1"/></sheets></workbook>`,
       sheets: [{ path: 'xl/worksheets/sheet1.xml', data: SIMPLE_SHEET }],
     });
@@ -102,8 +102,8 @@ describe('resolving where a sheet lives', () => {
     expect(sheets[0]!.rows.length).toBeGreaterThan(0);
   });
 
-  it('resolves a target rooted at the package root', () => {
-    const wb = build({
+  it('resolves a target rooted at the package root', async () => {
+    const wb = await build({
       workbook: `<?xml version="1.0"?><workbook><sheets><sheet name="Rooted" sheetId="1" r:id="rId1"/></sheets></workbook>`,
       rels: `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="/xl/worksheets/odd.xml"/></Relationships>`,
       sheets: [{ path: 'xl/worksheets/odd.xml', data: SIMPLE_SHEET }],
@@ -111,8 +111,8 @@ describe('resolving where a sheet lives', () => {
     expect(readXlsx(wb).map((s) => s.name)).toEqual(['Rooted']);
   });
 
-  it('resolves a target written with a ./ prefix', () => {
-    const wb = build({
+  it('resolves a target written with a ./ prefix', async () => {
+    const wb = await build({
       workbook: `<?xml version="1.0"?><workbook><sheets><sheet name="Dotted" sheetId="1" r:id="rId1"/></sheets></workbook>`,
       rels: `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="./worksheets/dotted.xml"/></Relationships>`,
       sheets: [{ path: 'xl/worksheets/dotted.xml', data: SIMPLE_SHEET }],
@@ -120,8 +120,8 @@ describe('resolving where a sheet lives', () => {
     expect(readXlsx(wb).map((s) => s.name)).toEqual(['Dotted']);
   });
 
-  it('accepts a bare id attribute where the namespace prefix was dropped', () => {
-    const wb = build({
+  it('accepts a bare id attribute where the namespace prefix was dropped', async () => {
+    const wb = await build({
       workbook: `<?xml version="1.0"?><workbook><sheets><sheet name="Bare" sheetId="1" id="rId1"/></sheets></workbook>`,
       rels: `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/bare.xml"/></Relationships>`,
       sheets: [{ path: 'xl/worksheets/bare.xml', data: SIMPLE_SHEET }],
@@ -129,8 +129,8 @@ describe('resolving where a sheet lives', () => {
     expect(readXlsx(wb).map((s) => s.name)).toEqual(['Bare']);
   });
 
-  it('names an unnamed sheet by its position rather than leaving it blank', () => {
-    const wb = build({
+  it('names an unnamed sheet by its position rather than leaving it blank', async () => {
+    const wb = await build({
       workbook: `<?xml version="1.0"?><workbook><sheets><sheet sheetId="1" r:id="rId1"/></sheets></workbook>`,
       rels: `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`,
       sheets: [{ path: 'xl/worksheets/sheet1.xml', data: SIMPLE_SHEET }],
@@ -138,8 +138,8 @@ describe('resolving where a sheet lives', () => {
     expect(readXlsx(wb).map((s) => s.name)).toEqual(['Sheet1']);
   });
 
-  it('refuses a zip that is not a workbook at all', () => {
-    const notAWorkbook = buildZip([{ name: 'readme.txt', data: 'hello' }]);
+  it('refuses a zip that is not a workbook at all', async () => {
+    const notAWorkbook = await buildZip([{ name: 'readme.txt', data: 'hello' }]);
     expect(() => readXlsx(notAWorkbook)).toThrow(XlsxReadError);
     expect(() => readXlsx(notAWorkbook)).toThrow(/xl\/workbook\.xml/);
   });
@@ -150,7 +150,7 @@ describe('resolving where a sheet lives', () => {
   });
 });
 
-describe('number formats', () => {
+describe('number formats', async () => {
   const workbook = `<?xml version="1.0"?><workbook><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`;
   const rels = `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`;
   const sheet = `<?xml version="1.0"?><worksheet><sheetData>
@@ -158,20 +158,20 @@ describe('number formats', () => {
     <row r="2"><c r="A2" s="1"><v>45352</v></c><c r="B2"><v>7</v></c></row>
   </sheetData></worksheet>`;
 
-  const read = (styles: string | undefined) =>
+  const read = async (styles: string | undefined) =>
     readXlsx(
-      build({ workbook, rels, styles, sheets: [{ path: 'xl/worksheets/sheet1.xml', data: sheet }] }),
+      await build({ workbook, rels, styles, sheets: [{ path: 'xl/worksheets/sheet1.xml', data: sheet }] }),
     )[0]!;
 
-  it('treats a custom format containing date tokens as a date', () => {
+  it('treats a custom format containing date tokens as a date', async () => {
     const styles = `<?xml version="1.0"?><styleSheet>
       <numFmts><numFmt numFmtId="180" formatCode="dd mmm yyyy"/></numFmts>
       <cellXfs><xf numFmtId="0"/><xf numFmtId="180"/></cellXfs>
     </styleSheet>`;
-    expect(read(styles).rows[0]!.alpha).toBe('2024-03-01');
+    expect((await read(styles)).rows[0]!.alpha).toBe('2024-03-01');
   });
 
-  it('does not mistake a currency format for a date because of its literal text', () => {
+  it('does not mistake a currency format for a date because of its literal text', async () => {
     // The quoted literal is stripped before the token test, so a format like
     // `"May"#,##0.00` is money — a serial rendered as a date here would turn a
     // dollar figure into a day.
@@ -179,20 +179,20 @@ describe('number formats', () => {
       <numFmts><numFmt numFmtId="181" formatCode="&quot;May&quot;#,##0.00"/></numFmts>
       <cellXfs><xf numFmtId="0"/><xf numFmtId="181"/></cellXfs>
     </styleSheet>`;
-    expect(read(styles).rows[0]!.alpha).toBe('45352');
+    expect((await read(styles)).rows[0]!.alpha).toBe('45352');
   });
 
-  it('leaves an escaped token alone as well', () => {
+  it('leaves an escaped token alone as well', async () => {
     // `\d` is a literal `d`, not a day token.
     const styles = `<?xml version="1.0"?><styleSheet>
       <numFmts><numFmt numFmtId="182" formatCode="0\\d"/></numFmts>
       <cellXfs><xf numFmtId="0"/><xf numFmtId="182"/></cellXfs>
     </styleSheet>`;
-    expect(read(styles).rows[0]!.alpha).toBe('45352');
+    expect((await read(styles)).rows[0]!.alpha).toBe('45352');
   });
 
-  it('falls back to plain serials when the styles part is missing', () => {
-    expect(read(undefined).rows[0]!.alpha).toBe('45352');
+  it('falls back to plain serials when the styles part is missing', async () => {
+    expect((await read(undefined)).rows[0]!.alpha).toBe('45352');
   });
 
   /**
@@ -214,12 +214,12 @@ describe('number formats', () => {
     ['a conditional format', '[&gt;1000]0,&quot;K&quot;;0'],
   ];
 
-  it.each(NOT_DATE_FORMATS)('does not read %s as a date format', (_label, code) => {
+  it.each(NOT_DATE_FORMATS)('does not read %s as a date format', async (_label, code) => {
     const styles = `<?xml version="1.0"?><styleSheet>
       <numFmts><numFmt numFmtId="190" formatCode="${code}"/></numFmts>
       <cellXfs><xf numFmtId="0"/><xf numFmtId="190"/></cellXfs>
     </styleSheet>`;
-    expect(read(styles).rows[0]!.alpha).toBe('45352');
+    expect((await read(styles)).rows[0]!.alpha).toBe('45352');
   });
 
   /**
@@ -234,12 +234,12 @@ describe('number formats', () => {
     ['a locale-qualified date', '[$-409]d mmm yyyy'],
   ];
 
-  it.each(DATE_FORMATS)('still reads %s as a date format', (_label, code) => {
+  it.each(DATE_FORMATS)('still reads %s as a date format', async (_label, code) => {
     const styles = `<?xml version="1.0"?><styleSheet>
       <numFmts><numFmt numFmtId="191" formatCode="${code}"/></numFmts>
       <cellXfs><xf numFmtId="0"/><xf numFmtId="191"/></cellXfs>
     </styleSheet>`;
-    expect(read(styles).rows[0]!.alpha).not.toBe('45352');
+    expect((await read(styles)).rows[0]!.alpha).not.toBe('45352');
   });
 });
 
@@ -274,9 +274,9 @@ describe('format-code classification', () => {
   });
 });
 
-describe('cell contents', () => {
-  const wrap = (rows: string) =>
-    build({
+describe('cell contents', async () => {
+  const wrap = async (rows: string) =>
+    await build({
       workbook: `<?xml version="1.0"?><workbook><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`,
       rels: `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`,
       sheets: [
@@ -287,47 +287,47 @@ describe('cell contents', () => {
       ],
     });
 
-  it('reads a shared-string index that does not resolve as blank', () => {
+  it('reads a shared-string index that does not resolve as blank', async () => {
     // A corrupt or truncated sharedStrings part must leave a blank cell, not
     // the string "undefined" rendered into a spreadsheet column. One index is
     // past the end of the table and the other is not a number at all.
     const sheets = readXlsx(
-      wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+      await wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
             <row r="2"><c r="A2" t="s"><v>99</v></c><c r="B2" t="s"><v>x</v></c></row>`),
     );
     expect(sheets[0]!.headers).toEqual(['alpha', 'beta']);
     expect(sheets[0]!.rows).toEqual([]);
   });
 
-  it('reads a boolean cell as TRUE or FALSE', () => {
+  it('reads a boolean cell as TRUE or FALSE', async () => {
     const sheets = readXlsx(
-      wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+      await wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
             <row r="2"><c r="A2" t="b"><v>1</v></c><c r="B2" t="b"><v>0</v></c></row>`),
     );
     expect(sheets[0]!.rows[0]).toEqual({ alpha: 'TRUE', beta: 'FALSE' });
   });
 
-  it('treats an error cell as blank rather than as the text of the error', () => {
+  it('treats an error cell as blank rather than as the text of the error', async () => {
     // `#REF!` in a shares column would parse as a company name.
     const sheets = readXlsx(
-      wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+      await wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
             <row r="2"><c r="A2" t="e"><v>#REF!</v></c><c r="B2"><v>5</v></c></row>`),
     );
     expect(sheets[0]!.rows[0]!.alpha).toBe('');
     expect(sheets[0]!.rows[0]!.beta).toBe('5');
   });
 
-  it('reads a formula cell with no cached value as blank, and one with a value', () => {
+  it('reads a formula cell with no cached value as blank, and one with a value', async () => {
     const sheets = readXlsx(
-      wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+      await wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
             <row r="2"><c r="A2" t="str"><f>CONCAT()</f></c><c r="B2" t="str"><v>done</v></c></row>`),
     );
     expect(sheets[0]!.rows[0]).toEqual({ alpha: '', beta: 'done' });
   });
 
-  it('positions a cell with no reference after the one before it', () => {
+  it('positions a cell with no reference after the one before it', async () => {
     const sheets = readXlsx(
-      wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+      await wrap(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
             <row r="2"><c><v>7</v></c><c><v>8</v></c></row>`),
     );
     expect(sheets[0]!.rows[0]).toEqual({ alpha: '7', beta: '8' });

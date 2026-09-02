@@ -68,8 +68,8 @@ function buildDeflatedZip(entries: DeflatedEntry[]): Buffer {
 }
 
 describe('zipReader', () => {
-  it('reads stored entries', () => {
-    const zip = buildZip([
+  it('reads stored entries', async () => {
+    const zip = await buildZip([
       { name: 'a.txt', data: 'hello' },
       { name: 'nested/b.xml', data: '<x/>' },
     ]);
@@ -85,13 +85,13 @@ describe('zipReader', () => {
     expect(entries.get('big.csv')?.toString('utf8')).toBe(body);
   });
 
-  it('preserves UTF-8 entry names and content', () => {
-    const entries = readZip(buildZip([{ name: 'ünïcode/€.txt', data: 'café — 日本' }]));
+  it('preserves UTF-8 entry names and content', async () => {
+    const entries = readZip(await buildZip([{ name: 'ünïcode/€.txt', data: 'café — 日本' }]));
     expect(entries.get('ünïcode/€.txt')?.toString('utf8')).toBe('café — 日本');
   });
 
-  it('finds the central directory past a trailing archive comment', () => {
-    const zip = buildZip([{ name: 'a.txt', data: 'hi' }]);
+  it('finds the central directory past a trailing archive comment', async () => {
+    const zip = await buildZip([{ name: 'a.txt', data: 'hi' }]);
     const withComment = Buffer.concat([zip, Buffer.from('trailing junk', 'utf8')]);
     withComment.writeUInt16LE(13, withComment.length - 13 - 2);
     expect(readZip(withComment).get('a.txt')?.toString('utf8')).toBe('hi');
@@ -102,16 +102,16 @@ describe('zipReader', () => {
     expect(() => readZip(Buffer.alloc(4))).toThrow(/too small/i);
   });
 
-  it('rejects a truncated archive rather than returning partial entries', () => {
-    const zip = buildZip([{ name: 'a.txt', data: 'hello world' }]);
+  it('rejects a truncated archive rather than returning partial entries', async () => {
+    const zip = await buildZip([{ name: 'a.txt', data: 'hello world' }]);
     // Keep the EOCD but corrupt the central-directory offset it points at.
     const broken = Buffer.from(zip);
     broken.writeUInt32LE(zip.length - 10, broken.length - 22 + 16);
     expect(() => readZip(broken)).toThrow(ZipReadError);
   });
 
-  it('reports encrypted entries instead of emitting ciphertext', () => {
-    const zip = Buffer.from(buildZip([{ name: 'a.txt', data: 'secret' }]));
+  it('reports encrypted entries instead of emitting ciphertext', async () => {
+    const zip = Buffer.from(await buildZip([{ name: 'a.txt', data: 'secret' }]));
     const centralOffset = zip.readUInt32LE(zip.length - 22 + 16);
     zip.writeUInt16LE(0x0001, centralOffset + 8); // general-purpose bit 0
     expect(() => readZip(zip)).toThrow(/encrypted/i);
@@ -129,8 +129,8 @@ describe('zipReader', () => {
    * Which part each reader picks is not worth reasoning about: OPC gives a
    * package one part per name, so this is a file that was never a workbook.
    */
-  it('refuses an archive carrying two parts of the same name', () => {
-    const zip = buildZip([
+  it('refuses an archive carrying two parts of the same name', async () => {
+    const zip = await buildZip([
       { name: 'xl/worksheets/sheet1.xml', data: '<benign/>' },
       { name: 'xl/worksheets/sheet1.xml', data: '<substituted/>' },
     ]);
@@ -138,8 +138,8 @@ describe('zipReader', () => {
     expect(() => readZip(zip)).toThrow(/appears twice/i);
   });
 
-  it('names the duplicated part through the same quoting every other refusal uses', () => {
-    const zip = buildZip([
+  it('names the duplicated part through the same quoting every other refusal uses', async () => {
+    const zip = await buildZip([
       { name: 'a"b.xml', data: '1' },
       { name: 'a"b.xml', data: '2' },
     ]);
@@ -151,10 +151,10 @@ describe('zipReader', () => {
     }
   });
 
-  it('still reads an archive whose only repeated name is a directory marker', () => {
+  it('still reads an archive whose only repeated name is a directory marker', async () => {
     // Directory records are skipped before the check, and a writer that emits
     // `nested/` alongside `nested/b.xml` is not naming one part twice.
-    const zip = buildZip([
+    const zip = await buildZip([
       { name: 'nested/', data: '' },
       { name: 'nested/', data: '' },
       { name: 'nested/b.xml', data: '<x/>' },
@@ -162,8 +162,8 @@ describe('zipReader', () => {
     expect(readZip(zip).get('nested/b.xml')?.toString('utf8')).toBe('<x/>');
   });
 
-  it('reports an unsupported compression method by number', () => {
-    const zip = Buffer.from(buildZip([{ name: 'a.txt', data: 'x' }]));
+  it('reports an unsupported compression method by number', async () => {
+    const zip = Buffer.from(await buildZip([{ name: 'a.txt', data: 'x' }]));
     const centralOffset = zip.readUInt32LE(zip.length - 22 + 16);
     zip.writeUInt16LE(14, centralOffset + 10); // LZMA
     expect(() => readZip(zip)).toThrow(/unsupported compression method 14/i);
@@ -180,9 +180,9 @@ describe('zipReader', () => {
    * caller says they are: 65,535 bytes long, a quote that closes the quoting
    * around it, and a right-to-left override that reverses the sentence after it.
    */
-  it('bounds and scrubs the entry name it quotes back', () => {
-    const hostile = (name: string) => {
-      const zip = Buffer.from(buildZip([{ name, data: 'x' }]));
+  it('bounds and scrubs the entry name it quotes back', async () => {
+    const hostile = async (name: string) => {
+      const zip = Buffer.from(await buildZip([{ name, data: 'x' }]));
       const centralOffset = zip.readUInt32LE(zip.length - 22 + 16);
       zip.writeUInt16LE(0x0001, centralOffset + 8);
       try {
@@ -193,11 +193,11 @@ describe('zipReader', () => {
       throw new Error('expected a refusal');
     };
 
-    expect(hostile(`${'n'.repeat(4_000)}.xml`).length).toBeLessThan(200);
-    expect(hostile('sheet\u202Elmx.exe')).not.toContain('\u202E');
+    expect((await hostile(`${'n'.repeat(4_000)}.xml`)).length).toBeLessThan(200);
+    expect(await hostile('sheet\u202Elmx.exe')).not.toContain('\u202E');
     // The quote cannot end the quoting the message puts around the name.
-    expect(hostile('a".xml')).toContain('a?.xml');
-    expect(hostile('a\u0007b.xml')).toContain('a?b.xml');
+    expect(await hostile('a".xml')).toContain('a?.xml');
+    expect(await hostile('a\u0007b.xml')).toContain('a?b.xml');
   });
 });
 
@@ -249,12 +249,12 @@ describe('zipReader decompression budget', () => {
     expect(() => readZip(drip)).toThrow(/expands past the \d+ MB decompression limit/);
   });
 
-  it('applies the budget to stored entries too', () => {
+  it('applies the budget to stored entries too', async () => {
     // Method 0 does not go through zlib, so it needs its own accounting or it
     // is a hole in the budget the deflate path enforces. A stored entry cannot
     // out-run the archive that carries it, so this one is shown an explicit
     // budget rather than the size-derived default.
-    const stored = buildZip([{ name: 'a.txt', data: 'x'.repeat(2 * MIB) }]);
+    const stored = await buildZip([{ name: 'a.txt', data: 'x'.repeat(2 * MIB) }]);
     expect(readZip(stored).get('a.txt')?.length).toBe(2 * MIB);
     expect(() => readZip(stored, { maxInflatedBytes: MIB })).toThrow(
       /expands past the 1 MB decompression limit/,

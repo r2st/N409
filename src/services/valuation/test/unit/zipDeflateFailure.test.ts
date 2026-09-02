@@ -9,23 +9,32 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * evidence bundle, and every .xlsx export, because an .xlsx is a ZIP of XML
  * parts built by this same writer.
  *
- * `deflateRawSync` allocates a second copy of the entry, so it throws for
- * reasons that have nothing to do with the caller — a buffer over
+ * `deflateRaw` allocates a second copy of the entry, so it fails for reasons
+ * that have nothing to do with the caller — a buffer over
  * `buffer.kMaxLength`, `ENOMEM` on a box already under pressure. That is
  * exactly when the bundle matters, and the fallback was already sitting in
  * `deflateWins`' return type.
+ *
+ * Stubbed in the callback form since R375, because that is the one the writer
+ * calls: compression moved off the event loop onto libuv's threadpool, so the
+ * refusal now arrives as a rejected promise rather than a throw. The fallback
+ * has to hold either way, which is the whole point of this file.
  */
-const deflateRawSync = vi.hoisted(() => vi.fn());
+const deflateRaw = vi.hoisted(() =>
+  vi.fn((_data: Buffer, _opts: unknown, cb: (err: Error | null, out?: Buffer) => void) =>
+    cb(null, Buffer.alloc(0)),
+  ),
+);
 vi.mock('node:zlib', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:zlib')>();
-  return { ...actual, deflateRawSync };
+  return { ...actual, deflateRaw };
 });
 
 const { buildZip, configureZipLogging, crc32 } = await import('../../src/export/zip.js');
 const { readZip } = await import('../../src/domain/zipReader.js');
 
 afterEach(() => {
-  deflateRawSync.mockReset();
+  deflateRaw.mockReset();
   configureZipLogging(null);
 });
 
@@ -37,12 +46,12 @@ const BODY = JSON.stringify(
 );
 
 describe('a zip entry zlib will not compress', () => {
-  it('ships stored rather than taking the whole archive down', () => {
-    deflateRawSync.mockImplementation(() => {
-      throw new Error('Cannot create a Buffer larger than 0x7fffffff bytes');
-    });
+  it('ships stored rather than taking the whole archive down', async () => {
+    deflateRaw.mockImplementation((_data, _opts, cb) =>
+      cb(new Error('Cannot create a Buffer larger than 0x7fffffff bytes')),
+    );
 
-    const zip = buildZip([{ name: 'calculations.json', data: BODY }]);
+    const zip = await buildZip([{ name: 'calculations.json', data: BODY }]);
 
     // Method 0 in both headers, and the bytes are exactly what went in.
     expect(zip.readUInt16LE(8)).toBe(0);
@@ -50,23 +59,21 @@ describe('a zip entry zlib will not compress', () => {
     expect(read.get('calculations.json')?.toString('utf8')).toBe(BODY);
   });
 
-  it('leaves the checksum describing the original bytes', () => {
-    deflateRawSync.mockImplementation(() => {
-      throw new Error('ENOMEM');
-    });
-    const zip = buildZip([{ name: 'calculations.json', data: BODY }]);
+  it('leaves the checksum describing the original bytes', async () => {
+    deflateRaw.mockImplementation((_data, _opts, cb) => cb(new Error('ENOMEM')));
+    const zip = await buildZip([{ name: 'calculations.json', data: BODY }]);
     expect(zip.readUInt32LE(14)).toBe(crc32(Buffer.from(BODY, 'utf8')));
   });
 
-  it('does not stop the entries after it from being compressed', () => {
+  it('does not stop the entries after it from being compressed', async () => {
     let calls = 0;
-    deflateRawSync.mockImplementation((data: Buffer) => {
+    deflateRaw.mockImplementation((data: Buffer, _opts, cb) => {
       calls += 1;
-      if (calls === 1) throw new Error('ENOMEM');
-      return Buffer.from(data.subarray(0, 8)); // stands in for a smaller result
+      if (calls === 1) return cb(new Error('ENOMEM'));
+      return cb(null, Buffer.from(data.subarray(0, 8))); // stands in for a smaller result
     });
 
-    const zip = buildZip([
+    const zip = await buildZip([
       { name: 'a.json', data: BODY },
       { name: 'b.json', data: BODY },
     ]);
@@ -77,25 +84,23 @@ describe('a zip entry zlib will not compress', () => {
     expect(zip.readUInt16LE(8)).toBe(0);
   });
 
-  it('says so, because a swallowed compression failure is a silent one', () => {
-    deflateRawSync.mockImplementation(() => {
-      throw new Error('ENOMEM');
-    });
+  it('says so, because a swallowed compression failure is a silent one', async () => {
+    deflateRaw.mockImplementation((_data, _opts, cb) => cb(new Error('ENOMEM')));
     const warn = vi.fn();
     configureZipLogging({ warn });
 
-    buildZip([{ name: 'calculations.json', data: BODY }]);
+    await buildZip([{ name: 'calculations.json', data: BODY }]);
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toMatchObject({ bytes: Buffer.byteLength(BODY) });
   });
 
-  it('writes nothing at all when every entry compresses', () => {
-    deflateRawSync.mockImplementation((data: Buffer) => Buffer.from(data.subarray(0, 8)));
+  it('writes nothing at all when every entry compresses', async () => {
+    deflateRaw.mockImplementation((data: Buffer, _opts, cb) => cb(null, Buffer.from(data.subarray(0, 8))));
     const warn = vi.fn();
     configureZipLogging({ warn });
 
-    buildZip([{ name: 'calculations.json', data: BODY }]);
+    await buildZip([{ name: 'calculations.json', data: BODY }]);
 
     expect(warn).not.toHaveBeenCalled();
   });

@@ -3,7 +3,22 @@
  * node's own `zlib`). UTF-8 filenames (general-purpose flag bit 11), CRC-32 per
  * the ZIP appnote, and per-entry deflate — see {@link deflateWins}.
  */
-import { crc32 as zlibCrc32, deflateRawSync } from 'node:zlib';
+import { promisify } from 'node:util';
+import { crc32 as zlibCrc32, deflateRaw } from 'node:zlib';
+
+/**
+ * Compression off the event loop (R375, methodology M8).
+ *
+ * `deflateRawSync` did the work on the thread that also answers every other
+ * request. At the list-export cap — 10 000 rows, six columns — the workbook's
+ * parts are 27 ms of a 40 ms `buildXlsx`, so two thirds of building a workbook
+ * was the API holding still; the evidence bundle's `calculations.json` is 40 ms
+ * on its own. `zlib`'s callback form runs on libuv's threadpool, which is where
+ * a CPU-bound byte pass belongs on a server. The archive is byte-identical —
+ * same level, same input, same order — and the entries are still deflated one
+ * at a time, so a bundle cannot claim four pool threads for itself.
+ */
+const deflateRawAsync = promisify(deflateRaw);
 
 export interface ZipEntry {
   name: string;
@@ -119,10 +134,10 @@ export function configureZipLogging(log: ZipIssueLog | null): void {
  * its own header. Comparing the two lengths answers that without a list of
  * extensions to keep up to date, and the archive is never larger than it was.
  */
-function deflateWins(data: Buffer): Buffer | null {
+async function deflateWins(data: Buffer): Promise<Buffer | null> {
   if (data.length < MIN_DEFLATE_BYTES) return null;
   try {
-    const deflated = deflateRawSync(data, { level: DEFLATE_LEVEL });
+    const deflated = await deflateRawAsync(data, { level: DEFLATE_LEVEL });
     return deflated.length < data.length ? deflated : null;
   } catch (err) {
     /*
@@ -133,7 +148,7 @@ function deflateWins(data: Buffer): Buffer | null {
      * bundle an auditor is downloading and, far more often, every .xlsx export
      * on the platform, because an .xlsx is a ZIP of XML parts built here.
      *
-     * `deflateRawSync` allocates a second copy of the entry and can throw for
+     * `deflateRaw` allocates a second copy of the entry and can throw for
      * reasons that have nothing to do with the caller: a buffer over
      * `buffer.kMaxLength`, or `ENOMEM` on a box already under pressure — and a
      * 2.7 MB `calculations.json` on a 3.8 GB host is exactly when the bundle
@@ -160,7 +175,7 @@ function deflateWins(data: Buffer): Buffer | null {
  * already reads, which is what makes an .xlsx this writes still parseable by
  * the importer on the other side of the platform.
  */
-export function buildZip(entries: ZipEntry[]): Buffer {
+export async function buildZip(entries: ZipEntry[]): Promise<Buffer> {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -172,7 +187,7 @@ export function buildZip(entries: ZipEntry[]): Buffer {
     // original bytes, whichever method carries them — that is the appnote's
     // rule and it is what lets a reader verify what it inflated.
     const crc = crc32(data);
-    const deflated = deflateWins(data);
+    const deflated = await deflateWins(data);
     const stored = deflated ?? data;
     const method = deflated ? METHOD_DEFLATE : METHOD_STORED;
     const { time, date } = dosDateTime(entry.mtime ?? new Date());

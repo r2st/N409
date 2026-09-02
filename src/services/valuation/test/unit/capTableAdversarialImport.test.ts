@@ -60,8 +60,8 @@ const codes = (issues: CapTableIssue[]) => issues.map((i) => `${i.severity}/${i.
 const errorsOf = (issues: CapTableIssue[]) => issues.filter((i) => i.severity === 'error');
 
 /** A one-sheet workbook of literal cell XML, for the shapes `buildXlsx` cannot write. */
-function workbookOf(sheetData: string): Buffer {
-  return buildZip([
+async function workbookOf(sheetData: string): Promise<Buffer> {
+  return await buildZip([
     {
       name: 'xl/workbook.xml',
       data: '<?xml version="1.0"?><workbook><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
@@ -183,12 +183,12 @@ describe('adversarial imports — duplicate headers', () => {
     });
   });
 
-  it('names a repeat the same way in a workbook as in a CSV', () => {
+  it('names a repeat the same way in a workbook as in a CSV', async () => {
     const grid = [
       ['class', 'Shares (2)', 'Shares', 'Shares'],
       ['Common', '1', '2', '3'],
     ];
-    const [sheet] = readXlsx(workbookOf(sheetRows(grid)));
+    const [sheet] = readXlsx(await workbookOf(sheetRows(grid)));
     expect(sheet?.headers).toEqual(parseCsvSheet(grid.map((r) => r.join(',')).join('\n')).headers);
     expect(sheet?.rows[0]).toEqual({ class: 'Common', 'Shares (2)': '1', Shares: '2', 'Shares (3)': '3' });
   });
@@ -415,8 +415,8 @@ describe('adversarial imports — a holder name that is a formula', () => {
     }
   });
 
-  it('writes it into a workbook as text, never as a formula cell', () => {
-    const book = buildXlsx([
+  it('writes it into a workbook as text, never as a formula cell', async () => {
+    const book = await buildXlsx([
       {
         name: 'Cap table',
         columns: [{ header: 'Security', format: 'text' }],
@@ -569,9 +569,9 @@ describe('adversarial imports — partial failures are not partial', () => {
 });
 
 describe('adversarial imports — workbook shapes', () => {
-  it('reads every sheet of a workbook, so the caller picks rather than the reader', () => {
+  it('reads every sheet of a workbook, so the caller picks rather than the reader', async () => {
     const sheets = readXlsx(
-      buildZip([
+      await buildZip([
         {
           name: 'xl/workbook.xml',
           data:
@@ -603,13 +603,13 @@ describe('adversarial imports — workbook shapes', () => {
     expect(sheets[1]?.rows).toEqual([{ class: 'Common', shares: '1000' }]);
   });
 
-  it('reads a merged header cell as the one cell it is', () => {
+  it('reads a merged header cell as the one cell it is', async () => {
     // A merge stores the value in the top-left cell and leaves the rest of the
     // span empty, so a header merged across two columns names one column and
     // drops the other — which is what the sheet says, and what dropping a blank
     // header does everywhere else.
     const [sheet] = readXlsx(
-      workbookOf(
+      await workbookOf(
         '<row r="1"><c r="A1" t="inlineStr"><is><t>Holdings</t></is></c></row>' +
           sheetRows([[], ['class', 'shares'], ['Common', '1000']]).replace('<row r="1"></row>', ''),
       ),
@@ -618,9 +618,9 @@ describe('adversarial imports — workbook shapes', () => {
     expect(sheet?.rows).toEqual([{ class: 'Common', shares: '1000' }]);
   });
 
-  it("reads a formula's cached result and does not try to evaluate the formula", () => {
+  it("reads a formula's cached result and does not try to evaluate the formula", async () => {
     const [sheet] = readXlsx(
-      workbookOf(
+      await workbookOf(
         '<row r="1"><c r="A1" t="inlineStr"><is><t>class</t></is></c>' +
           '<c r="B1" t="inlineStr"><is><t>shares</t></is></c>' +
           '<c r="C1" t="inlineStr"><is><t>note</t></is></c></row>' +
@@ -632,14 +632,14 @@ describe('adversarial imports — workbook shapes', () => {
     expect(sheet?.rows[0]).toEqual({ class: 'Common', shares: '8000000', note: 'ab' });
   });
 
-  it('reads a formula with no cached result as blank, and the row is then refused', () => {
+  it('reads a formula with no cached result as blank, and the row is then refused', async () => {
     // A workbook written by a generator rather than by Excel carries formulas
     // with no `<v>`. There is no value to read and evaluating the formula is
     // not something this reader does, so the cell is blank — and a blank share
     // count is a table with no denominator, which the validator refuses by
     // name rather than dividing by.
     const [sheet] = readXlsx(
-      workbookOf(
+      await workbookOf(
         '<row r="1"><c r="A1" t="inlineStr"><is><t>class</t></is></c>' +
           '<c r="B1" t="inlineStr"><is><t>shares</t></is></c></row>' +
           '<row r="2"><c r="A2" t="inlineStr"><is><t>Common</t></is></c>' +
@@ -651,9 +651,9 @@ describe('adversarial imports — workbook shapes', () => {
     expect(codes(validation.issues)).toContain('error/no_shares');
   });
 
-  it('reads an error cell as blank rather than as the text of the error', () => {
+  it('reads an error cell as blank rather than as the text of the error', async () => {
     const [sheet] = readXlsx(
-      workbookOf(
+      await workbookOf(
         '<row r="1"><c r="A1" t="inlineStr"><is><t>class</t></is></c>' +
           '<c r="B1" t="inlineStr"><is><t>shares</t></is></c></row>' +
           '<row r="2"><c r="A2" t="inlineStr"><is><t>Common</t></is></c>' +
@@ -663,10 +663,9 @@ describe('adversarial imports — workbook shapes', () => {
     expect(sheet?.rows[0]?.shares).toBe('');
   });
 
-  it('refuses a ZIP that is not a workbook by saying which part is missing', () => {
-    expect(() => readXlsx(buildZip([{ name: 'readme.txt', data: 'not a workbook' }]))).toThrow(
-      /xl\/workbook\.xml is missing/,
-    );
+  it('refuses a ZIP that is not a workbook by saying which part is missing', async () => {
+    const notAWorkbook = await buildZip([{ name: 'readme.txt', data: 'not a workbook' }]);
+    expect(() => readXlsx(notAWorkbook)).toThrow(/xl\/workbook\.xml is missing/);
   });
 });
 
@@ -824,7 +823,7 @@ describe('adversarial imports — the totals row every real export carries', () 
     expect(codes(validation.issues)).not.toContain('warning/totals_row_skipped');
   });
 
-  it('reads the workbook this platform exports back into the table it came from', () => {
+  it('reads the workbook this platform exports back into the table it came from', async () => {
     /*
      * The round trip the export exists for: download the valuation workbook,
      * change a share count, upload it again. The Cap table sheet's headers and
@@ -834,7 +833,7 @@ describe('adversarial imports — the totals row every real export carries', () 
      * survives the *file*, whatever wrote it.
      */
     const [sheet] = readXlsx(
-      workbookOf(
+      await workbookOf(
         sheetRows([
           ['class', 'type', 'shares', 'price', 'invested', 'liq', 'sen', 'conv'],
           ['Common', 'common', '6000000', '0.0001', '', '', '', ''],

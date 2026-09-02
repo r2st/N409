@@ -366,7 +366,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     entries.unshift({ name: 'manifest.json', data: toJson(manifest) });
     for (const entry of entries) entry.mtime = generatedAt;
 
-    const zip = buildZip(entries);
+    const zip = await buildZip(entries);
 
     // The export itself is an auditable act.
     await withTransaction(deps.pool, (client) =>

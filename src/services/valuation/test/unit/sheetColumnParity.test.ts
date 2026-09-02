@@ -73,7 +73,7 @@ const FIXTURES: Array<{ name: string; header: string[]; data: string[] }> = [
 const csvOf = (rows: string[][]) => rows.map((r) => r.join(',')).join('\n');
 
 /** The same rows as a one-sheet workbook of inline strings. */
-function xlsxOf(rows: string[][]): Buffer {
+async function xlsxOf(rows: string[][]): Promise<Buffer> {
   const sheet =
     '<?xml version="1.0"?><worksheet><sheetData>' +
     rows
@@ -91,7 +91,7 @@ function xlsxOf(rows: string[][]): Buffer {
       )
       .join('') +
     '</sheetData></worksheet>';
-  return buildZip([
+  return await buildZip([
     {
       name: 'xl/workbook.xml',
       data:
@@ -110,10 +110,10 @@ function xlsxOf(rows: string[][]): Buffer {
 
 describe('CSV and XLSX name a sheet’s columns identically', () => {
   for (const { name, header, data } of FIXTURES) {
-    it(name, () => {
+    it(name, async () => {
       const grid = [header, data];
       const csv = parseCsvSheet(csvOf(grid));
-      const [xlsx] = readXlsx(xlsxOf(grid));
+      const [xlsx] = readXlsx(await xlsxOf(grid));
 
       // Asserted against each other first: that is the property, and it fails
       // whichever of the two readers moved.
@@ -132,9 +132,9 @@ describe('CSV and XLSX name a sheet’s columns identically', () => {
    * header, so `gridToRows` looks for the first row with two populated cells;
    * a pasted CSV has no such preamble and its first row is the header.
    */
-  it('differ only in where they look for the header row', () => {
+  it('differ only in where they look for the header row', async () => {
     const grid = [['Acme Inc — capitalization'], [], ['Class', 'Shares'], ['Common', '10']];
-    const [xlsx] = readXlsx(xlsxOf(grid));
+    const [xlsx] = readXlsx(await xlsxOf(grid));
     expect(xlsx!.headers).toEqual(['Class', 'Shares']);
     expect(parseCsvSheet(csvOf(grid)).headers).toEqual(['Acme Inc — capitalization']);
   });

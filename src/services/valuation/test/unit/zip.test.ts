@@ -110,8 +110,8 @@ describe('crc32', () => {
 });
 
 describe('buildZip', () => {
-  it('produces a parseable archive with intact contents and checksums', () => {
-    const zip = buildZip([
+  it('produces a parseable archive with intact contents and checksums', async () => {
+    const zip = await buildZip([
       { name: 'manifest.json', data: '{"format":"n409-evidence-bundle/1"}' },
       { name: 'report-v3.pdf', data: Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]) },
     ]);
@@ -128,7 +128,7 @@ describe('buildZip', () => {
    * These pin the two halves of the per-entry decision so a later change cannot
    * quietly go back to storing everything or start inflating the PDF.
    */
-  it('deflates a compressible entry and stores an incompressible one', () => {
+  it('deflates a compressible entry and stores an incompressible one', async () => {
     const json = JSON.stringify(
       Array.from({ length: 400 }, (_, i) => ({ id: i, class: `class_${i % 12}`, shares: 1000 + i })),
       null,
@@ -145,7 +145,7 @@ describe('buildZip', () => {
         return (x >>> 0) & 0xff;
       }),
     );
-    const zip = buildZip([
+    const zip = await buildZip([
       { name: 'calculations.json', data: json },
       { name: 'report-v3.pdf', data: noise },
     ]);
@@ -165,21 +165,21 @@ describe('buildZip', () => {
     for (const e of entries) expect(crc32(Buffer.from(e.data))).toBe(e.crc);
   });
 
-  it('round-trips through the platform’s own zip reader', () => {
+  it('round-trips through the platform’s own zip reader', async () => {
     const xml = `<?xml version="1.0"?><sheetData>${'<row><c><v>12345</v></c></row>'.repeat(300)}</sheetData>`;
-    const read = readZip(buildZip([{ name: 'xl/worksheets/sheet1.xml', data: xml }]));
+    const read = readZip(await buildZip([{ name: 'xl/worksheets/sheet1.xml', data: xml }]));
     expect(read.get('xl/worksheets/sheet1.xml')?.toString('utf8')).toBe(xml);
   });
 
-  it('handles an empty archive', () => {
-    const zip = buildZip([]);
+  it('handles an empty archive', async () => {
+    const zip = await buildZip([]);
     expect(zip.length).toBe(22);
     expect(parseZip(zip)).toEqual([]);
   });
 
-  it('preserves utf-8 names and binary content byte-for-byte', () => {
+  it('preserves utf-8 names and binary content byte-for-byte', async () => {
     const payload = Buffer.from(Array.from({ length: 512 }, (_, i) => i % 256));
-    const entries = parseZip(buildZip([{ name: 'π/evidence—файл.bin', data: payload }]));
+    const entries = parseZip(await buildZip([{ name: 'π/evidence—файл.bin', data: payload }]));
     expect(entries[0]!.name).toBe('π/evidence—файл.bin');
     expect(Buffer.compare(entries[0]!.data, payload)).toBe(0);
   });
