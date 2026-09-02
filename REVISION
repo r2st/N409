@@ -10724,3 +10724,85 @@
 #            therefore eliminates C against B and B against A, which is right
 #            only if B's valuation consolidates C. Nothing in the data says
 #            whether it does.
+#
+# R379 — Error message quality (M19), at `076b570..26ca934`. Three findings, no
+#            migration, 23 new tests. Two of the three are in the engine tier,
+#            which is where this methodology had not looked: nine of its
+#            endpoints take a free-form object, and what they said about one
+#            they could not use was written by CPython rather than by this
+#            product.
+#
+#            076b570 — the endpoints that splat an `inputs`/`params` object into
+#            an entry point answered a signature mismatch with the TypeError's
+#            own text: `share_values() missing 2 required keyword-only
+#            arguments: 'equity_value' and 'total_shares'`. R374 recorded this
+#            as the one place a language runtime's wording reached a `detail`
+#            unread, and it is not an operator's line — the route puts it in the
+#            422 and `toProblem` publishes a non-opaque upstream `detail` to the
+#            analyst verbatim, so the sentence naming an internal function
+#            nobody called, in Python's vocabulary, was the whole answer given
+#            to the person who has to fix the inputs. It never said what the
+#            calculation accepts, which is the one thing somebody holding a
+#            free-form object needs. `engine/kwargs_refusal.describe_unbindable`
+#            reads the signature instead: the unknown names with the near miss
+#            (so a typo reads as a typo), the required ones that are absent, and
+#            the accepted set, bounded at ten. It takes several entry points for
+#            the EMI/CSOP route, which splits one object between `share_values`
+#            and the scheme's checks, and `provided` for the UMV that route
+#            concludes rather than accepts. Wired at all nine, and at the five
+#            debt instruments, where the same object reached `params["face"]`
+#            and came back as `invalid debt params: 'face'` — the key, quoted,
+#            with no verb.
+#            Checking before the call also separates the two failures. A
+#            TypeError that escapes afterwards is about a *value*, not a name;
+#            the engine's own `_num` guards name the field wherever they cover
+#            it, and the remainder says so rather than publishing `unsupported
+#            operand type(s) for *: 'str' and 'float'`, which names nothing the
+#            caller sent. That text is kept for whoever can use it: a 4xx is not
+#            otherwise logged in this tier, so the helper warns with it.
+#
+#            fe1cacd — `_issue_summary` is the `detail` on a refused
+#            `/engine/v1/compute`, and it named the first problem and counted the
+#            rest. That is the shape R180 removed from 203 route handlers one
+#            tier up, where `describeIssues` names three. The string is not a
+#            fallback for machines here: `toProblem` composes it into "The
+#            calculation could not be run: … Correct the inputs it names on the
+#            valuation's parameters", and the callers that draw a refusal's
+#            `detail` and nothing else include the scenario preview, whose tab
+#            has no renderer for the `issues` extension. So an analyst whose
+#            overrides had four problems was told one of them, under a remedy
+#            promising the inputs it names, and ran again to be told the second.
+#            Three now, with the count still being the number *not* named.
+#
+#            ef0dfcd — `RESTART_AT.capTable` sent a reader whose integration
+#            callback could not be matched back to "the Cap table tab". The tab
+#            is labelled "Cap Table": the third instance of the paraphrase R374
+#            removed from all three `CONNECTOR_PANELS` entries, surviving one
+#            file over because `remedyControlLabels` read that table and not this
+#            one. The tab is a field now rather than a clause inside a sentence,
+#            which is what makes it checkable at all, and a second assertion
+#            keeps the checked name in the prose so the first cannot pass against
+#            a constant nothing renders.
+#
+#            gap: the AI tier publishes `_classify`'s chain diagnostic — "All
+#            models failed: <candidate>: HTTP 429 <200 characters of the
+#            provider's body> | …" — as the `detail` on its 429/422/503, and
+#            that reaches `ai_jobs.error`, which is drawn on every listing.
+#            Audited this round and left: the AI tab is operations-only, so the
+#            reader is an operator, and `test_errors.py`'s "the diagnosis
+#            survives the scrub" is a standing decision that the tally travels
+#            once the redactor has taken the addresses and the key out of it.
+#            Worth revisiting only if a client-facing surface ever draws that
+#            column.
+#            gap: the remaining `Model output unusable: {exc}` arm on the AI
+#            pipeline route is the same shape as 076b570 one service over — a
+#            bare `ValueError` from anywhere under the run, prefixed. Every
+#            `raise ValueError` under it is domain-written today, so the arm
+#            publishes this estate's words in practice; nothing holds it to
+#            that.
+#            gap: `remedyControlLabels` now covers the three remedy tables that
+#            name a control as a field. The rest of the estate's remedies name
+#            one in prose ("the API tokens panel on the partner portal", "raise
+#            the cap on the Documents tab") and no boundary rule reads a label
+#            out of a sentence reliably, so those stay held by reading — R374's
+#            gap, one table smaller.
