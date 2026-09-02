@@ -55,6 +55,8 @@ interface AuditEntry {
   actor_id: string | null;
   source: string | null;
   changes: FieldChange[];
+  /** The circumstance behind the change, when the payload states one. */
+  note: string | null;
   summary: string;
   occurred_at: string;
 }
@@ -294,6 +296,11 @@ export function AuditTrailTab() {
                 by {entry.actor_type}
                 {entry.source && ` · ${entry.source}`}
               </p>
+              {/* The half a before/after pair cannot state. Every engagement
+                  a dissolved holding company held gets the same change list as
+                  one engagement being removed from a roll-up by hand; the note
+                  is the only thing that tells them apart. */}
+              {entry.note && <p className="mt-1 text-xs text-ink-600">{entry.note}</p>}
               <ChangeList changes={entry.changes} />
             </li>
           ))}

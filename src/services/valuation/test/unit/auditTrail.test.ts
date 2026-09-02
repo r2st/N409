@@ -343,6 +343,57 @@ describe('describeEvent', () => {
     expect(enriched.seq).toBe('42');
     expect(enriched.actor_type).toBe('ai');
   });
+
+  /*
+   * R387, methodology M19. `deleteOrganization` writes every engagement the
+   * holding company held a `portfolio_membership_changed` whose change list is
+   * character for character the one a person removing a single engagement from
+   * a roll-up produces. R384 saw that and put `organization_deleted: true`
+   * beside `changes` — deliberately outside it, because nothing moved from one
+   * value to another — and nothing read the flag, so the distinction it was
+   * written for reached no reader.
+   */
+  const dissolution = () =>
+    describeEvent(
+      event({
+        type: 'portfolio_membership_changed',
+        payload: {
+          changes: { organization_id: { from: '01H8XYZ', to: null } },
+          organization_deleted: true,
+        },
+      }),
+    );
+
+  it('says the organization was dissolved, not just that the membership moved', () => {
+    const enriched = dissolution();
+    expect(enriched.note).toBe(
+      'The organization was deleted; every engagement it held returned to standalone.',
+    );
+    expect(enriched.summary).toBe(
+      'The organization was deleted; every engagement it held returned to standalone. ' +
+        'Organization ID: 01H8XYZ → —',
+    );
+  });
+
+  it('leaves the same change list unannotated when one engagement was detached', () => {
+    // The discriminator: an unconditional note would be indistinguishable from
+    // no note at all, and this is the row it has to differ from.
+    const enriched = describeEvent(
+      event({
+        type: 'portfolio_membership_changed',
+        payload: { changes: { organization_id: { from: '01H8XYZ', to: null } } },
+      }),
+    );
+    expect(enriched.note).toBeNull();
+    expect(enriched.summary).toBe('Organization ID: 01H8XYZ → —');
+  });
+
+  it('ignores a context flag that is present and not true', () => {
+    const enriched = describeEvent(
+      event({ type: 'portfolio_membership_changed', payload: { organization_deleted: false } }),
+    );
+    expect(enriched.note).toBeNull();
+  });
 });
 
 // ── Filtering / roll-up over a small synthetic trail ───────────────────────

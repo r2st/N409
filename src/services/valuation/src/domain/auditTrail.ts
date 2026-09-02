@@ -794,6 +794,39 @@ export function extractChanges(type: string, payload: Record<string, unknown>): 
   return changes;
 }
 
+/**
+ * The circumstance a before/after pair cannot state, in the words a reader
+ * needs.
+ *
+ * A change list says what moved. It cannot say why the row moved, and for one
+ * family of events that difference is the whole question an auditor is asking.
+ * `deleteOrganization` detaches every engagement a holding company held, and
+ * writes each one a `portfolio_membership_changed` whose changes are
+ * `organization_id: 01H… → —` — character for character the same list a person
+ * removing one engagement from a roll-up produces. R384 saw that and put
+ * `organization_deleted: true` on the payload beside `changes`, deliberately
+ * outside it because nothing moved from one value to another. Nothing then read
+ * it: `extractChanges` handles four payload shapes and this is a fifth, so the
+ * flag was written to a column three surfaces render and displayed by none of
+ * them.
+ *
+ * A map rather than a branch, because the next one of these will be written the
+ * same way — beside `changes`, on a payload some repo already builds — and a
+ * map is a place to put it. The key is the payload flag; the note is what the
+ * reader is told when it is `true`.
+ */
+export const EVENT_NOTES: Record<string, string> = {
+  organization_deleted: 'The organization was deleted; every engagement it held returned to standalone.',
+};
+
+/** The note for an event, or null when its payload carries no circumstance. */
+export function eventNote(payload: Record<string, unknown>): string | null {
+  for (const [flag, note] of Object.entries(EVENT_NOTES)) {
+    if (payload[flag] === true) return note;
+  }
+  return null;
+}
+
 /** Compact, human-readable rendering of a value for audit summaries. */
 export function formatAuditValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
@@ -852,6 +885,8 @@ export interface AuditEntry extends EventDescriptor {
   actor_id: string | null;
   source: string | null;
   changes: FieldChange[];
+  /** The circumstance behind the change, when the payload states one. */
+  note: string | null;
   summary: string;
   occurred_at: Date;
 }
@@ -859,7 +894,10 @@ export interface AuditEntry extends EventDescriptor {
 /** Raw spine row → enriched, renderable audit entry. */
 export function describeEvent(event: RawAuditEvent): AuditEntry {
   const descriptor = describeEventType(event.type);
-  const changes = extractChanges(event.type, event.payload ?? {});
+  const payload = event.payload ?? {};
+  const changes = extractChanges(event.type, payload);
+  const note = eventNote(payload);
+  const changeSummary = summarizeChanges(changes);
   return {
     id: event.id,
     seq: event.seq,
@@ -869,7 +907,10 @@ export function describeEvent(event: RawAuditEvent): AuditEntry {
     actor_id: event.actor_id,
     source: event.source,
     changes,
-    summary: summarizeChanges(changes),
+    note,
+    // The note leads. It is the sentence that distinguishes this row from the
+    // one that looks identical, and a summary is read left to right.
+    summary: note === null ? changeSummary : changeSummary === '' ? note : `${note} ${changeSummary}`,
     occurred_at: event.occurred_at,
   };
 }

@@ -109,6 +109,39 @@ describe('AuditTrailTab', () => {
     expect(entries).toHaveTextContent('Valuation created');
   });
 
+  it('says why the membership moved when the row alone cannot', async () => {
+    /*
+     * R387, methodology M19. Every engagement a dissolved holding company held
+     * gets the same change list as one engagement detached by hand
+     * (`organization_id: 01H… → —`). The server puts the circumstance on
+     * `note`; without rendering it the two rows are indistinguishable in the
+     * change log an auditor reads.
+     */
+    const dissolved = {
+      ...PARAMS_ENTRY,
+      id: '01JAUDITCCCCCCCCCCCCCCCCCC',
+      type: 'portfolio_membership_changed',
+      label: 'Portfolio membership changed',
+      category: 'data',
+      changes: [{ field: 'organization_id', from: '01H8XYZ', to: null }],
+      note: 'The organization was deleted; every engagement it held returned to standalone.',
+      summary: 'The organization was deleted; every engagement it held returned to standalone.',
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ...RESPONSE, entries: [dissolved] }));
+    renderTab();
+
+    const entries = await screen.findByTestId('audit-entries');
+    expect(entries).toHaveTextContent('every engagement it held returned to standalone');
+  });
+
+  it('adds no such sentence to an entry that carries no circumstance', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(RESPONSE));
+    renderTab();
+
+    const entries = await screen.findByTestId('audit-entries');
+    expect(entries).not.toHaveTextContent('returned to standalone');
+  });
+
   it('shows the before and after of each field change', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(RESPONSE));
     renderTab();
