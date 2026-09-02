@@ -68,7 +68,19 @@ export async function listUsers(
   filters: UserListFilters,
 ): Promise<{ items: AdminUserRow[]; total: number }> {
   const { whereSql, params } = buildUserWhere(filters);
-  const { rows: countRows } = await pool.query<{ count: string }>(
+  /*
+   * Started here and joined below, so the count and the page overlap rather
+   * than costing this console the sum of two round trips (R351, M8 — the shape
+   * R338 fixed on the activity log and the firm roster). Neither statement
+   * reads anything the other produces; `paged` exists precisely because they
+   * carry different parameter lists.
+   *
+   * The count is the half with no ceiling on it: the page below stops at
+   * `perPage` ids out of 0148's partial index, and `count(*)` over the same
+   * predicate reads every account that matches. The `role` filter makes it a
+   * correlated EXISTS over `user_roles` per row on top of that.
+   */
+  const counting = pool.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM users u ${whereSql}`,
     params,
   );
@@ -94,8 +106,10 @@ export async function listUsers(
    * rather than cutting across it.
    */
   const paged = [...params, filters.perPage, (filters.page - 1) * filters.perPage];
-  const { rows } = await pool.query<AdminUserRow>(
-    `WITH page AS (
+  const [{ rows: countRows }, { rows }] = await Promise.all([
+    counting,
+    pool.query<AdminUserRow>(
+      `WITH page AS (
        SELECT u.id, u.created_at
          FROM users u
          ${whereSql}
@@ -111,8 +125,9 @@ export async function listUsers(
      LEFT JOIN roles r ON r.id = ur.role_id
      GROUP BY u.id, p.name
      ORDER BY u.created_at DESC, u.id DESC`,
-    paged,
-  );
+      paged,
+    ),
+  ]);
   return { items: rows, total: Number(countRows[0]!.count) };
 }
 

@@ -137,16 +137,33 @@ export async function listInbox(
       ON r.valuation_id = c.valuation_id AND r.user_id = ${readerParam}
     WHERE ${where.join(' AND ')}`;
 
-  const { rows: totals } = await pool.query<{ total: string; unread_total: string }>(
+  /*
+   * Asked together, not one after the other (R351, M8 — R338's shape). Neither
+   * statement reads anything the other produces, so awaiting them in sequence
+   * cost the shared inbox the sum of two round trips rather than the slower of
+   * them, on every page turn and every filter change.
+   *
+   * The totals are the unbounded half: the page stops at `perPage` comments,
+   * while the counts run the same three-table join over the reader's whole
+   * scope with nothing to stop them — and the `search` filter above makes that
+   * three ILIKEs a row.
+   *
+   * The counts copy `params` because the page pushes its own two placeholders
+   * onto the array below; sharing it would hand the driver a list two values
+   * longer than the statement it is serving.
+   */
+  const counting = pool.query<{ total: string; unread_total: string }>(
     `SELECT count(*)::text AS total,
             count(*) FILTER (WHERE ${unreadExpr})::text AS unread_total
      ${from}`,
-    params,
+    [...params],
   );
 
   const offset = (filter.page - 1) * filter.perPage;
   params.push(filter.perPage, offset);
-  const { rows } = await pool.query<InboxItem>(
+  const [{ rows: totals }, { rows }] = await Promise.all([
+    counting,
+    pool.query<InboxItem>(
     `SELECT c.id, c.valuation_id, c.kind, c.body, c.author_id, c.email_meta, c.pinned, c.created_at,
             v.number AS valuation_number, v.company_name,
             v.kind::text AS valuation_kind, v.state::text AS valuation_state,
@@ -156,8 +173,9 @@ export async function listInbox(
      ${from}
      ORDER BY c.created_at DESC, c.id DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params,
-  );
+      params,
+    ),
+  ]);
 
   return {
     items: rows,

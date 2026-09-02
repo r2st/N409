@@ -37,14 +37,22 @@ export async function listReviewQueue(
   }
   const whereSql = `WHERE ${where.join(' AND ')}`;
 
-  const { rows: countRows } = await pool.query<{ count: string }>(
+  /*
+   * Asked together, not one after the other (R351, M8 — R338's shape). Neither
+   * statement reads anything the other produces, which is why `paged` exists as
+   * a separate parameter list, and awaiting them in sequence cost the reviewer
+   * queue the sum of two round trips rather than the slower of them.
+   */
+  const counting = pool.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM valuations v ${whereSql}`,
     params,
   );
 
   const paged = [...params, filters.perPage, (filters.page - 1) * filters.perPage];
-  const { rows } = await pool.query<ReviewQueueRow>(
-    `SELECT v.*,
+  const [{ rows: countRows }, { rows }] = await Promise.all([
+    counting,
+    pool.query<ReviewQueueRow>(
+      `SELECT v.*,
             EXISTS (SELECT 1 FROM valuation_signatures s
                     WHERE s.valuation_id = v.id AND s.role = 'main') AS signed_main,
             EXISTS (SELECT 1 FROM valuation_signatures s
@@ -53,7 +61,8 @@ export async function listReviewQueue(
      ${whereSql}
      ORDER BY v.created_at ASC, v.id ASC
      LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
-    paged,
-  );
+      paged,
+    ),
+  ]);
   return { items: rows, total: Number(countRows[0]!.count) };
 }

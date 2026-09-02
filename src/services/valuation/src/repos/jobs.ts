@@ -138,22 +138,41 @@ export async function listJobs(pool: pg.Pool, filter: JobFilter): Promise<JobPag
     LEFT JOIN valuations v ON v.id = j.valuation_id
     ${whereSql}`;
 
-  const { rows: counts } = await pool.query<{ total: string }>(
-    `SELECT count(*)::text AS total ${from}`,
-    params,
-  );
+  /*
+   * The count and the page are asked together, not one after the other (R351,
+   * M8, the shape R338 fixed on the activity log and the firm roster). Neither
+   * statement reads anything the other produces — the count carries its own
+   * parameter list for that reason — so awaiting them in sequence cost this
+   * screen the *sum* of two round trips rather than the slower of them.
+   *
+   * The deferred half was the expensive one here. The page stops at `perPage`
+   * rows out of the Merge Append 0189's indexes serve; the count has no LIMIT
+   * to stop it, so it materialises all five branches of the union in full. And
+   * `AdminJobsPage` polls this screen every fifteen seconds, so the extra round
+   * trip was paid four times a minute for as long as an operator left it up.
+   *
+   * The count takes a copy of `params` because the page pushes its own two
+   * placeholders onto the array below: sharing it would hand the driver a list
+   * two values longer than the statement it is serving.
+   */
+  const counting = pool.query<{ total: string }>(`SELECT count(*)::text AS total ${from}`, [
+    ...params,
+  ]);
 
   const offset = (filter.page - 1) * filter.perPage;
   params.push(filter.perPage, offset);
-  const { rows } = await pool.query<Omit<JobRow, 'duration_ms'>>(
-    `SELECT j.id, j.source, j.status, j.detail, j.name, j.valuation_id,
+  const [{ rows: counts }, { rows }] = await Promise.all([
+    counting,
+    pool.query<Omit<JobRow, 'duration_ms'>>(
+      `SELECT j.id, j.source, j.status, j.detail, j.name, j.valuation_id,
             j.error, j.attempts, j.created_at, j.due_at, j.finished_at,
             v.number AS valuation_number, v.company_name
      ${from}
      ORDER BY j.created_at DESC, j.id DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params,
-  );
+      params,
+    ),
+  ]);
 
   return {
     items: rows.map((r) => ({

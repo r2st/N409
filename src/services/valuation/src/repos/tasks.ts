@@ -157,17 +157,34 @@ export async function listTasks(
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const { rows: countRows } = await pool.query<{ count: string }>(
+  /*
+   * Asked together, not one after the other (R351, M8 — R338's shape). Neither
+   * statement reads anything the other produces, so awaiting them in sequence
+   * cost the queue the sum of two round trips rather than the slower of them.
+   *
+   * The count is the half nothing bounds, and R342 made it dearer: the page
+   * stops at `perPage` rows off `review_tasks_console_idx` (0193), while the
+   * count walks every task the console can see and asks the archived-engagement
+   * EXISTS above about each one.
+   *
+   * The count copies `params` because the page pushes its own two placeholders
+   * onto the array below; sharing it would hand the driver a list two values
+   * longer than the statement it is serving.
+   */
+  const counting = pool.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM review_tasks t ${whereSql}`,
-    params,
+    [...params],
   );
   params.push(filters.perPage, (filters.page - 1) * filters.perPage);
-  const { rows } = await pool.query<ReviewTaskRow>(
-    `SELECT *, ${OVERDUE_SQL} FROM review_tasks t ${whereSql}
+  const [{ rows: countRows }, { rows }] = await Promise.all([
+    counting,
+    pool.query<ReviewTaskRow>(
+      `SELECT *, ${OVERDUE_SQL} FROM review_tasks t ${whereSql}
      ORDER BY (t.status IN ('done','cancelled')), t.due_at ASC NULLS LAST, t.created_at DESC, t.id DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params,
-  );
+      params,
+    ),
+  ]);
   return { items: rows, total: Number(countRows[0]!.count) };
 }
 
