@@ -832,10 +832,25 @@ export function registerAdminUserRoutes(
     const principal = requireUserAdmin(req);
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
-    // Revoking your own sessions here would 401 you on the next request with
-    // no replacement token; /me/sessions/revoke does it properly.
+    /*
+     * Revoking your own sessions here would 401 you on the next request with
+     * no replacement token; /me/sessions/revoke does it properly.
+     *
+     * The remedy names the control by the words on it. It used to say
+     * "Settings → sign out everywhere", and the button is labelled "Sign out
+     * everywhere else", inside the card headed "Sessions" — so an admin who
+     * searched the page for the phrase they had just been handed found
+     * nothing, on the one screen the message was sent to. That is the R357
+     * rule (check the door, not just the screen) applied to a remedy that had
+     * never been read against the page it points at; `remedyControlLabels`
+     * now holds every `Settings → …` remedy to a control that exists.
+     */
     if (id === principal.id)
-      throw problems.unprocessable('Use Settings → sign out everywhere for your own account');
+      throw problems.unprocessable(
+        'Signing yourself out is done from Settings → Sessions → “Sign out everywhere else”, which ' +
+          'replaces this session’s token as it goes. Doing it here would refuse your very next request ' +
+          'with nothing to sign back in with.',
+      );
     const user = await findUserById(deps.pool, id);
     if (!user) throw problems.notFound();
     await bumpSessionEpoch(deps.pool, id);

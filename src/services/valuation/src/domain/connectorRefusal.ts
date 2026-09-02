@@ -35,9 +35,10 @@ import { problems, type ApiProblem } from '@n409/shared';
  */
 export function notConnected(
   providerLabel: string,
-  where: string,
+  panel: { tab: string; panel: string },
   status: string | undefined,
 ): ApiProblem {
+  const where = connectorPanelPath(panel);
   return problems.unprocessable(
     status === 'revoked'
       ? `${providerLabel} was disconnected from this engagement, so there is no authorisation left ` +
@@ -49,9 +50,29 @@ export function notConnected(
   );
 }
 
-/** Where each family's connect control lives, named as the reader sees it. */
+/**
+ * Where each family's connect control lives, named as the reader sees it.
+ *
+ * `tab` is the word on the tab in `ValuationWorkspace`; `panel` is the heading
+ * over the connect control on it. Both are quoted exactly, because of what the
+ * reader does with the phrase they were handed: they search the page for it.
+ * All three entries used to be paraphrases — the tab is "Cap Table" and this
+ * said "Cap table"; the headings are "Live sync", "HRIS / payroll sync" and
+ * "Accounting integrations" against a remedy that said "Sync", "HRIS sync" and
+ * "Accounting". A near miss fails that search as completely as a wrong name
+ * does, and what the reader concludes is that the control is not there.
+ *
+ * `test/unit/remedyControlLabels.test.ts` holds each half to the frontend's
+ * source, so a tab rename or a heading rewrite fails there rather than quietly
+ * turning these back into paraphrases.
+ */
 export const CONNECTOR_PANELS = {
-  accounting: 'Documents → Accounting',
-  hris: 'Grants → HRIS sync',
-  capTable: 'Cap table → Sync',
+  accounting: { tab: 'Documents', panel: 'Accounting integrations' },
+  hris: { tab: 'Grants', panel: 'HRIS / payroll sync' },
+  capTable: { tab: 'Cap Table', panel: 'Live sync' },
 } as const;
+
+/** The remedy phrase — `Documents → Accounting integrations`. */
+export function connectorPanelPath(panel: { tab: string; panel: string }): string {
+  return `${panel.tab} → ${panel.panel}`;
+}
