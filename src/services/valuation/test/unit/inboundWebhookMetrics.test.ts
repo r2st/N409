@@ -175,6 +175,76 @@ describe('the email delivery webhook, end to end', () => {
     expect(lines).toEqual([]);
   });
 
+  /**
+   * R346, methodology M6.
+   *
+   * This scope parses `application/json` as a raw Buffer so the HMAC covers the
+   * bytes that arrived — which also means `app.ts`'s global `preValidation`
+   * scan for text Postgres will not store never sees this body: the hook runs
+   * against a Buffer and walks past it, and the object only exists inside the
+   * handler.
+   *
+   * Without a scan of its own, a NUL in `detail` — free text a provider copies
+   * out of a DSN — reached the `email_delivery_events` insert, the driver
+   * refused it as `22021`, the per-event `catch` put the event in `unrecorded`,
+   * and `unrecorded` is answered **503 "redeliver this batch"**. So the
+   * provider redelivered, the same character failed the same insert, and the
+   * batch sat in a retry loop nothing in it could leave. `parseStripeEvent`
+   * scans its whole envelope for exactly this and answers 400; this door was
+   * written to the same pattern without that half.
+   */
+  const signedPost = async (body: unknown) => {
+    const { app, registry } = await buildEmailWebhook();
+    const payload = JSON.stringify(body);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/webhooks/email/postmark',
+      headers: { 'content-type': 'application/json', 'x-n409-signature': sign(payload, SECRET) },
+      payload,
+    });
+    await app.close();
+    return { res, metrics: registry.render() };
+  };
+
+  it('refuses a NUL in a bounce message instead of asking for the batch again', async () => {
+    const { res, metrics } = await signedPost({
+      events: [
+        {
+          message_id: '01JBQ7F0000000000000000000',
+          kind: 'bounced',
+          detail: 'mailbox unavailable\u0000',
+        },
+      ],
+    });
+
+    // 400, not 503: this is a body a provider can be told about once.
+    expect(res.statusCode).toBe(400);
+    expect(res.json().detail).toContain('events[0].detail');
+    // And counted as unreadable, which is what the JSON parse failure beside it
+    // is counted as, and what `parseStripeEvent`'s refusal is counted as.
+    expect(metrics).toContain('inbound_webhook_deliveries_total{source="email-delivery",outcome="malformed"} 1');
+  });
+
+  it('refuses an unpaired surrogate anywhere in the batch, naming where', async () => {
+    const { res } = await signedPost({
+      events: [
+        { message_id: '01JBQ7F0000000000000000000', kind: 'delivered' },
+        { message_id: '01JBQ7F0000000000000000001', kind: 'bounced', status: '5.1.1', event_id: 'e\uD800' },
+      ],
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().detail).toContain('events[1].event_id');
+  });
+
+  it('lets an ordinary batch through to the schema as before', async () => {
+    // The guard must not be the thing that refuses every payload: a body with
+    // nothing unstorable in it still reaches the validation below it.
+    const { res, metrics } = await signedPost({ events: [{ message_id: 'not-a-ulid', kind: 'delivered' }] });
+    expect(res.statusCode).toBe(422);
+    expect(metrics).toContain('inbound_webhook_deliveries_total{source="email-delivery",outcome="accepted"} 1');
+  });
+
   it('counts a delivery that proved who it was, whatever the payload turns out to be', async () => {
     // The question this counter answers is whether the *sender* proved itself,
     // so a body refused on its own merits a line later is still an

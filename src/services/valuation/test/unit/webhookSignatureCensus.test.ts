@@ -241,6 +241,57 @@ describe('inbound webhooks verify their signature', () => {
     expect(WEBHOOKS.filter((w) => !COUNTS_ACCEPTED.test(w.scope)).map(at)).toEqual([]);
   });
 
+  /**
+   * R346, methodology M6: the guard these three routes step outside of.
+   *
+   * `app.ts`'s `preValidation` hook refuses any request carrying text Postgres
+   * will not store — a NUL or an unpaired surrogate — before a handler can hand
+   * it to the driver, and it is global precisely because the exposure is
+   * per-column rather than per-route. A raw-body webhook is the one shape that
+   * escapes it: the hook needs a parsed body, a signature needs the bytes that
+   * arrived, so this scope hands Fastify a Buffer, the hook walks past it, and
+   * the object only exists inside the handler.
+   *
+   * What that costs is not a dropped row. Every one of these three writes what
+   * it read into a `text` or `jsonb` column, the driver refuses the character,
+   * and the handler answers a 5xx — which to a provider is a delivery to retry,
+   * not an answer. The same body then fails the same way on every redelivery.
+   * `parseStripeEvent` was taught to scan its own envelope for this; the mail
+   * delivery door was written to the same pattern without that half and sat in
+   * a permanent 503 redelivery loop for one bad character in a bounce message.
+   *
+   * So: a raw-body scope must scan the object it parsed. Matched on the scan
+   * rather than on a spelling of the refusal, because the two callers are
+   * different shapes — one returns an error, one throws — and the scan is the
+   * thing an author copying this pattern has to remember.
+   */
+  it('every one of them scans the body it parsed for text the database will not store', () => {
+    // `parseStripeEvent` is the shared form: it runs `findUnstorableText` over
+    // the whole envelope and answers an error the handler turns into a 400.
+    const SCANS_ITS_BODY = /findUnstorableText\(|parseStripeEvent\(/;
+    expect(WEBHOOKS.filter((w) => !SCANS_ITS_BODY.test(w.scope)).map(at)).toEqual([]);
+  });
+
+  it('reads a raw-body handler that never scans as a violation', () => {
+    // The mechanism again, so the assertion above cannot pass by matching
+    // nothing: a handler shaped like a webhook with the scan left out.
+    const source = `
+      void app.register(async (scope) => {
+        scope.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) =>
+          done(null, body),
+        );
+        scope.post('/api/v1/vendor/webhook', async (req, reply) => {
+          const raw = req.body as Buffer;
+          const expected = createHmac('sha256', secret).update(raw).digest('hex');
+          if (expected !== req.headers['x-signature']) throw problems.unauthorized('no');
+          return reply.send({ received: true });
+        });
+      });
+    `;
+    const scope = rawBodyScopes(source)[0]!;
+    expect(/findUnstorableText\(|parseStripeEvent\(/.test(scope)).toBe(false);
+  });
+
   it('takes the whole scope, not the lines nearest the parser', () => {
     // The brace balance is what makes the assertions above trustworthy on the
     // Stripe handler, whose verification sits well below the parser and whose

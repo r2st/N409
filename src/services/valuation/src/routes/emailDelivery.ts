@@ -32,6 +32,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { ulidField } from '../domain/ulidField.js';
+import { findUnstorableText, unstorableTextMessage } from '../domain/nulBytes.js';
 
 /**
  * Delivery reporting, the suppression list, and provider event ingest (0163).
@@ -314,6 +315,33 @@ export function registerEmailDeliveryRoutes(
       } catch {
         refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'malformed');
         throw problems.badRequest('Invalid webhook payload');
+      }
+      /*
+       * The service's own boundary guard does not run here, and this is the
+       * one shape of route where that is true. `preValidation` scans the parsed
+       * body for text Postgres will not store (app.ts, domain/nulBytes.ts) —
+       * but a signature has to be verified over the bytes that arrived, so this
+       * scope parses `application/json` as a raw Buffer, the hook sees a Buffer
+       * and walks straight past it, and the object only exists after the line
+       * above. `parseStripeEvent` scans its own envelope for exactly this
+       * reason; this door was written to the same pattern without that half.
+       *
+       * The cost is not a lost row. `detail` is free text a provider copies out
+       * of a DSN, and a NUL or an unpaired surrogate in one of them fails the
+       * `email_delivery_events` insert, which the per-event `catch` below turns
+       * into `unrecorded` — and `unrecorded` is answered 503 "redeliver this
+       * batch". So the provider redelivers, the same character fails the same
+       * insert, and the batch is in a retry loop nothing in it can leave. A 400
+       * ends it: the payload is malformed, which is a thing a provider can be
+       * told once.
+       *
+       * Counted as `malformed` alongside the JSON parse failure above, because
+       * that is what it is — the body is not one this platform can read.
+       */
+      const unstorable = findUnstorableText(body);
+      if (unstorable) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'malformed');
+        throw problems.badRequest(unstorableTextMessage(unstorable));
       }
       recordInboundWebhook(WEBHOOK_SOURCE, 'accepted');
       const parsed = WebhookBody.safeParse(body);
