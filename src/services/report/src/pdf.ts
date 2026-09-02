@@ -509,10 +509,22 @@ const fontFile = (face: FaceName): string => fileURLToPath(new URL(FACES[face].f
 /**
  * Opened once per face, on first use, and kept.
  *
- * pdfkit loads and parses these itself for every document it renders; this
- * second copy exists to answer one question — *can this face draw this
+ * Two readers. This module asks one question of it — *can this face draw this
  * character* — before the text reaches pdfkit, because pdfkit's own answer to
  * a character it has no glyph for is to draw a blank box and say nothing.
+ *
+ * And pdfkit itself, since R358. `registerFont` takes a path, a buffer or an
+ * already-open font, and it was being handed the path: pdfkit then did its own
+ * `readFileSync` and its own fontkit parse, **four faces per document**, for
+ * fonts this process had already read and parsed and was holding. Four
+ * synchronous file reads on the event loop of a service whose whole job is
+ * rendering, and the parse showed up in a profile of the sample report as the
+ * `Struct`/`LazyArray` table decoding underneath every render.
+ *
+ * Sharing one open face across documents is what pdfkit's own signature
+ * invites: `EmbeddedFont` reads metrics off the font and takes a *subset* of
+ * its own (`font.createSubset()`), and its layout cache hangs off the embedded
+ * instance rather than the face. Nothing it does writes to the shared object.
  */
 const openFaces = new Map<FaceName, fontkit.Font>();
 
@@ -582,7 +594,11 @@ function faceNamed(name: string): FaceName | null {
  * exists to remove.
  */
 function useEmbeddedFonts(doc: PDFKit.PDFDocument): void {
-  for (const [key, entry] of Object.entries(FACES)) doc.registerFont(entry.name, fontFile(key as FaceName));
+  // The open face, not its path — see `openFaces`. pdfkit re-read and re-parsed
+  // all four files for every document it was handed a path for.
+  for (const [key, entry] of Object.entries(FACES)) {
+    doc.registerFont(entry.name, faceMetrics(key as FaceName) as unknown as string);
+  }
   doc.font(FONTS.regular);
 }
 
