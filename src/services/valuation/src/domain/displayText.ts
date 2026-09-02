@@ -76,13 +76,32 @@ const MAX_QUOTED_CHARS = 80;
  * is applied to text that is JSON-encoded on its way out, and a cut landing
  * between the halves of an astral character leaves a lone surrogate that UTF-8
  * cannot encode. See domain/textSlice.ts.
+ *
+ * THE WALK STOPS WHERE THE ANSWER DOES (round 385, methodology M8). The bound
+ * is on what the sentence keeps, and it used to be applied after every
+ * character of the value had been examined and concatenated. The values here
+ * are not all short: `field_key`, `pipeline`, the template key and the
+ * engagement stage are read straight off a request body, which this service
+ * caps at Fastify's 1 MiB default, and a ZIP entry name carries two bytes of
+ * length of its own. One 1 MB field cost 40 ms of the event loop — the loop
+ * every other request in flight is queued behind — to produce 81 characters.
+ * This is the twin of the same defect in `app/engine/display_text.py`, where
+ * the ceiling is 8 MB and the walk is on the success path.
+ *
+ * One code unit past the bound is proof the bound applies, so the loop stops
+ * there. `sliceChars` reads nothing past `max`, and each input character adds
+ * the same code units here as it would have to the whole string, so the prefix
+ * reached cuts to exactly what the full clean would have.
  */
 export function quoteForMessage(value: string, max: number = MAX_QUOTED_CHARS): string {
   let cleaned = '';
   for (const ch of value) {
     if (BIDI_CONTROLS.has(ch)) continue;
     cleaned += isActedOnControl(ch) || ch === '"' ? '?' : ch;
+    // Compared in code units because the threshold below it always was: the
+    // cut is astral-safe and the length test is not, and making them agree
+    // would move a boundary rather than move work off one.
+    if (cleaned.length > max) return `${sliceChars(cleaned, max)}…`;
   }
-  if (cleaned.length <= max) return cleaned || '(unnamed)';
-  return `${sliceChars(cleaned, max)}…`;
+  return cleaned || '(unnamed)';
 }
