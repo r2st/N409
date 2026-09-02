@@ -224,9 +224,25 @@ export function vestingStatus(schedule: VestingSchedule, asOf: Date): VestingSta
     vested = total;
   } else {
     // Round elapsed down to the vesting cadence so quarterly grants only vest
-    // on period boundaries.
+    // on period boundaries — but never back past the cliff itself.
+    //
+    // The cliff is its own boundary. A schedule whose cliff is not a whole
+    // number of cadence periods — 6 months on an annual cadence, 12 on a
+    // 5-month one — had its cliff rounded away with everything else, so a
+    // grantee who had cleared the cliff was reported at zero vested shares
+    // until the first cadence point *after* it. That is the one thing a cliff
+    // is defined not to do: `cliffCleared` said yes on the same object that
+    // said nothing had vested, and the docstring above ("at the cliff the
+    // pro-rata amount for the elapsed months vests at once") described the
+    // behaviour the code did not have. Neither the grant routes nor the HRIS
+    // importer requires the two figures to divide — the routes bound the cliff
+    // at 120 months and the cadence at 12 independently — so any pairing is
+    // reachable, and `exerciseScenarios` and the grant panel both read this.
     const freq = Math.max(1, schedule.frequencyMonths);
-    const periodsElapsed = Math.floor(elapsed / freq) * freq;
+    const periodsElapsed = Math.max(
+      Math.max(0, schedule.cliffMonths),
+      Math.floor(elapsed / freq) * freq,
+    );
     vested = Math.floor((total * periodsElapsed) / schedule.vestingMonths);
   }
   vested = Math.min(total, Math.max(0, vested));
@@ -307,7 +323,22 @@ export function vestingTimeline(schedule: VestingSchedule): VestingPoint[] {
   const points: VestingPoint[] = [
     { monthOffset: 0, date: toIsoDate(schedule.vestingStartDate), cumulativeVested: 0 },
   ];
-  for (let m = freq; m <= months; m += freq) {
+  // The cliff is a boundary in its own right, and it is not always one of the
+  // cadence steps: a 6-month cliff on an annual cadence, or a 12-month cliff on
+  // a 5-month one, falls between two of them. The loop below walks multiples of
+  // the cadence only, so on such a schedule the chart's first non-zero point sat
+  // months after the day the shares actually vested — the "cliff jump" this
+  // function's own contract promises, missing from the one schedule shape where
+  // it is not already a cadence point. `vestingStatus` is what each point reads,
+  // so the two now agree at every offset either of them names.
+  const cliff = Math.max(0, Math.floor(schedule.cliffMonths));
+  const offsets: number[] = [];
+  for (let m = freq; m <= months; m += freq) offsets.push(m);
+  if (cliff > 0 && cliff <= months && cliff % freq !== 0) {
+    offsets.push(cliff);
+    offsets.sort((a, b) => a - b);
+  }
+  for (const m of offsets) {
     const asOf = new Date(`${addMonths(schedule.vestingStartDate, m)}T00:00:00Z`);
     const status = vestingStatus(schedule, asOf);
     points.push({

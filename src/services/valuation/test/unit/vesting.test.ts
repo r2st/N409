@@ -413,3 +413,80 @@ describe('addMonths past the representable date range', () => {
     expect(addMonths('2024-01-15', 12_000)).toBe('3024-01-15');
   });
 });
+
+describe('a cliff that is not a whole number of cadence periods', () => {
+  // Nothing pairs these two figures: the grant routes bound the cliff at 120
+  // months and the cadence at 12 independently, and the HRIS importer clamps
+  // each into the same ranges without relating them. So a 6-month cliff on an
+  // annual cadence is an ordinary stored row.
+  const halfYearCliff: VestingSchedule = {
+    totalShares: 48000,
+    vestingStartDate: '2024-01-01',
+    vestingMonths: 48,
+    cliffMonths: 6,
+    frequencyMonths: 12,
+  };
+
+  it('vests the cliff amount on the cliff date rather than nothing', () => {
+    const s = vestingStatus(halfYearCliff, new Date('2024-07-01T00:00:00Z'));
+    expect(s.cliffCleared).toBe(true);
+    // 6 of 48 months, not the 0 that flooring 6 to the annual cadence gave.
+    expect(s.vestedShares).toBe(6000);
+    expect(s.percentVested).toBe(12.5);
+  });
+
+  it('holds the cliff amount until the next cadence point, then steps', () => {
+    expect(vestingStatus(halfYearCliff, new Date('2024-12-01T00:00:00Z')).vestedShares).toBe(6000);
+    expect(vestingStatus(halfYearCliff, new Date('2025-01-01T00:00:00Z')).vestedShares).toBe(12000);
+    expect(vestingStatus(halfYearCliff, new Date('2025-06-01T00:00:00Z')).vestedShares).toBe(12000);
+  });
+
+  it('still vests nothing the day before the cliff', () => {
+    const s = vestingStatus(halfYearCliff, new Date('2024-06-30T00:00:00Z'));
+    expect(s.cliffCleared).toBe(false);
+    expect(s.vestedShares).toBe(0);
+  });
+
+  it('puts the cliff jump on the timeline, in order and once', () => {
+    const points = vestingTimeline(halfYearCliff);
+    const offsets = points.map((p) => p.monthOffset);
+    expect(offsets).toEqual([0, 6, 12, 24, 36, 48]);
+    expect(points.find((p) => p.monthOffset === 6)!.cumulativeVested).toBe(6000);
+    expect(points.find((p) => p.monthOffset === 12)!.cumulativeVested).toBe(12000);
+    // Still monotone, and still finishes fully vested.
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i]!.cumulativeVested).toBeGreaterThanOrEqual(points[i - 1]!.cumulativeVested);
+    }
+    expect(points[points.length - 1]!.cumulativeVested).toBe(48000);
+  });
+
+  it('leaves a cliff that is already a cadence point alone', () => {
+    // The three built-in templates all divide, so this is the regression guard
+    // on the shape every real grant has.
+    const quarterly: VestingSchedule = {
+      totalShares: 36000,
+      vestingStartDate: '2024-01-01',
+      vestingMonths: 36,
+      cliffMonths: 12,
+      frequencyMonths: 3,
+    };
+    expect(vestingTimeline(quarterly).map((p) => p.monthOffset)).toEqual([
+      0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36,
+    ]);
+    expect(vestingStatus(quarterly, new Date('2025-01-01T00:00:00Z')).vestedShares).toBe(12000);
+  });
+
+  it('does not let a cliff at the end of the term overshoot the total', () => {
+    // `cliffMonths === vestingMonths` is accepted by the routes; the cliff and
+    // full vesting are the same day and the count must be the whole grant.
+    const allAtOnce: VestingSchedule = {
+      totalShares: 1000,
+      vestingStartDate: '2024-01-01',
+      vestingMonths: 18,
+      cliffMonths: 18,
+      frequencyMonths: 12,
+    };
+    expect(vestingStatus(allAtOnce, new Date('2025-07-01T00:00:00Z')).vestedShares).toBe(1000);
+    expect(vestingStatus(allAtOnce, new Date('2025-06-01T00:00:00Z')).vestedShares).toBe(0);
+  });
+});
