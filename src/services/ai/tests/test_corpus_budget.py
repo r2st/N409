@@ -70,19 +70,34 @@ def test_a_run_over_no_documents_still_says_so():
     assert reviewed == []
 
 
-def test_the_map_back_still_covers_every_document_handed_in():
-    """`by_shown_filename` is not the reviewed list and must not become it.
+def test_the_map_back_covers_what_the_model_was_shown_and_stops_there():
+    """`by_shown_filename` answers "the model echoed this filename — which
+    document is that?", and only a document the model was shown can honestly be
+    the answer.
 
-    It answers "the model echoed this filename — which document is that?", and
-    a model that echoes the name of a document it was not shown is exactly the
-    case the caller has to be able to recognise. Losing the entry turns that
-    into a silent fall-back to the model's own spelling.
+    It used to cover every document handed in, on the argument that a model
+    echoing an unshown name is a case the caller must be able to recognise.
+    Neither caller does recognise it — `run_summarize` and the cap-table
+    agent's `_citations` both fall back to the model's own spelling, which is
+    already redacted and so cannot leak. What the wide map actually did was
+    resolve a name the model was never shown into a real filename, and write it
+    into an audit work product as the source of a citation. Of the two, the
+    silent fall-back is the safe one: it records what the model said, not a
+    document it never saw.
+
+    R375 makes the map narrow for a second reason — the documents past the
+    budget are no longer extracted at all, so there is nothing to name them
+    with — but the contract above is the one that matters and it is the better
+    of the two.
     """
     docs = [_doc("a.csv", 8_000), _doc("b.csv", 8_000), _doc("c.csv", 8_000)]
     _, by_shown, reviewed = _corpus(docs, _red(), 9_000)
 
-    assert list(by_shown) == ["a.csv", "b.csv", "c.csv"]
     assert [d.filename for d in reviewed] == ["a.csv"]
+    # "b.csv" is the one the budget refused, so it is priced and named before
+    # the walk stops; "c.csv" is never reached.
+    assert "c.csv" not in by_shown
+    assert by_shown["a.csv"].filename == "a.csv"
 
 
 def test_a_budget_smaller_than_the_note_still_yields_the_document():

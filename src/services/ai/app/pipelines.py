@@ -11,7 +11,7 @@ import json
 import logging
 import math
 from dataclasses import replace
-from typing import Any
+from typing import Any, Iterator
 
 from . import bedrock
 from .anonymize import Redactor
@@ -19,8 +19,10 @@ from .documents import (
     CORPUS_SEPARATOR,
     EMPTY_CORPUS,
     DocText,
-    corpus_blocks,
-    extract_texts,
+    ExtractionTally,
+    corpus_block,
+    iter_extracted,
+    log_extraction,
 )
 from .llm_router import chat
 from .openrouter import LlmResult, extract_json, max_output_tokens
@@ -174,25 +176,6 @@ def _subject(payload: dict) -> str:
     return str(name)
 
 
-def _load_docs(payload: dict, red: Redactor | None = None) -> tuple[list[DocText], dict]:
-    """Extract document texts, redacting PII first (remaining-gaps §2 — the
-    cap-table anonymization step) unless options.anonymize is switched off.
-
-    Named-entity redaction (company + known person names) supplements the
-    regexes so a cap table's most identifying fields don't leave the trust
-    boundary. In production the anonymize=false escape hatch is ignored
-    (audit B-1 P1).
-
-    Only the body is touched here. The filename is redacted at render time
-    instead — see `_corpus` — because the result the analyst reads has to name
-    the file they actually uploaded."""
-    red = red or _redactor(payload)
-    docs = extract_texts(payload.get("documents") or [])
-    for doc in docs:
-        doc.text = red.text(doc.text)
-    return docs, red.report()
-
-
 #: Appended to a document the character budget cut short, in the corpus itself.
 #:
 #: The model is the only reader who can act on it — it is the one being asked
@@ -253,16 +236,31 @@ def _corpus(
     is bigger than the limit, which is a `limit` of 15 000 against a per-doc
     ceiling of 20 000.
     """
-    shown_names = _distinct_filenames([red.text(doc.filename) for doc in docs])
-    shown = [replace(doc, filename=name) for doc, name in zip(docs, shown_names)]
-    by_shown_filename = dict(zip(shown_names, docs))
-    if not docs:
-        return EMPTY_CORPUS, by_shown_filename, []
+    return _fit_corpus(iter(docs), red, limit, len(docs))
 
+
+def _fit_corpus(
+    docs: Iterator[DocText], red: Redactor, limit: int, total: int
+) -> tuple[str, dict[str, DocText], list[DocText]]:
+    """{@link _corpus}, over an iterator, taking each document's text as it is.
+
+    The budget is filled in order and the walk stops at the first document that
+    does not fit, so pulling the source lazily means everything past that point
+    is never produced at all — which is the whole of `_load_corpus`. `total` is
+    how many documents the caller started with, for the truncation line, since
+    an iterator cannot be asked its length without draining it.
+    """
+    used: set[str] = set()
+    by_shown_filename: dict[str, DocText] = {}
     kept: list[str] = []
     reviewed: list[DocText] = []
     remaining = limit
-    for original, block in zip(docs, corpus_blocks(shown)):
+    index = 0
+    for original in docs:
+        shown_name = _next_distinct(used, red.text(original.filename))
+        by_shown_filename[shown_name] = original
+        block = corpus_block(index, replace(original, filename=shown_name))
+        index += 1
         join = len(CORPUS_SEPARATOR) if kept else 0
         if join + len(block) <= remaining:
             kept.append(block)
@@ -281,7 +279,10 @@ def _corpus(
         reviewed.append(original)
         break
 
-    if len(reviewed) < len(docs):
+    if not kept and not by_shown_filename:
+        return EMPTY_CORPUS, by_shown_filename, []
+
+    if len(reviewed) < total:
         _log.warning(
             "corpus truncated to the character budget",
             extra={
@@ -291,11 +292,68 @@ def _corpus(
                 # content of a line whose point is how much was cut — were being
                 # dropped on the floor with nothing to say so.
                 "count": len(reviewed),
-                "total": len(docs),
+                "total": total,
                 "detail": f"limit={limit}",
             },
         )
     return CORPUS_SEPARATOR.join(kept) or EMPTY_CORPUS, by_shown_filename, reviewed
+
+
+def _redacting(docs: Iterator[DocText], red: Redactor) -> Iterator[DocText]:
+    """The body redaction the eager loader used to do up front, one document
+    at a time.
+
+    In place, on the object the iterator yields, exactly as the eager form did
+    — `by_shown_filename` and `documents_reviewed` both hand these same objects
+    back to the caller, so the text they carry must be the redacted text.
+    """
+    for doc in docs:
+        doc.text = red.text(doc.text)
+        yield doc
+
+
+def _load_corpus(
+    payload: dict, red: Redactor, limit: int
+) -> tuple[str, dict[str, DocText], list[DocText]]:
+    """Extract, redact and budget in one pass, stopping at the budget.
+
+    ## Why this is one function (R375, methodology M8)
+
+    The loader this replaces extracted and redacted every document `MAX_TOTAL_CHARS`
+    allowed — 60 000 characters — and `_corpus` then kept the first 15 000,
+    30 000 or 45 000 of them and dropped the rest. Nothing downstream ever saw
+    the difference, so nothing ever priced it: on a six-workbook upload against
+    `run_missing_data`'s 15 000, two thirds of a 68 ms redaction pass, plus the
+    workbook parses under it, went on material the model was never shown. `re`
+    holds the GIL, so that is the whole process waiting.
+
+    A corpus is filled in order and stops at the first document that does not
+    fit. That makes the pipeline's own budget the natural stopping point for
+    the *extractor* too, and everything past it simply never happens. What
+    reaches the model is unchanged, document for document and character for
+    character; what changes is `anonymization`, which now counts what was
+    struck out of the text that actually left the trust boundary rather than
+    out of text nobody sent — the narrower and truer of the two claims.
+    """
+    documents = payload.get("documents") or []
+    tally = ExtractionTally()
+    out = _fit_corpus(_redacting(iter_extracted(documents, tally), red), red, limit, len(documents))
+    log_extraction(tally, len(documents))
+    return out
+
+
+def _next_distinct(used: set[str], name: str) -> str:
+    """{@link _distinct_filenames} for one more name against the names already
+    shown. Same rule, same result — the eager form is this one folded over a
+    list — so a caller that stops early numbers its prefix identically."""
+    candidate, n = name, 1
+    # A loop rather than a counter: the numbered form can itself collide
+    # with a later name that was literally called "… (2).pdf".
+    while candidate in used:
+        n += 1
+        candidate = _numbered(name, n)
+    used.add(candidate)
+    return candidate
 
 
 def _numbered(name: str, n: int) -> str:
@@ -329,17 +387,7 @@ def _distinct_filenames(names: list[str]) -> list[str]:
     same way — two uploads genuinely called the same thing fail identically.
     """
     used: set[str] = set()
-    out: list[str] = []
-    for name in names:
-        candidate, n = name, 1
-        # A loop rather than a counter: the numbered form can itself collide
-        # with a later name that was literally called "… (2).pdf".
-        while candidate in used:
-            n += 1
-            candidate = _numbered(name, n)
-        used.add(candidate)
-        out.append(candidate)
-    return out
+    return [_next_distinct(used, name) for name in names]
 
 
 def _to_number(value: Any) -> float | None:
@@ -381,9 +429,14 @@ def _to_number(value: Any) -> float | None:
 def run_missing_data(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     red = _redactor(payload)
-    docs, _ = _load_docs(payload, red)
-    corpus, _, reviewed = _corpus(docs, red, 30000)
-    uploaded_kinds = {d.kind for d in docs}
+    corpus, _, reviewed = _load_corpus(payload, red, 30000)
+    # Off the request, not off the extracted list. The checklist below asks
+    # which required *uploads* are absent, which is a fact about what the
+    # client sent — a workbook the extraction budget never opened, or one the
+    # corpus budget stopped before, is still a workbook they uploaded, and
+    # reporting it "missing" sends the analyst chasing a file that is already
+    # there. Same defaulting as `iter_extracted`, so the two agree on `kind`.
+    uploaded_kinds = {str(d.get("kind") or "other") for d in payload.get("documents") or []}
     params = payload.get("params") or {}
 
     # Deterministic part: checklist vs uploaded kinds + unset params.
@@ -434,8 +487,7 @@ preference amounts, projections without expenses). Maximum 10 gaps."""
 def run_extract(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     red = _redactor(payload)
-    docs, _ = _load_docs(payload, red)
-    corpus, _, reviewed = _corpus(docs, red, 45000)
+    corpus, _, reviewed = _load_corpus(payload, red, 45000)
 
     system, model = _prompt_overrides(
         payload,
@@ -490,8 +542,7 @@ def run_comparables(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
     red = _redactor(payload)
-    docs, _ = _load_docs(payload, red)
-    corpus, _, _ = _corpus(docs, red, 15000)
+    corpus, _, _ = _load_corpus(payload, red, 15000)
 
     system, model = _prompt_overrides(
         payload,
@@ -549,8 +600,7 @@ def run_summarize(payload: dict) -> tuple[str, dict]:
     """Summarize Attachments (remaining-gaps §2 "AI actions & pipelines")."""
     valuation = payload.get("valuation") or {}
     red = _redactor(payload)
-    docs, _ = _load_docs(payload, red)
-    corpus, by_shown_filename, reviewed = _corpus(docs, red, 45000)
+    corpus, by_shown_filename, reviewed = _load_corpus(payload, red, 45000)
 
     system, model = _prompt_overrides(
         payload,

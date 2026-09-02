@@ -6,7 +6,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app import pipelines
+from app import documents, pipelines
 from app.main import app
 from app.openrouter import LlmResult, OpenRouterError, extract_json
 
@@ -245,7 +245,7 @@ def test_pdf_and_text_extraction():
     buf = io.BytesIO()
     writer.write(buf)
 
-    docs = pipelines.extract_texts(
+    docs = documents.extract_texts(
         [
             {"id": "1", "filename": "blank.pdf", "kind": "other", "content_base64": base64.b64encode(buf.getvalue()).decode()},
             {"id": "2", "filename": "notes.txt", "kind": "other", "content_base64": base64.b64encode("hello world".encode()).decode()},

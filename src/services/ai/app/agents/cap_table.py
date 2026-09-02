@@ -281,8 +281,7 @@ def _citations(identified: list, share_classes: list[dict], by_shown: dict) -> l
 
 def run_cap_table(payload: dict) -> tuple[str, dict]:
     red = c.redactor(payload)
-    docs, _ = c.load_docs(payload, red)
-    corpus, by_shown, reviewed = c.corpus(docs, red, 45000)
+    corpus, by_shown, reviewed = c.load_corpus(payload, red, 45000)
 
     identify_system, model = c.prompt_overrides(payload, _IDENTIFY_SYSTEM)
     identify_user = f"""Company: {c.subject(payload)}

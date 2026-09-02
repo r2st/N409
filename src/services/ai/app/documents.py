@@ -786,10 +786,46 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
     corpus never touches. `kind` says what it was meant to be, which is the
     part a diagnosis needs.
     """
-    out: list[DocText] = []
+    tally = ExtractionTally()
+    out = list(iter_extracted(documents, tally))
+    log_extraction(tally, len(documents))
+    return out
+
+
+@dataclass
+class ExtractionTally:
+    """What {@link iter_extracted} could not read, and what it never opened.
+
+    A generator cannot end on a summary line the way a loop can, because a
+    caller that has what it needs simply stops pulling and the tail of the
+    function never runs. So the counters live here, where whoever stopped the
+    walk still holds them and can say how far it got.
+    """
+
+    failed: int = 0
+    dropped: int = 0
+
+
+def iter_extracted(documents: list[dict], tally: ExtractionTally) -> Iterator[DocText]:
+    """{@link extract_texts}, one document at a time and only on demand.
+
+    ## Why this is lazy (R375, methodology M8)
+
+    `MAX_TOTAL_CHARS` is 60 000. Every pipeline then fits what it got into a
+    budget of its own — 45 000, 30 000, and on `run_missing_data` 15 000 — and
+    `pipelines._corpus` stops at the first document that does not fit, because
+    a corpus is filled in order. Between those two numbers sat whole documents
+    that were decoded, parsed, redacted, and then dropped: on a six-workbook
+    upload against the 15 000 budget, two thirds of a 68 ms redaction pass over
+    material no model was ever going to see, with the GIL held for all of it.
+
+    The bound on the input was never the bound on the work. Handing the caller
+    an iterator makes the caller's budget the one that stops the parse, and the
+    two-thirds is simply never done. Nothing about *what* is extracted changes:
+    pull the whole iterator and it yields exactly what the list used to hold,
+    in the same order, under the same ceilings.
+    """
     total = 0
-    failed = 0
-    dropped = 0
     for doc in documents:
         if total >= MAX_TOTAL_CHARS:
             # `MAX_TOTAL_CHARS` is reached by three ordinary spreadsheets, so
@@ -804,7 +840,7 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
             #
             # Counted rather than broken on, so the line below can carry the
             # denominator the same way `documents_unreadable` does.
-            dropped += 1
+            tally.dropped += 1
             continue
         name = str(doc.get("filename") or "document")
         kind = str(doc.get("kind") or "other")
@@ -851,7 +887,7 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
                 text = decode_text(raw)
         except Exception as exc:  # noqa: BLE001 — degrade, don't fail the run
             text = f"[could not extract text: {exc}]"
-            failed += 1
+            tally.failed += 1
             _log.warning(
                 "document text extraction failed",
                 extra={
@@ -863,8 +899,18 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
             )
         text = text.strip()[:MAX_CHARS_PER_DOC]
         total += len(text)
-        out.append(DocText(id=str(doc.get("id") or ""), filename=name, kind=kind, text=text))
-    if failed:
+        yield DocText(id=str(doc.get("id") or ""), filename=name, kind=kind, text=text)
+
+
+def log_extraction(tally: ExtractionTally, total_documents: int) -> None:
+    """The two summary lines a completed walk ends on.
+
+    Split out of the walk itself so a caller that stopped early still reports
+    what it saw; `dropped` is then 0 by construction, and the shortfall is the
+    caller's own `corpus_truncated`, which is the only line that knows the
+    budget that caused it.
+    """
+    if tally.failed:
         # The summary an alert groups on: one line per run, with the
         # denominator, so "one scanned PDF was unreadable" and "the extractor
         # is failing on everything" are different lines rather than the same
@@ -872,9 +918,9 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
         # reason — see the note on `total` in observability.py's allowlist.
         _log.warning(
             "documents could not be read",
-            extra={"event": "documents_unreadable", "count": failed, "total": len(documents)},
+            extra={"event": "documents_unreadable", "count": tally.failed, "total": total_documents},
         )
-    if dropped:
+    if tally.dropped:
         # Its own line, and its own event, because it is a different incident
         # from the one above: nothing failed, an internal budget was spent, and
         # the documents past it were never opened. `corpus_truncated` is the
@@ -882,9 +928,8 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
         # so this is the only place the whole shortfall can be stated.
         _log.warning(
             "documents left unread: the extraction budget was already spent",
-            extra={"event": "documents_dropped", "count": dropped, "total": len(documents)},
+            extra={"event": "documents_dropped", "count": tally.dropped, "total": total_documents},
         )
-    return out
 
 
 #: What separates two documents in a rendered corpus. Exported because the
@@ -904,10 +949,18 @@ def corpus_blocks(docs: list[DocText]) -> list[str]:
     ordinal is the document's position in the list it was handed, so a caller
     that drops a trailing block does not renumber the ones it keeps.
     """
-    return [
-        f'--- DOCUMENT {i + 1}: "{d.filename}" (type: {d.kind}) ---\n{d.text or "(empty)"}'
-        for i, d in enumerate(docs)
-    ]
+    return [corpus_block(i, d) for i, d in enumerate(docs)]
+
+
+def corpus_block(index: int, doc: DocText) -> str:
+    """One document's block, at the position it holds in the corpus.
+
+    The single-document form, so a caller filling a budget can render the block
+    it is about to price rather than every block first — see
+    `pipelines._load_corpus`, which never reaches the documents past its limit.
+    `index` is zero-based and the heading is one-based, as it always was.
+    """
+    return f'--- DOCUMENT {index + 1}: "{doc.filename}" (type: {doc.kind}) ---\n{doc.text or "(empty)"}'
 
 
 def render_corpus(docs: list[DocText]) -> str:

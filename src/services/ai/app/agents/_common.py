@@ -19,10 +19,7 @@ from ..pipelines import (
     _calculation_summary as calculation_summary,
 )
 from ..pipelines import (
-    _corpus as corpus,
-)
-from ..pipelines import (
-    _load_docs as load_docs,
+    _load_corpus as load_corpus,
 )
 from ..pipelines import (
     _params_summary as params_summary,
@@ -51,8 +48,7 @@ __all__ = [
     "chat",
     "clamp_confidence",
     "clean_str",
-    "corpus",
-    "load_docs",
+    "load_corpus",
     "params_summary",
     "prompt_overrides",
     "redactor",

@@ -233,8 +233,7 @@ def run_tagging(payload: dict) -> tuple[str, dict]:
     groups, index = _catalogue(payload.get("tag_catalogue"))
 
     red = c.redactor(payload)
-    docs, _ = c.load_docs(payload, red)
-    corpus, _, reviewed = c.corpus(docs, red, CORPUS_LIMIT)
+    corpus, _, reviewed = c.load_corpus(payload, red, CORPUS_LIMIT)
 
     system, model = c.prompt_overrides(payload, _SYSTEM)
     user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})

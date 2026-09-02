@@ -400,16 +400,16 @@ def test_a_request_with_nothing_to_redact_still_reports(prompts):
 
 
 def test_document_bodies_are_redacted_before_anything_assembles_them():
-    docs, report = pipelines._load_docs(payload())
-    assert not _leaks(docs[0].text)
-    assert DOC_BODY_MARKER in docs[0].text  # the figures it exists for survive
-    assert report["redacted"]["emails"] == 1
+    red = pipelines._redactor(payload())
+    _, _, reviewed = pipelines._load_corpus(payload(), red, 45_000)
+    assert not _leaks(reviewed[0].text)
+    assert DOC_BODY_MARKER in reviewed[0].text  # the figures it exists for survive
+    assert red.report()["redacted"]["emails"] == 1
 
 
 def test_the_corpus_hands_back_the_document_under_the_name_it_showed():
     red = pipelines._redactor(payload())
-    docs, _ = pipelines._load_docs(payload(), red)
-    corpus, by_shown, _ = pipelines._corpus(docs, red, 45_000)
+    corpus, by_shown, _ = pipelines._load_corpus(payload(), red, 45_000)
     assert not _leaks(corpus)
     # Keyed on the redacted name — the only one the model can echo back. Keyed
     # on the real one, every lookup misses and every summary silently falls
@@ -424,8 +424,7 @@ def test_the_corpus_truncates_after_redacting_not_before():
     # The cheap way to get this wrong is to truncate first and redact the
     # result — which would also cut a name in half and leave the stub of it in.
     red = pipelines._redactor(payload())
-    docs, _ = pipelines._load_docs(payload(), red)
-    corpus, _, _ = pipelines._corpus(docs, red, 60)
+    corpus, _, _ = pipelines._load_corpus(payload(), red, 60)
     assert len(corpus) == 60
     assert not _leaks(corpus)
 
