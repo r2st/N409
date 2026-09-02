@@ -3,6 +3,7 @@
 import base64
 import codecs
 import io
+import logging
 import zipfile
 
 from app.documents import extract_texts
@@ -237,6 +238,37 @@ def test_absent_rels_falls_back_to_positional_pairing():
     [doc] = extract_texts([_doc(_reordered_bytes(rels=None))])
     assert "=== Sheet: Cap Table ===\nREVENUE-ROWS" in doc.text
     assert "=== Sheet: Financials ===\nCAP-TABLE-ROWS" in doc.text
+
+
+def test_an_unreadable_rels_part_numbers_the_sheets_rather_than_guessing():
+    """An index that is present and will not parse is not an absent one.
+
+    Both used to answer `{}`, and `{}` is licence to pair the Nth declared sheet
+    with `sheet{N}.xml` — so a workbook whose tabs had been reordered came out
+    with "=== Sheet: Cap Table ===" over its revenue rows, asserted in the
+    corpus under the client's own tab names, with nothing raised and nothing
+    counted. The heading is the model's only cue for what a block of rows is.
+
+    The rows are all kept; only the pairing, which is the thing that was
+    actually lost, goes with it.
+    """
+    [doc] = extract_texts([_doc(_reordered_bytes(rels="<Relationships><Relat"))])
+    assert "CAP-TABLE-ROWS" in doc.text and "REVENUE-ROWS" in doc.text
+    assert "Cap Table" not in doc.text
+    assert "Financials" not in doc.text
+    assert "=== Sheet: Sheet1 ===\nREVENUE-ROWS" in doc.text
+    assert "=== Sheet: Sheet2 ===\nCAP-TABLE-ROWS" in doc.text
+
+
+def test_an_unreadable_rels_part_is_said_out_loud(caplog):
+    """The corpus heading claims nothing now, and nothing in it says why. One
+    file is a client's odd export; the same line under every upload is this
+    reader."""
+    with caplog.at_level(logging.WARNING, logger="documents"):
+        extract_texts([_doc(_reordered_bytes(rels="<Relationships><Relat"))])
+    assert any(
+        getattr(r, "event", None) == "xlsx_sheet_index_unreadable" for r in caplog.records
+    )
 
 
 def test_root_relative_and_dot_prefixed_targets_resolve():

@@ -380,12 +380,35 @@ def _xlsx_shared_strings(zf: _BoundedZip) -> list[str]:
     return [_rich_text(si) for si in root.iter(f"{_SSML}si")]
 
 
+class _UnreadableSheetIndex(Exception):
+    """The relationships part is present and will not parse.
+
+    Distinguished from its absence, which is an ordinary fact about a simple
+    workbook — see {@link _xlsx_sheets}, where the two used to share one
+    ``except`` and one answer.
+    """
+
+
 def _xlsx_rels(zf: _BoundedZip) -> dict[str, str]:
-    """Relationship id → part target, from the workbook's relationships part."""
+    """Relationship id → part target, from the workbook's relationships part.
+
+    An empty dict means the part is *not there*. A part that is there and will
+    not parse raises, because the caller's answer to those two has to differ —
+    ``_xlsx_sheets`` reads the empty dict as licence to pair the Nth declared
+    sheet with ``sheet{N}.xml``, which is a guess that is only sound for a
+    workbook simple enough to have no relationships part at all.
+    """
     try:
-        root = _parse_xml_part(zf.read("xl/_rels/workbook.xml.rels"))
-    except (KeyError, ElementTree.ParseError):
+        data = zf.read("xl/_rels/workbook.xml.rels")
+    except KeyError:
         return {}
+    try:
+        root = _parse_xml_part(data)
+    except ElementTree.ParseError as exc:
+        raise _UnreadableSheetIndex(
+            "this workbook's relationships part could not be read, so no sheet name can be "
+            "matched to the rows underneath it"
+        ) from exc
     out: dict[str, str] = {}
     for rel in root.iter(f"{_PKG_REL}Relationship"):
         rid, target = rel.get("Id"), rel.get("Target")
@@ -414,7 +437,31 @@ def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
         root = _parse_xml_part(zf.read("xl/workbook.xml"))
     except (KeyError, ElementTree.ParseError):
         return []
-    rels = _xlsx_rels(zf)
+    try:
+        rels = _xlsx_rels(zf)
+    except _UnreadableSheetIndex:
+        # AN UNREADABLE INDEX IS NOT AN ABSENT ONE (round 390, methodology M5).
+        #
+        # `_xlsx_rels` used to answer both with `{}`, and `{}` sends every entry
+        # below down the positional guess — which is the mislabelling this
+        # docstring exists to describe, applied to the whole workbook at once
+        # and asserted in the corpus under the client's own tab names. Nothing
+        # raised, nothing was counted, and the heading the model reads as its
+        # only cue for what a block of rows *is* was wrong for every block.
+        #
+        # The absent case keeps the guess, because a workbook with no
+        # relationships part can only be a simple one. A workbook that has one
+        # and cannot read it is not simple by construction, so `[]` hands the
+        # caller its damaged-file fallback: the same parts, numbered
+        # `Sheet1…SheetN`, which claims nothing about which tab is which. The
+        # rows are all kept and only the pairing — the thing that was actually
+        # lost — goes with it. Same trade as the per-sheet note below and as
+        # `UNREAD_NOTE`: say what is missing, keep what is not.
+        _log.warning(
+            "a workbook's sheet index could not be read; sheets are numbered rather than named",
+            extra={"event": "xlsx_sheet_index_unreadable"},
+        )
+        return []
     present = set(zf.namelist())
     sheets: list[tuple[str, str]] = []
     for i, entry in enumerate(root.iter(f"{_SSML}sheet")):
@@ -427,7 +474,11 @@ def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
         else:
             # No relationships part (or an entry without an r:id) — fall back to
             # the positional guess, which is right for the simple workbooks that
-            # is all such a file can be.
+            # is all such a file can be. A relationships part that exists and
+            # will not parse no longer reaches here: `_xlsx_rels` raises, and
+            # the handler above answers with the numbered fallback instead of
+            # letting this guess put a client's tab names over rows it did not
+            # match them to.
             path = f"xl/worksheets/sheet{i + 1}.xml"
         if path in present:
             sheets.append((name, path))
