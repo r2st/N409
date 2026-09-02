@@ -394,6 +394,129 @@ describe('describeEvent', () => {
     );
     expect(enriched.note).toBeNull();
   });
+
+  /*
+   * R389, methodology M4. The census over the shape R387 named — a flag written
+   * beside `changes` so a reader could tell two rows apart — found four more,
+   * and each is the same failure: a sweep writing the event a person writes.
+   */
+
+  it('says a released engagement was released, not unassigned by hand', () => {
+    // `releaseAssignedWork`'s change list is the one `patchValuation` writes
+    // when an operator clears the reviewer themselves. The whole difference is
+    // `reason`.
+    const enriched = describeEvent(
+      event({
+        type: 'valuation_updated',
+        payload: {
+          changes: { assigned_reviewer_id: { from: '01HUSER', to: null } },
+          reason: 'account_closed',
+        },
+      }),
+    );
+    expect(enriched.note).toBe('Released automatically when the account holding this work was closed.');
+    expect(enriched.summary).toBe(
+      'Released automatically when the account holding this work was closed. ' +
+        'Assigned reviewer ID: 01HUSER → —',
+    );
+  });
+
+  it('leaves the same change list unannotated when an operator cleared the reviewer', () => {
+    const enriched = describeEvent(
+      event({
+        type: 'valuation_updated',
+        payload: { changes: { assigned_reviewer_id: { from: '01HUSER', to: null } } },
+      }),
+    );
+    expect(enriched.note).toBeNull();
+  });
+
+  it('states both halves of a reaped run: what ended it, and what is coming back', () => {
+    // `reaped` alone "reads as an ending either way" — R268's reason for
+    // putting `retry_scheduled` on the spine beside it. A note that stopped at
+    // the first match would publish half the pair.
+    const enriched = describeEvent(
+      event({
+        type: 'auto_pipeline_failed',
+        payload: { run_id: '01HRUN', error: 'run exceeded 900s', reaped: true, retry_scheduled: true },
+      }),
+    );
+    expect(enriched.note).toBe(
+      'Abandoned by the stale-work sweep after passing its deadline; no worker reported this ending. ' +
+        'Another attempt is scheduled.',
+    );
+  });
+
+  it('says when a reaped run has run out of attempts', () => {
+    const enriched = describeEvent(
+      event({ type: 'auto_pipeline_failed', payload: { reaped: true, retry_scheduled: false } }),
+    );
+    expect(enriched.note).toBe(
+      'Abandoned by the stale-work sweep after passing its deadline; no worker reported this ending. ' +
+        'No further attempt is scheduled.',
+    );
+  });
+
+  it('leaves a failure a worker actually reported unannotated', () => {
+    const enriched = describeEvent(
+      event({ type: 'auto_pipeline_failed', payload: { run_id: '01HRUN', error: 'extraction failed' } }),
+    );
+    expect(enriched.note).toBeNull();
+  });
+
+  it('tells a retry sweep start from an upload', () => {
+    const requeued = describeEvent(
+      event({ type: 'auto_pipeline_started', payload: { run_id: '01HRUN', trigger: 'upload', retry: true } }),
+    );
+    expect(requeued.note).toBe('Started by the retry sweep, not by an upload or an operator.');
+    const first = describeEvent(
+      event({ type: 'auto_pipeline_started', payload: { run_id: '01HRUN', trigger: 'upload' } }),
+    );
+    expect(first.note).toBeNull();
+  });
+
+  it('names why an owed retry was stood down', () => {
+    const enriched = describeEvent(
+      event({
+        type: 'auto_pipeline_retry_abandoned',
+        payload: { run_id: '01HRUN', reason: 'newer_run_active', attempts: 2 },
+      }),
+    );
+    expect(enriched.note).toBe(
+      'A newer run had already started for this engagement, so the outstanding retry was stood down.',
+    );
+  });
+
+  it('says nothing for a reason it has no words for', () => {
+    // The value-keyed form is an allow-list. An undeclared reason is silent
+    // rather than rendered raw: the notes are sentences written for a reader,
+    // not a payload field echoed back.
+    const enriched = describeEvent(event({ type: 'valuation_updated', payload: { reason: 'something_else' } }));
+    expect(enriched.note).toBeNull();
+  });
+
+  it('does not let one event type answer for another type\u2019s flag', () => {
+    // `applyOverwrite` puts the analyst's own typed justification on the
+    // payload under `reason`. Flag-keyed, this row would have been annotated
+    // with a sentence about an account closure that did not happen, on the
+    // audit trail's own authority.
+    const enriched = describeEvent(
+      event({
+        type: 'overwrite_applied',
+        payload: { field_key: 'dlom', from: 0.2, to: 0.25, reason: 'account_closed' },
+      }),
+    );
+    expect(enriched.note).toBeNull();
+    expect(enriched.summary).toBe('Value: 0.2 \u2192 0.25');
+  });
+
+  it('does not resolve a payload value up the prototype chain', () => {
+    // The payload is `jsonb` read back off the spine. `reason: 'constructor'`
+    // indexes a value-keyed map at a key every object has, and `toString` on
+    // the type-keyed one above it.
+    expect(describeEvent(event({ type: 'valuation_updated', payload: { reason: 'constructor' } })).note).toBeNull();
+    expect(describeEvent(event({ type: 'toString', payload: { reason: 'account_closed' } })).note).toBeNull();
+  });
 });
 
 // ── Filtering / roll-up over a small synthetic trail ───────────────────────

@@ -839,19 +839,91 @@ export function extractChanges(type: string, payload: Record<string, unknown>): 
  *
  * A map rather than a branch, because the next one of these will be written the
  * same way — beside `changes`, on a payload some repo already builds — and a
- * map is a place to put it. The key is the payload flag; the note is what the
- * reader is told when it is `true`.
+ * map is a place to put it. R389 walked for the next ones and found four more,
+ * so the map has changed shape twice over.
+ *
+ * KEYED BY EVENT TYPE (round 389, methodology M4). A flag alone is not the
+ * whole address of a circumstance. `reason` is the field two sweeps use to say
+ * why they acted, and it is also the field `applyOverwrite` carries an
+ * analyst's own typed justification in — free text, straight onto the payload.
+ * A flag-keyed map would have rendered "Released automatically when the account
+ * holding this work was closed" on an overwrite whose author happened to type
+ * `account_closed`, which is a sentence the audit trail would be stating on its
+ * own authority about something that did not happen. The type scopes it: a note
+ * is declared by the event that writes the flag, and nothing else can reach it.
+ *
+ * Within a type the value takes two forms: a plain note, read when the flag is
+ * `true`, and a value-keyed map for a field that discriminates by what it says
+ * rather than by being set. `eventCircumstanceCensus.test.ts` is what keeps the
+ * next one from arriving unread.
+ *
+ * The four R389 added, and what each row looks like without its note:
+ *   - `reason: 'account_closed'` — `releaseAssignedWork` takes unfinished work
+ *     off a closed account and writes each engagement
+ *     `assigned_reviewer_id: <id> → —`, character for character the list an
+ *     operator clearing the reviewer by hand produces. This is the
+ *     `organization_deleted` shape again, one subsystem over.
+ *   - `reaped` — the stale-work sweeps end a wedged pipeline run and a wedged
+ *     AI job by writing the same terminal event a worker writes when it reports
+ *     a failure it actually saw. Nobody saw this one.
+ *   - `retry_scheduled` — written beside `reaped` by R268 "on the spine rather
+ *     than only in a column", precisely because "reaped alone reads as an
+ *     ending either way", and then read by nothing.
+ *   - `retry` — `auto_pipeline_started` from the retry sweep is the same event
+ *     an upload writes. `reason: 'newer_run_active'` is the other half: R272
+ *     put the withdrawal of an owed retry on the spine because leaving it in an
+ *     `error` suffix meant "nothing reads it", which is where it stayed.
  */
-export const EVENT_NOTES: Record<string, string> = {
-  organization_deleted: 'The organization was deleted; every engagement it held returned to standalone.',
+const RELEASED_BY_CLOSURE = 'Released automatically when the account holding this work was closed.';
+const REAPED = 'Abandoned by the stale-work sweep after passing its deadline; no worker reported this ending.';
+
+export const EVENT_NOTES: Record<string, Record<string, string | Record<string, string>>> = {
+  portfolio_membership_changed: {
+    organization_deleted: 'The organization was deleted; every engagement it held returned to standalone.',
+  },
+  valuation_updated: { reason: { account_closed: RELEASED_BY_CLOSURE } },
+  review_task_updated: { reason: { account_closed: RELEASED_BY_CLOSURE } },
+  auto_pipeline_failed: {
+    reaped: REAPED,
+    retry_scheduled: { true: 'Another attempt is scheduled.', false: 'No further attempt is scheduled.' },
+  },
+  ai_job_completed: { reaped: REAPED },
+  auto_pipeline_started: { retry: 'Started by the retry sweep, not by an upload or an operator.' },
+  auto_pipeline_retry_abandoned: {
+    reason: {
+      newer_run_active:
+        'A newer run had already started for this engagement, so the outstanding retry was stood down.',
+    },
+  },
 };
 
-/** The note for an event, or null when its payload carries no circumstance. */
-export function eventNote(payload: Record<string, unknown>): string | null {
-  for (const [flag, note] of Object.entries(EVENT_NOTES)) {
-    if (payload[flag] === true) return note;
+/**
+ * The notes an event's payload states, or null when it states none.
+ *
+ * Every declared circumstance is collected rather than the first one, because a
+ * payload can state more than one and the reaper's states two: what ended the
+ * run, and whether anything is coming back for it. `reaped` alone "reads as an
+ * ending either way" — R268's words for why `retry_scheduled` is on the spine
+ * at all — so a note that stopped at the first match would have published half
+ * of the pair the writer wrote together.
+ *
+ * `Object.hasOwn` at both levels rather than a bare index. The payload is
+ * `jsonb` read back off an append-only spine, so its values are whatever some
+ * build wrote years ago, and `constructor` is a key every object answers to.
+ */
+export function eventNote(type: string, payload: Record<string, unknown>): string | null {
+  if (!Object.hasOwn(EVENT_NOTES, type)) return null;
+  const notes: string[] = [];
+  for (const [flag, note] of Object.entries(EVENT_NOTES[type]!)) {
+    const value = payload[flag];
+    if (typeof note === 'string') {
+      if (value === true) notes.push(note);
+      continue;
+    }
+    if (typeof value !== 'string' && typeof value !== 'boolean') continue;
+    if (Object.hasOwn(note, String(value))) notes.push(note[String(value)]!);
   }
-  return null;
+  return notes.length === 0 ? null : notes.join(' ');
 }
 
 /** Compact, human-readable rendering of a value for audit summaries. */
@@ -923,7 +995,7 @@ export function describeEvent(event: RawAuditEvent): AuditEntry {
   const descriptor = describeEventType(event.type);
   const payload = event.payload ?? {};
   const changes = extractChanges(event.type, payload);
-  const note = eventNote(payload);
+  const note = eventNote(event.type, payload);
   const changeSummary = summarizeChanges(changes);
   return {
     id: event.id,
