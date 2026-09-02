@@ -366,12 +366,26 @@ async function historyFor(
 }
 
 /**
+ * The reader for a schedule that could not be built. Structurally typed rather
+ * than `FastifyBaseLogger`, so the sample renderer and the tests can pass one.
+ */
+export type ReportIssueLog = { warn: (obj: object, msg: string) => void };
+
+/**
  * Executive summary for this valuation, from its latest successful engine run.
  * A report drafted before the engine has produced a value renders without one.
  */
 export async function summaryFor(
   pool: pg.Pool,
   valuation: ValuationRow,
+  /**
+   * Where a schedule that could not be built says so (R344, M5).
+   *
+   * Optional because the three test callers and the sample renderer have no
+   * request behind them; every route that builds a real engagement's report
+   * passes `req.log`. See `ExhibitContext.onIssue`.
+   */
+  log?: ReportIssueLog,
 ): Promise<{
   summary: ReportPdfSummary | undefined;
   exhibits: ReportPdfSection[];
@@ -492,6 +506,15 @@ export async function summaryFor(
     volatility,
     projection,
     rollforward,
+    // A schedule that failed rather than one that did not apply. `warn`, not
+    // `error`: the report is rendered, delivered and correct in everything it
+    // does print — what it is missing is an appendix, and the remedy is a
+    // stored row somebody has to fix.
+    onIssue: ({ schedule, reason }: { schedule: string; reason: string }) =>
+      log?.warn(
+        { valuationId: valuation.id, schedule, reason },
+        'a report schedule could not be built and was left out of the deliverable',
+      ),
   };
   return {
     summary: buildReportSummary(calculation, { ...context, history }) ?? undefined,
@@ -538,7 +561,7 @@ async function renderVersionPdf(
   version: number,
   content: ReportContent,
   actor: EventActor,
-  opts: { watermark?: string | null; store?: boolean } = {},
+  opts: { watermark?: string | null; store?: boolean; log?: ReportIssueLog } = {},
 ): Promise<Buffer> {
   const watermark = opts.watermark ?? null;
   // One instant for both the cover's "Rendered" line and the PDF's own
@@ -548,7 +571,7 @@ async function renderVersionPdf(
   // fetch over the network. It has nothing to say about the figures, so it has
   // no reason to wait behind them.
   const [{ summary, exhibits, valuationDate, figures }, branding, signatories] = await Promise.all([
-    summaryFor(pool, valuation),
+    summaryFor(pool, valuation, opts.log),
     brandingFor(pool, valuation),
     // Who signed. Not part of `summaryFor`, which loads what the *calculation*
     // needs — a signature is a fact about the engagement's approval and moves
@@ -657,6 +680,8 @@ export async function deliverablePdf(
   report: ReportRow,
   version: Pick<ReportVersionContent, 'version' | 'content'>,
   actor: EventActor,
+  /** See `ExhibitContext.onIssue`: where a schedule that failed to build says so. */
+  log?: ReportIssueLog,
 ): Promise<Buffer> {
   const watermark = reportWatermarkFor(valuation);
   if (watermark) {
@@ -667,10 +692,13 @@ export async function deliverablePdf(
     return renderVersionPdf(pool, valuation, report, version.version, version.content, actor, {
       watermark,
       store: false,
+      log,
     });
   }
   const stored = await getVersionPdf(pool, report.id, version.version);
-  return stored ?? renderVersionPdf(pool, valuation, report, version.version, version.content, actor);
+  return (
+    stored ?? renderVersionPdf(pool, valuation, report, version.version, version.content, actor, { log })
+  );
 }
 
 const NarrativeBody = z
@@ -1097,6 +1125,7 @@ export function registerReportRoutes(
       version.version,
       version.content,
       actorFor(principal),
+      { log: req.log },
     );
     return { version: version.version, size_bytes: pdf.length, rendered_at: new Date().toISOString() };
   });
@@ -1150,7 +1179,7 @@ export function registerReportRoutes(
     // under `system` is absent from "what did people do" and present in "what
     // did the platform do on its own", which is the wrong answer twice.
     const actor: EventActor = { actorType: 'human', actorId: principal.id, source: 'report.pdf' };
-    const pdf = await deliverablePdf(deps.pool, valuation, report, version, actor);
+    const pdf = await deliverablePdf(deps.pool, valuation, report, version, actor, req.log);
     // The read itself, which nothing recorded.
     //
     // `report_rendered` fires when a version is *produced*. A published report

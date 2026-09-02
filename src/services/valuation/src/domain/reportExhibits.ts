@@ -100,6 +100,26 @@ export interface ExhibitContext {
    * scratch, and Exhibit B-2 is then not rendered.
    */
   rollforward?: RollforwardRunRow | null;
+  /**
+   * Where an exhibit says it could not be built.
+   *
+   * Every other absence in this context is a *fact*: no peer set, no workbook,
+   * no concluded stage. The one exhibit here that can fail rather than be
+   * absent — Appendix III, on a stored `required_return_table` that will not
+   * read — dropped out of the report through the same `return null` the facts
+   * use, with nowhere to say which of the two had happened (R344, M5).
+   *
+   * A schedule missing from a signed 409A deliverable is not a thing the
+   * renderer, the QA route or the exhibit index can notice: `buildExhibits`
+   * returns the sections that were built, and one that was not built is
+   * indistinguishable from one that was never applicable. The reader nobody had
+   * is us.
+   *
+   * Optional, and reporting only — a caller that supplies nothing gets exactly
+   * the behaviour this had, because the degrade itself is right: a render must
+   * not die inside a PDF for one appendix.
+   */
+  onIssue?: (issue: { schedule: ScheduleId; reason: string }) => void;
 }
 
 /** One row of the peer set, as Exhibit D-1 prints it. */
@@ -3741,10 +3761,23 @@ export function requiredReturnExhibit(ctx: ExhibitContext): ReportPdfSection | n
   let rows;
   try {
     rows = requiredReturnRows(stage, ctx.requiredReturnTable);
-  } catch {
+  } catch (err) {
     // A firm's malformed override is refused by the params route at save time.
     // Reaching here means a stored row is unreadable, and a render must not
     // die inside a PDF for it — the appendix drops, as every other one does.
+    //
+    // What it must not do is drop the way the applicable-but-absent ones do
+    // (R344, M5). Those are facts and this is a failure, and until now both
+    // spelled themselves `return null` into a list that keeps no record of
+    // what it did not build: the report shipped an appendix short, the render
+    // reported success, and the analyst who saved the override — which the
+    // params route validated, so the row predates that validation or was
+    // written around it — had nothing anywhere telling them their firm's
+    // ladder was not the one the report was going out without.
+    ctx.onIssue?.({
+      schedule: 'III',
+      reason: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
   if (!rows.some((r) => r.matched)) return null;

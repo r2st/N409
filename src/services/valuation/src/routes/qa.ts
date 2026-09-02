@@ -108,7 +108,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      * second from the rows on file.
      */
     const [{ exhibits }, signatories] = await Promise.all([
-      summaryFor(deps.pool, valuation),
+      summaryFor(deps.pool, valuation, req.log),
       listSignatures(deps.pool, valuation.id),
     ]);
     const exhibitHeadings = exhibits.map((s) => s.heading);

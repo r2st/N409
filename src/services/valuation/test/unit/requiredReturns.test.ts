@@ -104,6 +104,48 @@ describe('Appendix III', () => {
     expect(out).toBeNull();
   });
 
+  it('says so when it drops for a failure rather than for a fact (R344)', () => {
+    /*
+     * The two absences above and this one were the same `return null` into a
+     * list that keeps no record of what it did not build. "No stage concluded"
+     * and "the stored ladder will not read" are a fact and a failure, and a
+     * deliverable that ships an appendix short for the second reason had
+     * nothing anywhere saying so — not the renderer, not the QA route, not the
+     * exhibit index, all of which read the sections that *were* built.
+     */
+    const issues: { schedule: string; reason: string }[] = [];
+    const out = requiredReturnExhibit({
+      ...CTX,
+      developmentStage: 1,
+      requiredReturnTable: [{ stage: 1, category: 'Seed', low: 0.9, high: 0.5 }],
+      onIssue: (i) => issues.push(i),
+    });
+    expect(out).toBeNull();
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.schedule).toBe('III');
+    // The stored row's own complaint, so the operator reading the line knows
+    // which band to fix rather than only that one is wrong.
+    expect(issues[0]!.reason).toContain('required_return_table[0].low');
+  });
+
+  it('stays quiet when the appendix is merely not applicable', () => {
+    // The discriminator: without it the assertion above passes for a reporter
+    // that fires on every absence, which would make the line noise.
+    const issues: unknown[] = [];
+    expect(
+      requiredReturnExhibit({ ...CTX, developmentStage: null, onIssue: () => issues.push(1) }),
+    ).toBeNull();
+    expect(
+      requiredReturnExhibit({
+        ...CTX,
+        developmentStage: 6,
+        requiredReturnTable: [{ stage: 1, category: 'Seed', low: 0.5, high: 0.7 }],
+        onIssue: () => issues.push(1),
+      }),
+    ).toBeNull();
+    expect(issues).toEqual([]);
+  });
+
   it('says it corroborates rather than derives', () => {
     const out = requiredReturnExhibit({ ...CTX, developmentStage: 2 })!;
     expect(out.html).toContain('not the source of the concluded rate');

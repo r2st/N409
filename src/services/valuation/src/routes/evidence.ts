@@ -185,11 +185,14 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         // records this as `human`; the render inside it said `system` with the
         // same person's id, so one act produced two rows that disagreed about
         // who did it.
-        const data = await deliverablePdf(deps.pool, valuation, report, full, {
-          actorType: 'human',
-          actorId: principal.id,
-          source: 'evidence-bundle',
-        });
+        const data = await deliverablePdf(
+          deps.pool,
+          valuation,
+          report,
+          full,
+          { actorType: 'human', actorId: principal.id, source: 'evidence-bundle' },
+          req.log,
+        );
         renderedPdf = { name: `report-v${full.version}.pdf`, data };
       }
     }

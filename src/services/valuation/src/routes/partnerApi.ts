@@ -1187,7 +1187,7 @@ export function registerPartnerApiRoutes(
       // up is `human`, and the two disagreeing meant one partner's reads were
       // filed under the platform and the rest under the partner.
       const actor: EventActor = { ...actorFor(principal), source: 'partner-api-report.pdf' };
-      const pdf = await deliverablePdf(deps.pool, valuation, report, full, actor);
+      const pdf = await deliverablePdf(deps.pool, valuation, report, full, actor, req.log);
       // The deliverable leaving by the second of its three doors. This is the
       // channel that pulls it automatically on `valuation.published`, so it is
       // also the one whose reads are least likely to be remembered by anybody.
