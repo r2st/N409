@@ -263,16 +263,32 @@ describe.skipIf(!dbUp)('Debt valuation — refusals and the credit-terms merge',
       return res.json().valuation.id as string;
     }
 
-    it('404s an engagement id that is malformed or not visible', async () => {
+    /**
+     * Two ids, two answers, and they stopped being the same answer at R331.
+     *
+     * That round moved every body id field onto `ulidField()`, so a malformed
+     * `valuation_id` is refused by `LinkBody` one statement before the lookup
+     * the 404 used to come from — and 422 naming the field is the right answer
+     * for it, which is what R364 concluded about the identical expectation in
+     * `communicationsRefusals.test.ts`. An id that is *well formed and absent*
+     * is still a 404: the caller asked about an engagement, and whether one
+     * exists is not a question about the shape of the request. This test has
+     * been red on `main` since R331 asking both of them for the older answer.
+     */
+    it('refuses a malformed engagement id at the schema and a missing one at the lookup', async () => {
       const id = await createInstrument();
-      for (const valuationId of ['not-a-ulid', ULID_ABSENT]) {
+      for (const [valuationId, status] of [
+        ['not-a-ulid', 422],
+        [ULID_ABSENT, 404],
+      ] as const) {
         const res = await app.inject({
           method: 'PUT',
           url: `/api/v1/debt/instruments/${id}/valuation`,
           headers: auth(),
           payload: { valuation_id: valuationId },
         });
-        expect(res.statusCode, valuationId).toBe(404);
+        expect(res.statusCode, valuationId).toBe(status);
+        if (status === 422) expect(res.json().errors?.[0]?.path).toContain('valuation_id');
       }
     });
 

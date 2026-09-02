@@ -50,11 +50,13 @@ const CreateOrgBody = z.object({
   entity_type: OrgTypeEnum.default('holding_company'),
   parent_org_id: ulidField().optional(),
 });
-const UpdateOrgBody = z.object({
-  name: z.string().trim().min(1).max(200).optional(),
-  entity_type: OrgTypeEnum.optional(),
-  parent_org_id: ulidField().nullable().optional(),
-});
+const UpdateOrgBody = z
+  .object({
+    name: z.string().trim().min(1).max(200).optional(),
+    entity_type: OrgTypeEnum.optional(),
+    parent_org_id: ulidField().nullable().optional(),
+  })
+  .strict();
 const AssignBody = z.object({
   valuation_id: ulidField(),
   entity_type: EntityTypeEnum.optional(),

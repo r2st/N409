@@ -88,18 +88,20 @@ const CreateBody = z.object({
   notes: z.string().max(2000).nullable().optional(),
 });
 
-const PatchBody = z.object({
-  grantee_name: nonBlankText(1, MAX_GRANTEE_NAME).optional(),
-  grantee_email: z.string().email().max(320).nullable().optional(),
-  grant_date: GrantDate.optional(),
-  options_count: int4Positive().optional(),
-  vesting_template: TemplateKey.optional(),
-  vesting_start_date: GrantDate.optional(),
-  vesting_months: z.number().int().min(0).max(VESTING_MONTHS_MAX).optional(),
-  cliff_months: z.number().int().min(0).max(CLIFF_MONTHS_MAX).optional(),
-  frequency_months: z.number().int().min(1).max(FREQUENCY_MONTHS_MAX).optional(),
-  notes: z.string().max(2000).nullable().optional(),
-});
+const PatchBody = z
+  .object({
+    grantee_name: nonBlankText(1, MAX_GRANTEE_NAME).optional(),
+    grantee_email: z.string().email().max(320).nullable().optional(),
+    grant_date: GrantDate.optional(),
+    options_count: int4Positive().optional(),
+    vesting_template: TemplateKey.optional(),
+    vesting_start_date: GrantDate.optional(),
+    vesting_months: z.number().int().min(0).max(VESTING_MONTHS_MAX).optional(),
+    cliff_months: z.number().int().min(0).max(CLIFF_MONTHS_MAX).optional(),
+    frequency_months: z.number().int().min(1).max(FREQUENCY_MONTHS_MAX).optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  })
+  .strict();
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Grant management is operations-only');

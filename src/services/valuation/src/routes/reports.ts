@@ -744,6 +744,7 @@ const NarrativeBody = z
     /** Reuse the last successful draft instead of paying for a new one. */
     reuse: z.boolean().default(true),
   })
+  .strict()
   .default({ overwrite: false, reuse: true });
 
 export function registerReportRoutes(

@@ -301,6 +301,7 @@ const CheckoutBody = z
     express: z.boolean().optional(),
     qsbs_letter: z.boolean().optional(),
   })
+  .strict()
   .default({});
 
 /**

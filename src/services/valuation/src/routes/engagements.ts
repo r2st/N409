@@ -48,15 +48,17 @@ import { quoteForMessage } from '../domain/displayText.js';
  * emails the assigned analyst when a stage is overdue.
  */
 
-const AdvanceBody = z.object({
-  stage: z.string().max(60).optional(),
-  /**
-   * Say that this move is taking the engagement back out of `complete`.
-   * Required for that direction and meaningless in any other — see
-   * `planStageTransition` for why the flag exists rather than a flat refusal.
-   */
-  reopen: z.boolean().optional(),
-});
+const AdvanceBody = z
+  .object({
+    stage: z.string().max(60).optional(),
+    /**
+     * Say that this move is taking the engagement back out of `complete`.
+     * Required for that direction and meaningless in any other — see
+     * `planStageTransition` for why the flag exists rather than a flat refusal.
+     */
+    reopen: z.boolean().optional(),
+  })
+  .strict();
 const AssignBody = z.object({ analyst_id: ulidField().nullable() });
 
 function requireOps(principal: Principal): void {

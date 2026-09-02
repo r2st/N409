@@ -58,47 +58,53 @@ const InstrumentBody = z.object({
   params: z.record(z.unknown()).default({}),
 });
 
-const UpdateBody = z.object({
-  name: z.string().trim().min(1).max(200).optional(),
-  params: z.record(z.unknown()).optional(),
-});
+const UpdateBody = z
+  .object({
+    name: z.string().trim().min(1).max(200).optional(),
+    params: z.record(z.unknown()).optional(),
+  })
+  .strict();
 
-const CreditTermsBody = z.object({
-  rating: z.string().trim().min(1).max(4).nullish(),
-  benchmark_yield: z.number().min(-1).max(5).nullish(),
-  spread: z.number().min(0).max(5).nullish(),
-  seniority: z.enum(['senior_secured', 'senior', 'subordinated', 'mezzanine']).default('senior'),
-  secured: z.boolean().default(false),
-});
+const CreditTermsBody = z
+  .object({
+    rating: z.string().trim().min(1).max(4).nullish(),
+    benchmark_yield: z.number().min(-1).max(5).nullish(),
+    spread: z.number().min(0).max(5).nullish(),
+    seniority: z.enum(['senior_secured', 'senior', 'subordinated', 'mezzanine']).default('senior'),
+    secured: z.boolean().default(false),
+  })
+  .strict();
 
 /** `null` detaches — the measurement tools are usable without an engagement. */
 const LinkBody = z.object({ valuation_id: ulidField().nullable() });
 
-const ValueBody = z.object({
-  valuation_date: DateStr.optional(),
-  // Per-run overrides merged over the stored params (e.g. a fresh market_yield,
-  // benchmark_yield, stock_price or next-round assumptions).
-  overrides: z.record(z.unknown()).default({}),
-  /**
-   * Whether the run is a measurement or a question.
-   *
-   * Every call used to write a `debt_valuations` row, and the sensitivity
-   * walk is five calls: shocking a yield by ±100bp and ±200bp left four
-   * hypothetical prices in the instrument's record beside the real one, all
-   * carrying today's date. `listValuations` is newest-first and
-   * `loadDebtReport` takes its head as the measurement the report is about,
-   * so the last shock of the walk — the rate 200bp *above* the market —
-   * became the instrument's fair value, on the page, in the history table and
-   * in the measurement report. A what-if is not a mark.
-   *
-   * Defaults to true, so the flag is only ever asserted by a caller that
-   * knows it is asking a question. The row a scenario would have written is
-   * also the one most likely to be unstorable — `requireStorableFigure`
-   * bounds the column, and a shocked price is what reaches the bound first —
-   * so not writing it removes a way for the walk to fail halfway.
-   */
-  persist: z.boolean().default(true),
-});
+const ValueBody = z
+  .object({
+    valuation_date: DateStr.optional(),
+    // Per-run overrides merged over the stored params (e.g. a fresh market_yield,
+    // benchmark_yield, stock_price or next-round assumptions).
+    overrides: z.record(z.unknown()).default({}),
+    /**
+     * Whether the run is a measurement or a question.
+     *
+     * Every call used to write a `debt_valuations` row, and the sensitivity
+     * walk is five calls: shocking a yield by ±100bp and ±200bp left four
+     * hypothetical prices in the instrument's record beside the real one, all
+     * carrying today's date. `listValuations` is newest-first and
+     * `loadDebtReport` takes its head as the measurement the report is about,
+     * so the last shock of the walk — the rate 200bp *above* the market —
+     * became the instrument's fair value, on the page, in the history table and
+     * in the measurement report. A what-if is not a mark.
+     *
+     * Defaults to true, so the flag is only ever asserted by a caller that
+     * knows it is asking a question. The row a scenario would have written is
+     * also the one most likely to be unstorable — `requireStorableFigure`
+     * bounds the column, and a shocked price is what reaches the bound first —
+     * so not writing it removes a way for the walk to fail halfway.
+     */
+    persist: z.boolean().default(true),
+  })
+  .strict();
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Debt valuation is operations-only');

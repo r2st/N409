@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -108,6 +108,134 @@ describe('patch bodies refuse unknown keys', () => {
     // Twenty-one at the time of writing. The floor is here so that a refactor
     // which renames the idiom cannot turn this guard green by emptying it.
     expect(seen).toBeGreaterThanOrEqual(15);
+  });
+});
+
+/**
+ * The rule above, stated about the *shape* instead of about the spelling.
+ *
+ * `.partial()` is one way to write a patch and it is not the only one. A body
+ * whose every field carries its own `.optional()` — or its own `.default()` —
+ * is the same object: it accepts `{}`, so nothing in it is required, so a
+ * request made entirely of misspelt keys is indistinguishable from an empty
+ * one and answers 200 having written nothing. Twenty-three body schemas were
+ * written that way and none of them was strict, including two spelled
+ * `PatchBody` on the line above the handler that applies them:
+ * `PATCH /valuations/:id/grants/:grantId`, where the ten fields are the option
+ * grant a 409A's dilution is computed from, and `PATCH /saved-views/:id`.
+ * `schemaBoundaryCensus` read `.partial()` and could not see either.
+ *
+ * Scoped to bodies. A query string is the other half of the same argument and
+ * the answer there is the opposite one: a link carrying `?utm_source=` or a
+ * proxy adding its own parameter is ordinary, and refusing the request over it
+ * would break a page for a reason its user cannot act on. So the rule is about
+ * what a caller *sends to be written*, and every schema below is one this
+ * service parses out of `req.body`.
+ */
+describe('a body schema that accepts {} refuses an unknown key', () => {
+  const ROUTES = path.resolve(HERE, '../../src/routes');
+  /** `.optional()`, `.default(…)` and `.nullish()` all make a field skippable. */
+  const SKIPPABLE = /\.optional\(\)|\.default\(|\.nullish\(\)/;
+
+  interface Schema {
+    file: string;
+    line: number;
+    name: string;
+    fields: number;
+    strict: boolean;
+    body: boolean;
+  }
+
+  /**
+   * Every `z.object({…})` in the route table, with the three facts the rule
+   * needs: whether every field is skippable, whether the chain says
+   * `.strict()`, and whether the schema is ever parsed against `req.body`.
+   *
+   * Brace-counted rather than matched by indentation, because a field is
+   * itself an object often enough (`market_movement`, `asset`, `income`) that
+   * a line-shaped scan would read a nested field as a top-level one and call
+   * a required body optional.
+   */
+  function schemas(): Schema[] {
+    const found: Schema[] = [];
+    for (const file of readdirSync(ROUTES).filter((f) => f.endsWith('.ts'))) {
+      const src = readFileSync(path.join(ROUTES, file), 'utf8');
+      const lines = src.split('\n');
+      const parsedFromBody = new Set(
+        [...src.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*\.safeParse\(\s*(?:req|request)\.body/g)].map(
+          (m) => m[1]!,
+        ),
+      );
+      for (let i = 0; i < lines.length; i++) {
+        if (!/\.object\(\{\s*$/.test(lines[i]!)) continue;
+        let declared = i;
+        while (declared > 0 && !/\b(?:const|let)\s+[A-Za-z_]/.test(lines[declared]!)) declared--;
+        const name = /\b(?:const|let)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(lines[declared]!)?.[1] ?? '(inline)';
+        let depth = 0;
+        let end = i;
+        const block: string[] = [];
+        for (; end < lines.length; end++) {
+          for (const ch of lines[end]!) {
+            if (ch === '{') depth++;
+            else if (ch === '}') depth--;
+          }
+          block.push(lines[end]!);
+          if (depth === 0 && end > i) break;
+        }
+        // The chain hanging off the closing `})`, up to its `;`.
+        let chain = '';
+        for (let k = end; k < Math.min(lines.length, end + 14); k++) {
+          chain += lines[k];
+          if (/;\s*$/.test(lines[k]!)) break;
+        }
+        let d = 0;
+        const fields: string[] = [];
+        for (const text of block) {
+          const before = d;
+          for (const ch of text) {
+            if (ch === '{') d++;
+            else if (ch === '}') d--;
+          }
+          if (before === 1 && /^\s*[a-z_][A-Za-z0-9_]*\s*:/.test(text)) fields.push(text);
+        }
+        if (fields.length > 0 && fields.every((t) => SKIPPABLE.test(t))) {
+          found.push({
+            file,
+            line: i + 1,
+            name,
+            fields: fields.length,
+            strict: /\.strict\(\)/.test(chain),
+            body: parsedFromBody.has(name) || /safeParse\(\s*(?:req|request)\.body/.test(chain),
+          });
+        }
+        i = end;
+      }
+    }
+    return found;
+  }
+
+  it('every all-optional body schema is strict', () => {
+    const stripping = schemas()
+      .filter((s) => s.body && !s.strict)
+      .map((s) => `routes/${s.file}:${s.line}  ${s.name} (${s.fields} fields, all optional)`);
+    expect(
+      stripping,
+      'a body that accepts {} and strips unknown keys answers 200 to a request of nothing but typos:\n' +
+        stripping.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('finds the schemas it is ruling on, and the two the spelling rule missed', () => {
+    // A scan that stopped matching would pass the rule above by having nothing
+    // to judge. These two are the ones this census was written for.
+    const all = schemas();
+    expect(all.length).toBeGreaterThanOrEqual(20);
+    const grants = all.find((s) => s.file === 'grants.ts' && s.name === 'PatchBody');
+    expect(grants, 'grants PatchBody moved or was renamed').toBeDefined();
+    expect(grants!.body).toBe(true);
+    expect(grants!.fields).toBeGreaterThanOrEqual(10);
+    const views = all.find((s) => s.file === 'savedViews.ts' && s.name === 'PatchBody');
+    expect(views?.body).toBe(true);
   });
 });
 

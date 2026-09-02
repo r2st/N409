@@ -69,6 +69,7 @@ const ComputeBody = z
     // chain re-runs on top (409.ai's per-subsystem recompute triggers).
     approach: z.enum(['asset', 'opm', 'income', 'market']).optional(),
   })
+  .strict()
   .default({ inputs: {} });
 
 export { ComputeBody };

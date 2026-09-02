@@ -59,27 +59,29 @@ export const MAX_CAP_TABLE_UPLOAD_BYTES = 10 * 1024 * 1024;
  */
 const MAX_UPLOAD_ROWS = MAX_CAP_TABLE_ENTRIES;
 
-export const ImportBody = z.object({
-  format: z.enum(FORMAT_PRESET_KEYS).default('generic'),
-  /** Raw CSV text, OR pre-parsed rows from a client-side parser. */
-  csv: z.string().max(2_000_000).optional(),
-  rows: z.array(z.record(z.string(), z.unknown())).max(MAX_CAP_TABLE_ENTRIES).optional(),
-  /**
-   * Source line of each entry of `rows`, as the upload endpoint reported it.
-   *
-   * Only meaningful with `rows`: the `csv` path parses the file here and knows
-   * the lines first-hand. It is what lets a validation error name the row of
-   * the spreadsheet for an .xlsx import, where the client picked a sheet from
-   * /upload and sent its rows back — by then the preamble, header and blank
-   * spacers are gone and the array positions no longer track the sheet.
-   *
-   * Untrusted like any other body field, and only ever used to label a message,
-   * so a client that sends nonsense mislabels its own errors and nothing else.
-   */
-  source_lines: z.array(z.number().int().min(1)).max(MAX_CAP_TABLE_ENTRIES).optional(),
-  /** field → source column overrides on top of the format preset. */
-  mapping: z.record(z.string(), z.string()).optional(),
-});
+export const ImportBody = z
+  .object({
+    format: z.enum(FORMAT_PRESET_KEYS).default('generic'),
+    /** Raw CSV text, OR pre-parsed rows from a client-side parser. */
+    csv: z.string().max(2_000_000).optional(),
+    rows: z.array(z.record(z.string(), z.unknown())).max(MAX_CAP_TABLE_ENTRIES).optional(),
+    /**
+     * Source line of each entry of `rows`, as the upload endpoint reported it.
+     *
+     * Only meaningful with `rows`: the `csv` path parses the file here and knows
+     * the lines first-hand. It is what lets a validation error name the row of
+     * the spreadsheet for an .xlsx import, where the client picked a sheet from
+     * /upload and sent its rows back — by then the preamble, header and blank
+     * spacers are gone and the array positions no longer track the sheet.
+     *
+     * Untrusted like any other body field, and only ever used to label a message,
+     * so a client that sends nonsense mislabels its own errors and nothing else.
+     */
+    source_lines: z.array(z.number().int().min(1)).max(MAX_CAP_TABLE_ENTRIES).optional(),
+    /** field → source column overrides on top of the format preset. */
+    mapping: z.record(z.string(), z.string()).optional(),
+  })
+  .strict();
 
 async function loadReadable(pool: pg.Pool, id: string, principal: Principal): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();

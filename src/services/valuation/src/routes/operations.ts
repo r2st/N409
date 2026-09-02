@@ -314,6 +314,7 @@ export function registerOperationsRoutes(
         ids: z.array(ulidField()).max(1000).optional(),
         partner_id: ulidField().optional(),
       })
+      .strict()
       .safeParse(req.body ?? {});
     if (!body.success) throw invalidBody('Invalid body', body.error);
     const replayed = await replayFailedDeliveries(deps.pool, {

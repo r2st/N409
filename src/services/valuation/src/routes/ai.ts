@@ -259,6 +259,7 @@ const AnonymizeBody = z
     known_companies: z.array(z.string().min(1).max(200)).max(200).default([]),
     known_people: z.array(z.string().min(1).max(200)).max(200).default([]),
   })
+  .strict()
   .default({ text: '', document_ids: [], known_companies: [], known_people: [] });
 
 function actorFor(principal: Principal): EventActor {

@@ -70,10 +70,12 @@ const ProfileBody = z
   .partial()
   .strict();
 
-const CloseAccountBody = z.object({
-  /** Required for password accounts; ignored for SSO-only accounts. */
-  current_password: z.string().min(1).optional(),
-});
+const CloseAccountBody = z
+  .object({
+    /** Required for password accounts; ignored for SSO-only accounts. */
+    current_password: z.string().min(1).optional(),
+  })
+  .strict();
 
 const TokenBody = z.object({
   name: z.string().trim().min(1).max(200),

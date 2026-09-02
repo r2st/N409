@@ -54,6 +54,7 @@ const RunBody = z
      */
     inputs: z.record(z.unknown()).default({}),
   })
+  .strict()
   .default({ inputs: {} });
 
 /**

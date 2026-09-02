@@ -40,10 +40,12 @@ import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
  */
 
 const MAX_EXPIRY_DAYS = 180;
-const CreateBody = z.object({
-  label: z.string().trim().max(200).optional(),
-  expires_in_days: z.number().int().min(1).max(MAX_EXPIRY_DAYS).default(30),
-});
+const CreateBody = z
+  .object({
+    label: z.string().trim().max(200).optional(),
+    expires_in_days: z.number().int().min(1).max(MAX_EXPIRY_DAYS).default(30),
+  })
+  .strict();
 const RedeemBody = z.object({ token: z.string().min(1) });
 
 /**

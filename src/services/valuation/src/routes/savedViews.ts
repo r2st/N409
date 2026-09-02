@@ -125,6 +125,7 @@ const PatchBody = z
     visibility: z.enum(VIEW_VISIBILITIES).optional(),
     is_default: z.boolean().optional(),
   })
+  .strict()
   .refine((b) => Object.keys(b).length > 0, { message: 'No fields to update' });
 
 function toJson(row: SavedViewWithOwner, viewerId: string) {

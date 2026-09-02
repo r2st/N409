@@ -34,13 +34,15 @@ import { forbidden } from '../domain/accessProblem.js';
  * event, no change to the valuation. Strictly read-only.
  */
 
-const PreviewBody = z.object({
-  revenue: z.number().positive().max(1e15).optional(),
-  growth_rate: z.number().min(-0.5).max(2).optional(),
-  discount_rate: z.number().gt(0).max(1).optional(),
-  multiples: z.array(z.number().gt(0).max(1000)).min(1).max(20).optional(),
-  volatility: z.number().gt(0).max(5).optional(),
-});
+const PreviewBody = z
+  .object({
+    revenue: z.number().positive().max(1e15).optional(),
+    growth_rate: z.number().min(-0.5).max(2).optional(),
+    discount_rate: z.number().gt(0).max(1).optional(),
+    multiples: z.array(z.number().gt(0).max(1000)).min(1).max(20).optional(),
+    volatility: z.number().gt(0).max(5).optional(),
+  })
+  .strict();
 export type ScenarioInputs = z.infer<typeof PreviewBody>;
 
 /** IMPROVEMENTS_RESEARCH §5.7 — saved bull/base/bear/custom cases. */

@@ -36,6 +36,7 @@ const RunBody = z
     // alone never leave the process).
     ai: z.boolean().default(false),
   })
+  .strict()
   .default({ ai: false });
 
 const QA_STATUSES: ReadonlySet<string> = new Set(['pass', 'warn', 'fail']);

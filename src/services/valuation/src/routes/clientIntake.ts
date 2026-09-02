@@ -60,12 +60,14 @@ import { ulidField } from '../domain/ulidField.js';
 
 const MAX_EXPIRY_DAYS = 90;
 
-const CreateBody = z.object({
-  client_name: z.string().trim().max(200).optional(),
-  client_email: z.string().trim().email().max(320).optional(),
-  label: z.string().trim().max(200).optional(),
-  expires_in_days: z.number().int().min(1).max(MAX_EXPIRY_DAYS).default(30),
-});
+const CreateBody = z
+  .object({
+    client_name: z.string().trim().max(200).optional(),
+    client_email: z.string().trim().email().max(320).optional(),
+    label: z.string().trim().max(200).optional(),
+    expires_in_days: z.number().int().min(1).max(MAX_EXPIRY_DAYS).default(30),
+  })
+  .strict();
 
 const TokenBody = z.object({ token: z.string().min(1) });
 const SaveBody = TokenBody.extend({ answers: IntakeAnswers });
@@ -75,12 +77,14 @@ const SaveBody = TokenBody.extend({ answers: IntakeAnswers });
  * ask about are the two things the firm may state here. Everything else comes
  * from what the client answered.
  */
-const ConvertBody = z.object({
-  kind: z.enum(VALUATION_KINDS).default('409a'),
-  currency: CurrencyCode.optional(),
-  /** Overrides the legal name the client typed, when the firm knows better. */
-  company_name: z.string().trim().min(1).max(300).optional(),
-});
+const ConvertBody = z
+  .object({
+    kind: z.enum(VALUATION_KINDS).default('409a'),
+    currency: CurrencyCode.optional(),
+    /** Overrides the legal name the client typed, when the firm knows better. */
+    company_name: z.string().trim().min(1).max(300).optional(),
+  })
+  .strict();
 
 /**
  * The portal routes authenticate on the token alone, so an unlimited endpoint

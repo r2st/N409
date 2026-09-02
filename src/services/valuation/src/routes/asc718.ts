@@ -139,18 +139,20 @@ const TsrBody = z.object({
   payout_schedule: z.array(TsrPayoutTier).min(1).max(20),
 });
 
-const Body = z.object({
-  company_type: z.enum(['private', 'public']).default('private'),
-  ticker: z.string().trim().min(1).max(12).optional(),
-  valuation_date: DateStr.optional(),
-  market_lookback_days: z.number().int().min(30).max(2520).optional(),
-  grants: z.array(GrantBody).max(100).default([]),
-  espp: z.array(EsppBody).max(50).optional(),
-  rsu: z.array(RsuBody).max(100).optional(),
-  tsr: z.array(TsrBody).max(20).optional(),
-  default_grant_date_fair_value: z.number().positive().max(1e9).optional(),
-  default_volatility: z.number().gt(0).max(5).optional(),
-});
+const Body = z
+  .object({
+    company_type: z.enum(['private', 'public']).default('private'),
+    ticker: z.string().trim().min(1).max(12).optional(),
+    valuation_date: DateStr.optional(),
+    market_lookback_days: z.number().int().min(30).max(2520).optional(),
+    grants: z.array(GrantBody).max(100).default([]),
+    espp: z.array(EsppBody).max(50).optional(),
+    rsu: z.array(RsuBody).max(100).optional(),
+    tsr: z.array(TsrBody).max(20).optional(),
+    default_grant_date_fair_value: z.number().positive().max(1e9).optional(),
+    default_volatility: z.number().gt(0).max(5).optional(),
+  })
+  .strict();
 
 /** Matches `TsrBody.peers`: a basket the TSR measurement below could actually price. */
 const MAX_TSR_PEERS = 50;

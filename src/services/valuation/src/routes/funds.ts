@@ -156,16 +156,18 @@ const MarkBody = z
     }
   });
 
-const LpTermsBody = z.object({
-  committed_capital: z.number().min(0).max(1e15).default(0),
-  contributed_capital: z.number().min(0).max(1e15).default(0),
-  preferred_return_rate: z.number().min(0).max(1).default(0.08),
-  carry_pct: z.number().min(0).max(0.99).default(0.2),
-  gp_catch_up: z.boolean().default(true),
-  management_fee_pct: z.number().min(0).max(1).default(0.02),
-  management_fees_paid: z.number().min(0).max(1e15).default(0),
-  gp_distributions_to_date: z.number().min(0).max(1e15).default(0),
-});
+const LpTermsBody = z
+  .object({
+    committed_capital: z.number().min(0).max(1e15).default(0),
+    contributed_capital: z.number().min(0).max(1e15).default(0),
+    preferred_return_rate: z.number().min(0).max(1).default(0.08),
+    carry_pct: z.number().min(0).max(0.99).default(0.2),
+    gp_catch_up: z.boolean().default(true),
+    management_fee_pct: z.number().min(0).max(1).default(0.02),
+    management_fees_paid: z.number().min(0).max(1e15).default(0),
+    gp_distributions_to_date: z.number().min(0).max(1e15).default(0),
+  })
+  .strict();
 
 /** `null` detaches — the measurement tools are usable without an engagement. */
 const LinkBody = z.object({ valuation_id: ulidField().nullable() });
@@ -185,15 +187,17 @@ const CalibrateBody = z.object({
   fully_diluted_shares: z.number().positive().max(1e15),
 });
 
-const RollForwardBody = z.object({
-  method: z.enum(['index', 'accretion', 'calibration']).default('index'),
-  index_return: z.number().min(-1).max(50).optional(),
-  accretion_rate: z.number().min(-1).max(50).optional(),
-  periods: z.number().min(0).max(100).default(1),
-  new_calibrated_value: z.number().min(0).max(1e15).optional(),
-  measurement_date: DateStr.optional(),
-  record: z.boolean().default(false),
-});
+const RollForwardBody = z
+  .object({
+    method: z.enum(['index', 'accretion', 'calibration']).default('index'),
+    index_return: z.number().min(-1).max(50).optional(),
+    accretion_rate: z.number().min(-1).max(50).optional(),
+    periods: z.number().min(0).max(100).default(1),
+    new_calibrated_value: z.number().min(0).max(1e15).optional(),
+    measurement_date: DateStr.optional(),
+    record: z.boolean().default(false),
+  })
+  .strict();
 
 interface EngineMarkedPosition {
   name: string;
