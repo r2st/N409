@@ -261,7 +261,35 @@ def yield_dcf(
     Returns the dirty price (PV of all future flows), the accrued interest, and
     the clean price (dirty − accrued). ``settlement_fraction`` is how far (0–1)
     settlement sits into the current coupon period; it shifts every cash-flow
-    time earlier by that fraction of a period and accrues the running coupon.
+    time earlier by that fraction of a period.
+
+    THE ACCRUAL IS READ OFF THE SCHEDULE, NOT OFF THE ARGUMENT (round 386,
+    methodology M2). There are two ways to say that settlement sits inside a
+    coupon period, and since `schedule_periods` began dating backwards from
+    maturity there have been two: a ``maturity_years`` that is not a whole
+    number of periods produces a short first period and carries the position
+    itself, and ``settlement_fraction`` shifts a whole-period grid. They are the
+    same statement about the same instrument, and the accrual used to be struck
+    from only one of them — ``first_interest * settlement_fraction``.
+
+    So the same note priced both ways disagreed on the clean price by the whole
+    accrued coupon. A 6% semiannual $1,000 note maturing 2027-06-30, valued
+    2026-08-30, is 1.8356 years out; written that way its flows fall at 0.3356,
+    0.8356, 1.3356 and 1.8356 and it came back ``accrued_interest: 0.00`` and a
+    clean price of 1009.77 — equal to its own dirty price, which is not a thing
+    a bond trading between coupon dates can be. Written as a 2.0-year note at a
+    settlement fraction of 0.3288 it produces those same four dates to the
+    digit, the same dirty price to the microdollar, and a clean price of 999.90:
+    9.86 apart, ~1% of face, decided by nothing but which spelling the caller
+    used. The natural one — a maturity computed from two dates — was the wrong
+    one.
+
+    ``1 − t₁·m`` is how much of the current period is behind us, and it is true
+    of whatever schedule this function actually priced, however the caller
+    described it. The aligned cases are unchanged: a whole-period maturity with
+    no fraction gives ``t₁ = 1/m`` and accrues nothing, and one shifted by
+    ``frac`` gives ``t₁ = (1 − frac)/m`` and accrues exactly
+    ``first_interest × frac`` as before.
     """
     m = _frequency(frequency)
     schedule = coupon_schedule(
@@ -274,12 +302,22 @@ def yield_dcf(
     shifted = [{"amount": r["amount"], "t_years": max(r["t_years"] - frac / m, 0.0)} for r in schedule]
     dirty = present_value(shifted, market_yield, frequency=m)
     first_interest = schedule[0]["interest"] if schedule else 0.0
-    accrued = first_interest * frac
+    # Clamped at both ends rather than trusted: `coupon_schedule` puts the first
+    # date in (0, 1/m], so the quotient is already in [0, 1) — but the shift
+    # above can floor a date at zero on a matured instrument, where the whole
+    # coupon is payable today and the elapsed fraction is a full period.
+    elapsed = 0.0 if not shifted else min(max(1.0 - shifted[0]["t_years"] * m, 0.0), 1.0)
+    accrued = first_interest * elapsed
     return {
         "dirty_price": round(dirty, 6),
         "accrued_interest": round(accrued, 6),
         "clean_price": round(dirty - accrued, 6),
         "market_yield": round(_num(market_yield, "market_yield"), 6),
+        # How much of the current coupon period settlement sits past, derived
+        # from the dates this run priced. Reported because the two spellings
+        # above both reach it and a reader checking the accrual by hand needs
+        # the fraction it was struck on, not the argument they happened to send.
+        "accrual_fraction": round(elapsed, 6),
         "schedule": schedule,
     }
 

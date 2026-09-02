@@ -59,6 +59,57 @@ def test_accrued_interest_between_coupons():
     assert v["dirty_price"] == pytest.approx(v["clean_price"] + v["accrued_interest"], abs=1e-6)
 
 
+def test_the_two_spellings_of_one_settlement_date_agree():
+    """Round 386, methodology M2. Same note, same dates, one clean price.
+
+    Since `schedule_periods` began dating backwards from maturity there have
+    been two ways to say that settlement sits inside a coupon period: a
+    `maturity_years` that is not a whole number of periods, which carries it
+    itself, and `settlement_fraction`, which shifts a whole-period grid. The
+    accrual was struck from only the second.
+
+    A 6% semiannual $1,000 note maturing 2027-06-30 valued 2026-08-30 is 1.8356
+    years out. Both spellings below produce the same four dates and the same
+    dirty price; the first used to report `accrued_interest: 0.00` and a clean
+    price equal to its own dirty price, which is not a state a bond trading
+    between coupon dates can be in. 9.86 apart — a full ~1% of face — decided by
+    which spelling the caller reached for, and the natural one (a maturity
+    computed from two dates) was the wrong one.
+    """
+    dated = yield_dcf(face=1000, coupon_rate=0.06, frequency=2, maturity_years=1.8356, market_yield=0.06)
+    shifted = yield_dcf(
+        face=1000, coupon_rate=0.06, frequency=2, maturity_years=2.0, market_yield=0.06,
+        settlement_fraction=0.3288,
+    )
+    # The premise: they really are the same schedule, priced the same.
+    assert [r["t_years"] for r in dated["schedule"]] == pytest.approx([0.3356, 0.8356, 1.3356, 1.8356])
+    assert dated["dirty_price"] == pytest.approx(shifted["dirty_price"], abs=1e-6)
+    # The claim.
+    assert dated["accrual_fraction"] == pytest.approx(0.3288, abs=1e-6)
+    assert dated["accrued_interest"] == pytest.approx(30.0 * 0.3288, abs=1e-6)
+    assert dated["clean_price"] == pytest.approx(shifted["clean_price"], abs=1e-6)
+    assert dated["clean_price"] < dated["dirty_price"]
+
+
+def test_a_whole_period_maturity_still_accrues_nothing():
+    """The discriminator: accruing off `1 - t1*m` unconditionally must not
+    invent an accrual on a bond that settles on a coupon date."""
+    v = yield_dcf(face=1000, coupon_rate=0.06, frequency=2, maturity_years=5, market_yield=0.06)
+    assert v["accrual_fraction"] == 0.0
+    assert v["accrued_interest"] == 0.0
+    assert v["clean_price"] == pytest.approx(v["dirty_price"], abs=1e-9)
+
+
+def test_a_matured_instrument_is_worth_its_redemption_clean():
+    """`schedule_periods` prices a matured note as its redemption today. The
+    single flow still carries a full coupon, so the whole period is behind us
+    and the clean price is the face — it used to be the face plus the coupon."""
+    v = yield_dcf(face=1000, coupon_rate=0.06, frequency=2, maturity_years=0.0, market_yield=0.06)
+    assert v["accrual_fraction"] == 1.0
+    assert v["dirty_price"] == pytest.approx(1030.0, abs=1e-6)
+    assert v["clean_price"] == pytest.approx(1000.0, abs=1e-6)
+
+
 def test_present_value_matches_manual_discount():
     pv = present_value([{"amount": 105, "t_years": 1.0}], 0.05, frequency=1)
     assert pv == pytest.approx(100.0)
