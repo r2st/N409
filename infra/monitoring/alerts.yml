@@ -174,6 +174,81 @@ groups:
           summary: '{{ $labels.job }} is running with no MemoryMax; a leak here takes the whole box'
           runbook: 'systemctl show n409-<unit> -p MemoryMax; infra/systemd holds the intended value'
 
+      # And the instrument that was written to be the early warning, which no
+      # rule read (R345, methodology M11).
+      #
+      # `cgroupMemory.ts` exports `memory.events` as five labelled counters and
+      # argues at length for why: `high` counts times the cgroup was throttled
+      # at `MemoryHigh`, `max` counts times an allocation was about to breach
+      # `MemoryMax` and reclaim was forced, and — its words — "the first two are
+      # the early warning; they tick long before anything dies". Nothing in this
+      # file selected any of the five. The family was exported, scraped and read
+      # by nobody, which is the same as not having it.
+      #
+      # It is not covered by `MemoryNearCgroupLimit` beside it. That rule samples
+      # an instantaneous ratio and needs it held for ten minutes, so it sees a
+      # unit that grows into its ceiling and sits there. The failure this estate
+      # actually has is the other shape: a report render or a workbook import
+      # allocates hard inside one request, the cgroup forces reclaim, and either
+      # the request dies or the unit does — between two fifteen-second scrapes,
+      # with the ratio never observed above 0.9 for ten consecutive minutes.
+      # These counters are monotonic within a process lifetime, so one scrape
+      # after the event is enough to see it; that is the whole difference.
+      #
+      # `increase(...)` rather than `> 0`: the counters reset only when the unit
+      # restarts, so a bare comparison is sticky — a unit that touched its
+      # ceiling once at boot and has been healthy for a month would hold the
+      # alert open the whole time. A window asks the question worth asking,
+      # which is whether it is happening now.
+      - alert: CgroupMemoryReclaimForced
+        expr: increase(n409_cgroup_memory_events{event="max"}[15m]) > 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.job }} has hit MemoryMax and been forced into reclaim'
+          runbook: 'the cgroup OOM kill is what comes next — n409_cgroup_memory_peak_bytes vs _max_bytes, then raise MemoryMax in infra/systemd or find the allocation'
+
+      # `MemoryHigh` is throttling rather than killing: the kernel stalls the
+      # allocating task and reclaims. Nothing fails, so no other signal here
+      # moves — the unit simply gets slower, which arrives as `SlowRequests` with
+      # no cause attached. A ticket, because it is the sizing conversation and
+      # not an incident.
+      #
+      # Fires only where `MemoryHigh` is set: `n409_cgroup_memory_high_bytes` is
+      # documented "or 0 when unset", and an unset threshold means this counter
+      # can never tick. That is a rule that matches nothing rather than a wrong
+      # one, and it is the right way round — the day a drop-in sets MemoryHigh,
+      # this is already watching it.
+      - alert: CgroupMemoryThrottling
+        expr: increase(n409_cgroup_memory_events{event="high"}[30m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} is being throttled at MemoryHigh and reclaiming under load'
+          runbook: 'systemctl show n409-<unit> -p MemoryHigh -p MemoryMax; compare with n409_cgroup_memory_peak_bytes'
+
+      # The kill itself, best-effort and knowingly so.
+      #
+      # systemd destroys a unit's cgroup on stop and makes a fresh one on start,
+      # so a unit whose *main* process is killed comes back reporting
+      # `oom_kill 0` and this rule never sees it — `ServiceRestarting` is the
+      # signal for that case and the journal is the durable record. What this
+      # does catch is the case nothing else here can: a kill that does not take
+      # the unit down. The cgroup OOM handler picks a process, not the service,
+      # so a child that is killed leaves the unit up, healthy on every other
+      # instrument, and the counter standing at 1 until the next restart.
+      #
+      # Bare `> 0`, not a window: with the reset semantics above, any non-zero
+      # reading is a kill this process has outlived, and it clears itself the
+      # moment the unit restarts.
+      - alert: CgroupOomKill
+        expr: n409_cgroup_memory_events{event="oom_kill"} > 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.job }} has had a process killed by the cgroup OOM handler'
+          runbook: 'journalctl -u n409-<unit> --grep=oom; the unit is still up, so something under it is not'
+
   - name: n409-http
     rules:
       # Rate, not count: "forty 5xx" means nothing without knowing whether that

@@ -17,6 +17,7 @@
 // pageable noise this file's header argues against.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { readBuildInfo, UNKNOWN_BUILD } from '../src/build.js';
+import { CGROUP_MEMORY_EVENTS } from '../src/cgroupMemory.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -418,6 +419,59 @@ describe('alert rules', () => {
       unwatched.map((f) => `${f.sweep}.${f.field}`),
       'sweeps that report having examined nothing, to no rule',
     ).toEqual([]);
+  });
+
+  it('reads every kernel memory event it went to the trouble of exporting', () => {
+    /*
+     * R345, and the sixth direction. R341's case above is a rule that is
+     * absent for a field two sweeps flatten; this is the same absence one size
+     * up — a whole labelled family exported, scraped, and selected by nothing.
+     *
+     * `cgroupMemory.ts` reads `memory.events` and exports its five counters
+     * with an argument for why they are the ones worth having: "`high` counts
+     * times the cgroup was throttled at `MemoryHigh`, `max` counts times an
+     * allocation was about to breach `MemoryMax` and reclaim was forced ... the
+     * first two are the early warning; they tick long before anything dies".
+     * No rule in this file named the metric at all, so the early warning warned
+     * nobody, and the only memory rule that existed — `MemoryNearCgroupLimit` —
+     * samples an instantaneous ratio and requires ten consecutive minutes of
+     * it. A unit that allocates hard inside one request is reclaimed, throttled
+     * or killed between two scrapes without that ratio ever being observed.
+     *
+     * Held against the exported constant rather than a list here, so an event
+     * added to `CGROUP_MEMORY_EVENTS` — the kernel publishes more than these
+     * five — arrives with this case red until somebody decides whether it is
+     * worth waking for.
+     */
+    const selectors = [...RULES.matchAll(/n409_cgroup_memory_events\{([^}]*)\}/g)].map((m) => m[1]!);
+    // Non-vacuity: a scan finding no selector would pass every event below by
+    // having nothing to check them against.
+    expect(selectors.length).toBeGreaterThan(1);
+
+    /*
+     * The one event deliberately left unwatched, and why.
+     *
+     * `low` counts reclaim that happened *despite* `MemoryLow` protection,
+     * which is a statement about the host's pressure rather than about this
+     * unit: nothing under infra/systemd sets `MemoryLow`, so it says only that
+     * the box as a whole reclaimed. An alert nobody can act on is the thing
+     * this file's header refuses to have.
+     */
+    const unwatchable = new Set(['low']);
+    // And `oom`, which counts invocations of the cgroup OOM handler — every one
+    // of which either ends in an `oom_kill` (watched) or in the allocation
+    // failing, which is `max` (watched). A third page for the same instant.
+    unwatchable.add('oom');
+
+    const unwatched = CGROUP_MEMORY_EVENTS.filter(
+      (event) =>
+        !unwatchable.has(event) &&
+        !selectors.some((sel) => new RegExp(`event=~?"[^"]*\\b${event}\\b[^"]*"`).test(sel)),
+    );
+    expect(unwatched, 'kernel memory events exported to no rule').toEqual([]);
+    // Non-vacuity the other way: an exclusion list that grew to cover the
+    // family would make the assertion above pass by having nothing left to ask.
+    expect(CGROUP_MEMORY_EVENTS.filter((e) => !unwatchable.has(e)).length).toBeGreaterThan(2);
   });
 
   it('pages only on the severities it declares', () => {
