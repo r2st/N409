@@ -291,7 +291,6 @@ describe('/ready coalescing', () => {
   });
 });
 
-
 /**
  * A dependency the service was designed to serve without (round 361, M11).
  *
@@ -310,7 +309,10 @@ describe('/ready coalescing', () => {
  * cannot be mistaken for a whole estate.
  */
 describe('optional readiness checks', () => {
-  const app = (checks: Record<string, () => Promise<void>>, optional: Record<string, () => Promise<void>>) => {
+  const app = (
+    checks: Record<string, () => Promise<void>>,
+    optional: Record<string, () => Promise<void>>,
+  ) => {
     const instance = Fastify({ logger: false });
     registerHealth(instance, { service: 'test', checks, optional, readyCacheMs: 0 });
     return instance;
@@ -349,7 +351,12 @@ describe('optional readiness checks', () => {
   it('logs a degraded fan-out without calling it unavailable', async () => {
     const warn = vi.fn();
     const instance = Fastify({ logger: false });
-    registerHealth(instance, { service: 'test', checks: { postgres: ok }, optional: { ai: fails }, readyCacheMs: 0 });
+    registerHealth(instance, {
+      service: 'test',
+      checks: { postgres: ok },
+      optional: { ai: fails },
+      readyCacheMs: 0,
+    });
     instance.addHook('onRequest', (req, _reply, done) => {
       (req as unknown as { log: unknown }).log = { warn, error: warn, info: warn, debug: warn };
       done();
