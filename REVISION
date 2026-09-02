@@ -8184,3 +8184,86 @@
 #            carries its own note). A derived guard would need the
 #            request-scoping idea the frontend half uses, and valuation's
 #            equivalent of "a request" is not one function.
+#
+# R353 — Observability & monitoring gaps (M11). Three findings, no migration, 14
+#            new tests, and the lens that produced two of them is a roster this
+#            page has been building for five rounds: which doors onto the
+#            platform have an outcome counter, and which finite resources on the
+#            box have a ceiling anybody can see. Both had exactly one entry
+#            missing, and in both cases the missing one was the obvious one.
+#
+#            **Every machine door had a counter; the door people use did not.**
+#            R329 gave the inbound webhooks and the two SSO flows one, R337 the
+#            SCIM connector, R341 the OAuth callbacks, R345 the partner API
+#            keys — five rounds, one argument each time: the refusal is answered
+#            in a status class nothing here watches, so an integration refusing
+#            everything looks exactly like one nobody is using. `POST
+#            /auth/login` and `POST /auth/mfa/verify` are the same failure in
+#            the plainest form. A refusal is a 401 and a lockout is a 429, and
+#            `scimRequests.ts` states the fact that makes both invisible: there
+#            is no 4xx rule on this box at all. A password verifier that stopped
+#            verifying, a `users` table restored with the digests where nothing
+#            reads them, or a TOTP secret encrypted under a rotated key refuses
+#            every sign-in on the estate with no 5xx, no slow request and no
+#            open circuit, because the identity store is our own Postgres and it
+#            is answering perfectly well. `mfa_challenged` is its own outcome
+#            and excluded from both halves of the ratio: an account with 2FA on
+#            is *answered* by the password door with a challenge, so counting it
+#            either way breaks the rule in one direction or the other.
+#
+#            **Memory had a ceiling; the disk had nothing.** R99 gave every unit
+#            a `MemoryMax`, R337 exported the cgroup's view of it, and four
+#            rules watch the approach. The other finite resource on the same
+#            single-volume host had no gauge, no threshold and no rule — and
+#            four symptoms, every one of them after the fact and none of them
+#            naming the disk: PostgreSQL refusing writes (which surfaces as
+#            `503 database-unavailable`, `databaseUnavailableReason` working
+#            exactly as designed), uploads failing at `open` with ENOSPC, the
+#            nightly dump having nowhere to land on the day somebody wants it,
+#            and the journal dropping the lines that describe the other three.
+#            `bavail` and not `bfree`, because ext4 reserves 5% for root and a
+#            service running as `n409` hits ENOSPC with the naive figure still
+#            comfortable. The collect is deliberately left to throw: a path that
+#            cannot be stat'ed is not a filesystem with zero bytes free, and
+#            R341 already built the path that turns a throwing gauge into
+#            `MetricCollectFailing` rather than into silence.
+#
+#            **The third is the campaign's recurring shape rather than a
+#            roster's gap.** `monitorAlertUnannounced` covers the monitor alert
+#            that could not be *sent* and handles it carefully — suppressor off,
+#            failure named, next scan owes it again. The case that threw nothing
+#            was not covered: the email goes to `assigned_reviewer_id`, an
+#            engagement can be monitored without one, and `recordAlert` has
+#            already committed by the time the recipient is looked at. So `if
+#            (reviewer)` was false, `alerts_sent` did not count it, `unsent` had
+#            nothing to put in it, and the scan returned the two numbers a pass
+#            on which nothing fired returns — while a safe-harbor expiry reached
+#            nobody, permanently.
+#
+#            gap: `POST /api/v1/admin/monitors/scan` is the only caller of the
+#            monitor evaluation and it is ops-triggered. Nothing schedules it:
+#            it is absent from `SWEEP_ROSTER`, so `SweepStopped` cannot see it,
+#            and `last_checked_at` is a column nothing reads. Post-valuation
+#            monitoring therefore runs when somebody presses a button, and the
+#            fix is a twelfth sweep that sends email on a timer — a behaviour
+#            change rather than an instrument, which is why it is named here
+#            rather than taken in an observability round.
+#            gap: the AI (:3002) and engine (:3003) units still expose no scrape
+#            endpoint, so `EstateBuildSkew` counts three units out of five and
+#            their cgroup ceilings are visible through `systemctl show` only.
+#            R313's open item, unchanged, and the disk gauge above inherits the
+#            same shape: it is registered on the valuation unit alone.
+#            gap: `HighServerErrorRate` divides by `http_requests_total`, whose
+#            denominator includes the scraper's own `/metrics` request — a
+#            guaranteed 200 at the scrape interval. On a quiet night that is a
+#            material share of the traffic, and excluding it by label is not
+#            available: the alerts file's own note says the `http_request*`
+#            instruments are *expected* to fold past 200 series, and a folded
+#            `route="/metrics"` reading files under `__other__`. Wants the hook
+#            to skip the scrape path rather than the rule to filter it.
+#            gap: `sweepTally` counts every finite non-negative numeric field a
+#            tick returns as an outcome and adds it to a cumulative counter.
+#            Every sweep today returns deltas, which is what makes that correct;
+#            a sweep returning a *level* (a backlog depth, a duration) would
+#            accumulate into a counter whose rate means nothing, and nothing
+#            holds the shape.
