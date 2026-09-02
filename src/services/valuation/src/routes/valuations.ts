@@ -22,7 +22,7 @@ import {
   VALUATION_STATES,
   type ValuationState,
 } from '../domain/valuation.js';
-import { CurrencyCode } from '../domain/currency.js';
+import { CountryCode, CurrencyCode } from '../domain/currency.js';
 import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
@@ -64,7 +64,7 @@ const CreateBody = z.object({
   company_name: z.string().trim().min(1).max(300),
   service_name: z.string().trim().min(1).max(300).optional(),
   currency: CurrencyCode.optional(),
-  service_countries: z.array(z.string().length(2)).max(50).optional(),
+  service_countries: z.array(CountryCode).max(50).optional(),
   source: z.enum(VALUATION_SOURCES).optional(),
   gclid: z.string().max(200).optional(),
   /*
@@ -100,7 +100,7 @@ const PatchBody = z
     delivery_days: int4Positive().nullable(),
     paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']),
     currency: CurrencyCode,
-    service_countries: z.array(z.string().length(2)).max(50),
+    service_countries: z.array(CountryCode).max(50),
     qsbs_attestation: z.boolean().nullable(),
   })
   .partial()

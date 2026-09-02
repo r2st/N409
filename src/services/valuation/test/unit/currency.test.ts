@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CurrencyCode, isCurrencyCode } from '../../src/domain/currency.js';
+import { CountryCode, CurrencyCode, isCurrencyCode } from '../../src/domain/currency.js';
 
 /**
  * The write boundaries used to spell this `z.string().length(3)`, which checks
@@ -43,5 +43,39 @@ describe('CurrencyCode', () => {
     expect(isCurrencyCode('usd')).toBe(true);
     expect(isCurrencyCode('123')).toBe(false);
     expect(isCurrencyCode('USDX')).toBe(false);
+  });
+});
+
+/**
+ * R343, M19 — the same gap, one field over. `service_countries` was spelled
+ * `z.string().length(2)` at all three of its doors while every one of them
+ * documented the field as "ISO-3166 alpha-2", so `"12"` and `"$$"` reached the
+ * `text[]` column from a partner API key, and `"gb"` and `"GB"` were stored as
+ * two distinct members of a set the auditor workbook joins into one cell.
+ */
+describe('CountryCode', () => {
+  it('accepts a two-letter code and normalises it to upper case', () => {
+    expect(CountryCode.parse('US')).toBe('US');
+    expect(CountryCode.parse('gb')).toBe('GB');
+    expect(CountryCode.parse('dE')).toBe('DE');
+    expect(CountryCode.parse(' fr ')).toBe('FR');
+  });
+
+  it('accepts a well-formed code that is not assigned today', () => {
+    // The assigned list changes without us; a code this platform has not heard
+    // of is a country it should not be refusing to serve.
+    expect(CountryCode.parse('zz')).toBe('ZZ');
+  });
+
+  it('rejects the two-character strings that are not codes', () => {
+    for (const bad of ['12', '$$', '  ', 'U1', 'U-', '€€']) {
+      expect(() => CountryCode.parse(bad)).toThrow();
+    }
+  });
+
+  it('rejects the wrong length', () => {
+    expect(() => CountryCode.parse('U')).toThrow();
+    expect(() => CountryCode.parse('USA')).toThrow();
+    expect(() => CountryCode.parse('')).toThrow();
   });
 });

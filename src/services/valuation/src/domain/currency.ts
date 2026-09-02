@@ -33,3 +33,34 @@ export const CurrencyCode = z
   .trim()
   .regex(CURRENCY_CODE, 'Expected a 3-letter ISO 4217 currency code')
   .transform((s) => s.toUpperCase());
+
+/**
+ * ISO-3166 alpha-2 country-code validation for `service_countries`.
+ *
+ * The same shape, and the same argument, as `CurrencyCode` above — which was
+ * written because "every route that accepted a currency spelled it
+ * `z.string().length(3)`, which is a length check, not a code check". The three
+ * doors onto `service_countries` — `POST /valuations`, and the partner API's
+ * create and update — all still spell it `z.string().length(2)`, and every one
+ * of them documents the field as "ISO-3166 alpha-2". `"12"`, `"$$"` and `"  "`
+ * are all two characters, and all three reached the `text[]` column intact,
+ * from a partner API key rather than from a form.
+ *
+ * The list of *assigned* codes is deliberately not checked, for the reason the
+ * currency comment gives: it changes without us, and a well-formed code that is
+ * not on today's list is a country this platform should not be refusing to
+ * serve.
+ *
+ * Upper-cased on the way in, so a client sending `gb` stores the same code as
+ * one sending `GB`. Not cosmetic: these are a *set*, and the auditor workbook
+ * joins them into one cell — `["gb", "GB"]` prints as "gb, GB", which reads as
+ * two jurisdictions on the engagement rather than one written twice.
+ */
+export const COUNTRY_CODE = /^[A-Za-z]{2}$/;
+
+/** `z.string()` for one member of `service_countries`: 2 ASCII letters, upper-cased. */
+export const CountryCode = z
+  .string()
+  .trim()
+  .regex(COUNTRY_CODE, 'Expected a 2-letter ISO-3166 alpha-2 country code')
+  .transform((s) => s.toUpperCase());

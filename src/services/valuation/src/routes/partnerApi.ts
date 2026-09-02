@@ -29,7 +29,7 @@ import { canReadReport, isSuspended, type Principal } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { VALUATION_KINDS, VALUATION_STATES } from '../domain/valuation.js';
-import { CurrencyCode } from '../domain/currency.js';
+import { CountryCode, CurrencyCode } from '../domain/currency.js';
 import { DOCUMENT_KINDS } from '../domain/pipeline.js';
 import {
   createValuation,
@@ -154,7 +154,7 @@ const CreateBody = z.object({
   company_name: z.string().trim().min(1).max(300),
   service_name: z.string().trim().min(1).max(300).optional(),
   currency: CurrencyCode.optional(),
-  service_countries: z.array(z.string().length(2)).max(50).optional(),
+  service_countries: z.array(CountryCode).max(50).optional(),
   /**
    * The partner's own id for this engagement (migration 0164). Bounded and
    * trimmed rather than taken as sent: it is a durable lookup key, so
@@ -183,7 +183,7 @@ const UpdateBody = z
     company_name: z.string().trim().min(1).max(300).optional(),
     service_name: z.string().trim().min(1).max(300).nullable().optional(),
     currency: CurrencyCode.optional(),
-    service_countries: z.array(z.string().length(2)).max(50).optional(),
+    service_countries: z.array(CountryCode).max(50).optional(),
     external_id: z.string().trim().min(1).max(200).nullable().optional(),
   })
   .strict();
@@ -697,7 +697,7 @@ export function registerPartnerApiRoutes(
         company_name: 'Company being valued (required)',
         service_name: 'Optional service label',
         currency: 'ISO-4217 code, defaults to USD',
-        service_countries: 'Optional ISO-3166 alpha-2 country list',
+        service_countries: 'Optional ISO-3166 alpha-2 country list; stored upper-cased',
         external_id:
           'Optional. Your own identifier for this engagement — a deal id, a CRM row. Unique within ' +
           'your organization, echoed back on every valuation payload, and accepted as a filter on ' +
@@ -875,7 +875,7 @@ export function registerPartnerApiRoutes(
         company_name: 'Optional. Company being valued.',
         service_name: 'Optional service label. Send null to clear it.',
         currency: 'Optional ISO-4217 code.',
-        service_countries: 'Optional ISO-3166 alpha-2 country list.',
+        service_countries: 'Optional ISO-3166 alpha-2 country list; stored upper-cased.',
         external_id: 'Optional. Your own identifier. Send null to clear it.',
       },
       errors: {
