@@ -10412,3 +10412,113 @@
 #            so a full room pays `maxPerRoom` = 64 encodings of one object. The
 #            payloads are two scalars, so it is real and unmeasurable; a frame
 #            built once would need `send` to take pre-serialised text.
+#
+# R376 — Observability (M11), at `7471385..5b8785e`. Three findings, no
+#            migration, no index, 18 new tests. One shape, found three times:
+#            **this estate says what is wrong in a channel nothing reads.**
+#            `infra/journald` is retention and rate-limit configuration, not a
+#            shipper; `infra/monitoring/alerts.yml` is read against `/metrics`;
+#            so every well-written line about a failure that has no instrument
+#            beside it reaches whoever was already reading the journal, and
+#            nobody else. Each finding is a different population of such lines.
+#
+#            7471385 — `shared/failure.ts` declares the one alerting contract
+#            this codebase has: `logFailure` classifies a failure and stamps
+#            `alert: true` on the permanent ones — no retry is coming, a person
+#            has to act — and forty-odd sites either go through it or write the
+#            field by hand. Nothing consumed it, and several of the conditions
+#            behind it have no other number anywhere: a stored document that
+#            will not decrypt or fails its integrity check (the platform
+#            accepted a file it can no longer return), a chargeback lost, a
+#            refund that failed after the charge was taken, a subscription
+#            sending updates against no row of ours. `log_alert_lines_total`
+#            counts it in `formatters.log` — the hook pino calls for every line
+#            it actually emits, after the level filter and with the mixin merged
+#            — so the contract is counted at the logger rather than at the forty
+#            call sites: a site added next round is counted by construction and
+#            one that stops stamping the field stops counting, which is the same
+#            event. `registerProcessMetrics` installs the sink, which is the one
+#            call web, valuation and report all already make, and mints the
+#            series at zero for the reason `UPSTREAM_CIRCUITS` does. Unlabelled
+#            on purpose: the counter is the detector and the journal is the
+#            diagnosis, and every label worth having here is caller-shaped
+#            cardinality on the one counter that has to work while things are
+#            going wrong. `PermanentFailuresLogged`, ticket.
+#
+#            c21588f — the gap R345 and R346 both closed with, in the same
+#            words: "`apiKeyGuard`'s own two refusals are still silent … they
+#            want their own instrument or a labelled split, and this round did
+#            not make that call". Everything that guard refuses is a key this
+#            platform issued and still honours, and the sharpest of its five
+#            arms is `account_suspended` (R342): suspending a firm's
+#            administrator now reaches their API key — which is right — and ends
+#            a running integration as a side effect of an unrelated
+#            administrative act, answered with a 403 that
+#            `registerProblemHandler` leaves unlogged by design. The partner sees
+#            every call fail; this side saw one more 4xx.
+#            The call, made: its own instrument. `api_token_auth_total`'s
+#            population is every presented token across the estate and
+#            `accepted` is its denominator; these happen on the partner routes
+#            only, so folding them in puts a numerator over a denominator
+#            counting something else. `partner_api_refusals_total{reason}` is
+#            refusals-only, the shape `realtime_stream_refusals_total` already
+#            uses. One log line, for `account_suspended` alone, carrying the key,
+#            the firm and the account under the correlation mixin's spellings —
+#            the remedy is one DELETE against a role row and a counter cannot say
+#            which. The other four are refusals the caller caused and can read in
+#            the body they were answered with, and `refuseApiToken`'s argument
+#            about `unknown` applies: a caller does not choose how much this box
+#            logs. The unit census holds every `throw problems.` in the guard to
+#            a count before it. `PartnerIntegrationSuspended` and
+#            `PartnerApiThrottling`, both ticket.
+#
+#            5b8785e — R346 wrote the third one down and named its reason: "the
+#            AI and engine tiers still expose no /metrics, so this round's
+#            neighbours in that tier — `llm_prose_fallback`,
+#            `xlsx_sheets_unreadable`, `documents_unreadable` — are structurally
+#            unalertable however well they are written". R369 made both units
+#            scrape targets, which removed the reason and left the instruments
+#            unbuilt: the two publish the RED trio, the process facts, the cgroup
+#            and (engine only) `market_feed_provider`, so a scraper sees that the
+#            AI service is up and nothing about what it is falling back to.
+#            `log_degraded_events_total{event,level}` counts the tier's own
+#            vocabulary in `JsonLogFormatter.format`, the one place every
+#            warning-or-worse line goes through — the Python mirror of the first
+#            finding, and for the same reason. `info` is excluded deliberately:
+#            the access log and the usage lines are on it, and counting them
+#            would be a worse copy of `http_requests_total`. Most of the
+#            vocabulary gets no rule, because an unreadable scanned PDF and a
+#            corpus cut to its budget are a Tuesday and a rule per routine
+#            degrade is how a channel gets muted; the two written are
+#            `AiProviderDegraded` (an expired or rejected key is every AI feature
+#            reporting itself unavailable; a model answering prose has stopped
+#            honouring the contract the pipelines degrade around) and
+#            `PythonTierMisconfigured` (the four `*_config` events, each meaning
+#            a configured value failed to parse and the process is running on a
+#            default while looking configured — this estate's recurring bug class
+#            in the tier that had no channel for it). Both twins, identically.
+#
+#            gap: no `OnFailure=` anywhere in `infra/systemd` or `infra/backup`,
+#            and the two oneshot units — the nightly dump and the weekly restore
+#            rehearsal — are not scrape targets, so `up` says nothing about them
+#            and a backup that has failed every night for a fortnight is
+#            invisible to every rule in `alerts.yml`. The fix is not a code
+#            change: either the scraper reads a textfile the script writes, or a
+#            long-running unit publishes the backup's age. Both are the
+#            infrastructure work R313 named and neither is this round.
+#            gap: `report_render_duration_seconds` is still exported and read by
+#            no rule (R346 named it beside `realtime_streams_open`, which
+#            `RealtimeStreamsNearCapacity` has since taken). A render is the
+#            slowest thing this platform does and R219 measured the breakdown, so
+#            there is a threshold to argue — it just has not been argued.
+#            gap: the stream revalidation check fails *open* by design and says
+#            so with a `warn` per tick. A check failing on every tick — a
+#            migration that renamed a column under it — therefore keeps every
+#            open stream open indefinitely, and the only signal is a warn rate
+#            with no instrument. `logFailure` would be wrong (the next tick does
+#            retry); what is missing is a count of consecutive failures.
+#            gap: `silentCatchCensus` still reads `.catch(…)` and not
+#            `try { } catch { }` — R346's note, unchanged. The 56-block
+#            population in the valuation service was re-read this round from a
+#            fresh brace-matching scan and every one is still argued in a comment
+#            beside it, which is why the marker sweep keeps not being worth it.
