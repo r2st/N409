@@ -7638,3 +7638,110 @@
 #            are exported and read by no rule. Both are plausibly context rather
 #            than a page, which is the judgement the census deliberately declines
 #            to force — but neither has been argued either way in writing.
+#
+# R346 — Adversarial input & fence audit (M6). Four findings. Two are a
+#            character the database will not take reaching a column through a
+#            door the boundary guard does not cover; two are two readers of one
+#            file disagreeing about what it says.
+#
+#            **A NUL from an upstream lost the whole diagnostic row.**
+#            `boundedJson` makes one promise about the write — that what it
+#            returns will insert into `network_items.request`/`.response` — and
+#            R217 made that true for an unpaired surrogate in a string *value*.
+#            Two ways past it were left. `U+0000` fails a jsonb insert for the
+#            same reason and with the same silence: `JSON.stringify` emits
+#            `\u0000`, Postgres's JSON parser has no text representation for that
+#            escape, and `recordNetworkItem` swallows the error by design. And a
+#            *key* is as unstorable as a value — `findUnstorableText` searches
+#            both — while this walk rebuilt the object with the upstream's
+#            spelling of every key intact.
+#
+#            `domain/nulBytes.ts` refuses both characters at the request door,
+#            which is why neither showed up: this function's material is the
+#            *response* of every engine and AI call, and a response never came
+#            through that door. A model emitting a NUL inside a JSON string, or
+#            a connector pull carrying one through from a client's own
+#            spreadsheet, took out the trace on exactly the failure path the
+#            trace exists for. `storable` now covers both characters and runs
+#            over keys as well as values; the client-body membership test and its
+#            marker keep reading the spelling that was sent.
+#
+#            **One NUL in a bounce message put the delivery webhook in a
+#            permanent retry loop.** The three inbound webhook doors are the one
+#            shape of route that steps outside `app.ts`'s global `preValidation`
+#            scan. That hook is global because the exposure is per-column rather
+#            than per-route — but it needs a parsed body, and a signature has to
+#            be verified over the bytes that arrived, so each of these scopes
+#            hands Fastify a raw Buffer, the hook walks past it, and the object
+#            only exists inside the handler. `parseStripeEvent` knows this and
+#            scans its own envelope, answering 400.
+#            `POST /api/v1/webhooks/email/:provider` was written to the same
+#            pattern without that half.
+#
+#            The cost is not a dropped row, which is what makes it worth a round.
+#            `detail` is free text a provider copies out of a DSN; the character
+#            fails the `email_delivery_events` insert, the per-event `catch` puts
+#            the message in `unrecorded`, and `unrecorded` is answered 503
+#            "redeliver this batch". So the provider redelivers, the same
+#            character fails the same insert, and the batch is in a loop nothing
+#            in it can leave — the good events re-applying idempotently forever
+#            and the bad one never landing. `webhookSignatureCensus` gains the
+#            rule for the next author to inherit: a raw-body scope must scan the
+#            object it parsed.
+#
+#            **A two-line column title made a European CSV import as one
+#            column.** `sniffDelimiter` cut the header at the first newline in
+#            the *file*. A header whose own first cell is quoted and holds a line
+#            break — a shape `parseCsvSheet` supports on purpose and
+#            `capTableCsvParity` pins as one real exports have — puts that
+#            newline inside the quotes, so the cut landed mid-quote and the scan
+#            spent the rest of the header believing it was quoted text. Every
+#            separator after it stopped counting, all three candidates came back
+#            zero, and the comma won the tie-break by being first.
+#
+#            Invisible on a comma file, and on the two this function exists for
+#            it is the failure it was written to prevent, restated: a semicolon
+#            sheet out of a European Excel, or a tab-delimited paste, read as a
+#            single column whose name is the entire header row — mapping to
+#            nothing, and the client told their file has no cap table in it. The
+#            two are readers of the same bytes and the defect was that they
+#            disagreed about where the header ends; it now ends where
+#            `parseCsvSheet` says it ends.
+#
+#            **A workbook could show one cap table and import another.**
+#            `readZip` collects entries into a `Map`, so two central-directory
+#            records naming the same path resolved to whichever came last, and
+#            `readXlsx` read that one as the sheet. An `.xlsx` carrying two
+#            `xl/worksheets/sheet1.xml` shows one cap table to whoever opens it
+#            and hands a different one to the importer: the upload succeeds, the
+#            preview is of the part this reader picked, the analyst's check was
+#            of the part their spreadsheet picked, and the sheet that wins
+#            becomes the share counts a valuation is built on.
+#
+#            Which part each reader picks is not a thing to reason about. OPC
+#            gives a package exactly one part per name and Excel refuses a
+#            package that breaks it, so a duplicate is not a workbook whose
+#            meaning has to be chosen between — it is a file that was never one,
+#            and it earns the same refusal the encrypted and ZIP64 cases get.
+#
+#            gap: `findUnstorableText` stops at `MAX_SCAN_DEPTH` and
+#            `parseStripeEvent` does not ask `findOverDeepValue` beside it, so a
+#            NUL nested past twelve levels of a Stripe envelope still reaches the
+#            jsonb column. `nulBytes.ts` frames the depth bound as a request-body
+#            rule and says provider payloads "do not come through this door" —
+#            true of the door, not of the column. Left as written because the
+#            right answer for a webhook is probably to bound the depth rather
+#            than refuse the delivery, and that is a decision about what a
+#            provider is told rather than a bug fix.
+#            gap: `apiKeyGuard`'s own two refusals are still silent — R345's open
+#            item, unchanged.
+#            gap: the frontend renders Stripe's `receipt_url` straight into an
+#            `href` in three places while `externalHref` exists for exactly the
+#            category "a URL this app did not write". The source is Stripe's own
+#            API over TLS, so nothing is reachable today; the inconsistency is
+#            that the rule is declared and applied to citations only.
+#            gap: `buildZip` de-duplicates nothing, and the reader now refuses
+#            what it would produce. Every caller passes constant names today
+#            (`routes/evidence.ts`) or writer-controlled ones (`export/xlsx.ts`,
+#            via `sanitizeSheetName`), so the two cannot disagree yet — but the
+#            writer holds that property by accident rather than by construction.
