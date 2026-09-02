@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import { describeTransportFailure, flagEnabled, FLAGS, logFailure } from '@n409/shared';
+import { describeTransportFailure, flagEnabled, FLAGS, logFailure, logUnretried } from '@n409/shared';
 import { claimRetryableEmails, retireStrandedEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
 import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
@@ -174,8 +174,26 @@ export async function retryFailedEmails(deps: {
         // and the address out of future sends (0163). Never allowed to throw:
         // the row is already settled, and losing the sweep over the bookkeeping
         // would strand every remaining claimed message.
+        /*
+         * `null` from this write is not the same `null` as "the provider did
+         * not reject the recipient" (round 267, methodology M11; this pair of
+         * callers round 352, M5), and the line below prints both as
+         * `bounce: null`. A terminal bounce that could not be recorded leaves
+         * the address *unsuppressed*, so the ladder keeps sending to a mailbox
+         * that has hard-rejected us — the one outcome `recordSendFailure`
+         * exists to stop, reached through the catch written so it could not
+         * stop the sweep. `autoEmails` and `stateChange` say this already; the
+         * two doors that send the most were still at `warn`.
+         */
         const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
-          deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
+          if (deps.log) {
+            logUnretried(
+              deps.log,
+              bookErr,
+              { emailId: email.id, originRequestId: email.request_id },
+              'send failure could not be recorded — a terminal bounce has not suppressed the address',
+            );
+          }
           return null;
         });
         // `originRequestId` is the row's own `request_id` (migration 0185): the

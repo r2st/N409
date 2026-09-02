@@ -1,4 +1,4 @@
-import { describeTransportFailure } from '@n409/shared';
+import { describeTransportFailure, logUnretried } from '@n409/shared';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -121,8 +121,25 @@ export async function sendTransactionalEmail(
       // Terminal rejection of the recipient stops the ladder and suppresses the
       // address (0163). Same containment as the marking above: a bookkeeping
       // failure must not escape into the caller's request.
+      /*
+       * `null` from this write is not the same `null` as "the provider did not
+       * reject the recipient" (round 267, M11; this caller round 352, M5), and
+       * the line below prints both as `bounce: null`. A terminal bounce that
+       * could not be recorded leaves the address *unsuppressed*, so every
+       * later send goes to a mailbox that has hard-rejected us — which is what
+       * costs a sending domain its reputation, and is the one outcome
+       * `recordSendFailure` exists to stop. The containment stays; the level
+       * does not, because nothing revisits this write.
+       */
       const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
-        deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
+        if (deps.log) {
+          logUnretried(
+            deps.log,
+            bookErr,
+            { emailId: email.id },
+            'send failure could not be recorded — a terminal bounce has not suppressed the address',
+          );
+        }
         return null;
       });
       // `emailId` is what the retry sweep will log this row under when it comes
