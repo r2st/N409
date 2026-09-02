@@ -236,6 +236,9 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
       'field_label',
       'from',
       'to',
+      // The circumstance a before/after pair cannot state — on the file as
+      // well as the screen (round 389).
+      'note',
     ]);
     const dlomRow = rows.find((r) => r.includes(',dlom,'));
     expect(dlomRow).toBeDefined();
