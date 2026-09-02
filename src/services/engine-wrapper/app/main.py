@@ -21,6 +21,7 @@ from .config_check import enforce_env_valid
 from .errors import error_response, install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import enforce_token_configured, internal_token_middleware
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
+from .metrics import MetricsRegistry, install_metrics, make_metrics_middleware
 from .observability import configure_logging, make_request_context_middleware
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
 from .security_headers import make_security_headers_middleware
@@ -76,6 +77,10 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="n409-engine-wrapper", version=ENGINE_VERSION, lifespan=lifespan)
 
+# One registry per process, minted before the middleware that fills it and the
+# route that renders it.
+_metrics = MetricsRegistry()
+
 # Middleware order (Starlette runs last-added first): request-context is
 # outermost so its access log captures 401/413 responses too.
 # Shared-secret gate (audit B-1 P0): every non-health route requires the
@@ -91,6 +96,12 @@ app.middleware("http")(make_rate_limit_middleware(limit_per_minute()))
 app.middleware("http")(make_unhandled_error_middleware(SERVICE))
 # Structured access logging + x-request-id propagation (audit B-2 P3).
 app.middleware("http")(make_request_context_middleware(SERVICE))
+# RED for every request, including the ones refused above. Added after the
+# access-log middleware so it wraps it: a request the token gate, the body cap
+# or the limiter answered is a request this unit served, and a counter that
+# cannot see the 401s cannot tell a misconfigured caller from an idle service.
+# See metrics.py for why these two units are scrape targets at all.
+app.middleware("http")(make_metrics_middleware(_metrics))
 # Outermost, so the headers reach the responses the layers above return without
 # ever seeing a route — the token gate's 401, the body cap's 413, the limiter's
 # 429 and the unhandled-error 500 (round 74).
@@ -99,6 +110,7 @@ app.middleware("http")(make_security_headers_middleware())
 # response this service can emit is traceable to a log line.
 install_error_handlers(app, SERVICE)
 enforce_token_configured()
+install_metrics(app, _metrics, SERVICE, _started)
 
 
 class ComputeRequest(BaseModel):

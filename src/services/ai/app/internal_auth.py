@@ -47,7 +47,15 @@ INTERNAL_TOKEN_ENV = "INTERNAL_SERVICE_TOKEN"
 # machine, every test run — the middleware lets everything through and the
 # Swagger UI works as it always has. Where a secret *is* configured the doc
 # routes ask for it like every other route on the service.
-_PUBLIC_PATHS = frozenset({"/", "/health", "/ready"})
+#
+# `/metrics` is here for the reason `metrics.install_metrics` gives: a scrape
+# config sends `Authorization: Bearer`, this middleware reads only
+# `X-Internal-Token`, and a scraper that has to be configured twice is one that
+# silently collects from three units out of five. The route is not open — it
+# carries its own gate, accepting either spelling of the same secret and
+# answering an unauthorized caller with the 404 this service gives any path it
+# does not have, so it renders nothing before it has checked.
+_PUBLIC_PATHS = frozenset({"/", "/health", "/ready", "/metrics"})
 
 _log = logging.getLogger("internal_auth")
 

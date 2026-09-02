@@ -14,7 +14,10 @@ from app.main import app, root
 
 # `/` is the document itself; the FastAPI docs pages are advertised under the
 # single `/docs` entry, which is the one line here that is not a route of ours.
-NOT_ADVERTISED = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+# `/metrics` is registered and deliberately not listed: `GET /` is public on
+# this service, and the discovery document is not the place to tell whoever
+# found the port that there is a scrape endpoint behind a secret.
+NOT_ADVERTISED = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc", "/metrics"}
 ADVERTISED_WITHOUT_A_ROUTE = {"/docs"}
 
 

@@ -258,4 +258,9 @@ def test_the_public_set_is_exactly_liveness_and_readiness():
     # cannot see one arrive.
     from app.internal_auth import _PUBLIC_PATHS
 
-    assert _PUBLIC_PATHS == frozenset({"/", "/health", "/ready", "/engine/v1/health"})
+    # `/metrics` joined it deliberately (round 361, methodology M11): the route
+    # carries its own gate, which accepts `Authorization: Bearer` as well —
+    # the spelling a Prometheus scrape config sends — and answers an
+    # unauthorized caller with a 404 rather than rendering. See
+    # `metrics.install_metrics`.
+    assert _PUBLIC_PATHS == frozenset({"/", "/health", "/ready", "/metrics", "/engine/v1/health"})
