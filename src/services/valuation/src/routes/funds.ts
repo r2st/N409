@@ -26,6 +26,7 @@ import {
   listMarks,
   listPositions,
   lockFund,
+  fundHasDenominatedFigures,
   lockPosition,
   updateFund,
   updatePosition,
@@ -437,8 +438,18 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
    * below names the row this returned rather than the one the request came in
    * with.
    */
+  /**
+   * `FOR UPDATE` rather than a plain read, so the row every fund write judges
+   * itself against is held for the rest of that write. The redenomination
+   * refusal below is a count of what is under the portfolio, and a count is
+   * only an answer while nothing can be added to it: without the lock a
+   * `POST /positions` committing between the count and the UPDATE leaves a
+   * holding measured in the old code under a portfolio now labelled with the
+   * new one. Per-fund and for the length of one short transaction, which these
+   * routes were already serialising through on `PUT /funds/:id/valuation`.
+   */
   const fundForWriteIn = async (client: pg.PoolClient, id: string, doing: string): Promise<FundRow> => {
-    const live = await findFund(client, id);
+    const live = await lockFund(client, id);
     if (!live) throw problems.notFound();
     await refuseIfSubjectRetiredIn(client, live, doing);
     return live;
@@ -505,10 +516,35 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const b = parsed.data;
     const fund = await withTransaction(deps.pool, async (client) => {
       const live = await fundForWriteIn(client, id, 'accepting changes');
+      const currency = b.currency?.toUpperCase();
+      /**
+       * Redenomination, refused once the portfolio holds figures.
+       *
+       * R279 made this write auditable and its comment named the damage —
+       * "redenominated ... changes what every figure under it means" — but
+       * recording a thing is not the same as allowing it, and nothing stopped
+       * it. Holdings, marks and LP terms carry no currency of their own
+       * (`fundHasDenominatedFigures`), so a PATCH of three characters restates
+       * a fund's entire mark trail and its waterfall in a unit nothing was
+       * measured in, with every number unchanged and no conversion anywhere.
+       * The NAV endpoint then hands out the new code beside the old figures,
+       * and the ASC 820 exhibit prints them under it.
+       *
+       * An empty portfolio may still be corrected: the refusal is about the
+       * figures, not about the column.
+       */
+      if (currency !== undefined && currency !== live.currency) {
+        if (await fundHasDenominatedFigures(client, id))
+          throw problems.conflict(
+            `This portfolio's holdings, marks and LP terms are recorded in ${live.currency} and carry no ` +
+              `currency of their own, so changing it to ${currency} would restate every one of them ` +
+              'without converting anything. Create a portfolio in the new currency instead.',
+          );
+      }
       const updated = await updateFund(client, id, {
         name: b.name,
         fundType: b.fund_type,
-        currency: b.currency?.toUpperCase(),
+        currency,
         vintageYear: b.vintage_year,
       });
       if (!updated) throw problems.notFound();

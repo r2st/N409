@@ -307,6 +307,78 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
       expect(res.json().fund.vintage_year).toBeNull();
       expect(res.json().fund.currency).toBe('GBP');
     });
+
+    it('lets an empty portfolio be redenominated, and refuses one that holds figures', async () => {
+      // R348. `fund_positions`, `fund_marks` and `lp_terms` carry no currency
+      // of their own — the portfolio's code is what says what every number
+      // under it means — so a PATCH of three characters restates the whole
+      // book without converting anything. An empty portfolio has nothing to
+      // restate and is simply a code typed wrong, so it is still correctable.
+      const empty = await createFund({ name: 'Mis-typed', fund_type: 'vc', currency: 'USD' });
+      const fixed = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/funds/${empty}`,
+        headers: opsAuth(),
+        payload: { currency: 'eur' },
+      });
+      expect(fixed.statusCode).toBe(200);
+      expect(fixed.json().fund.currency).toBe('EUR');
+
+      await addPosition(empty);
+      const refused = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/funds/${empty}`,
+        headers: opsAuth(),
+        payload: { currency: 'gbp' },
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().detail).toMatch(/EUR/);
+      expect(refused.json().detail).toMatch(/GBP/);
+
+      // Refused, not partially applied: the rest of the patch does not land
+      // either, and the currency is untouched.
+      const after = await app.inject({ method: 'GET', url: `/api/v1/funds/${empty}`, headers: opsAuth() });
+      expect(after.json().fund.currency).toBe('EUR');
+    });
+
+    it('still accepts a patch that names the currency it already has', async () => {
+      // The guard is about a *change*. A form that round-trips every field
+      // sends the current code back on every save, and refusing that would
+      // make a held portfolio unrenamable.
+      const id = await createFund({ name: 'Fund II', fund_type: 'pe', currency: 'USD' });
+      await addPosition(id);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/funds/${id}`,
+        headers: opsAuth(),
+        payload: { name: 'Fund II (renamed)', currency: 'usd' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().fund.name).toBe('Fund II (renamed)');
+      expect(res.json().fund.currency).toBe('USD');
+    });
+
+    it('counts LP terms as denominated figures even with no holdings', async () => {
+      // Committed and contributed capital are amounts in the fund's code, and
+      // the waterfall pays a preferred return out of them. A portfolio whose
+      // only content is its LP economics is as redenominated as one with
+      // holdings.
+      const id = await createFund({ name: 'Fund III', fund_type: 'pe', currency: 'USD' });
+      const terms = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/funds/${id}/lp-terms`,
+        headers: opsAuth(),
+        payload: { committed_capital: 50_000_000, contributed_capital: 20_000_000 },
+      });
+      expect(terms.statusCode).toBe(200);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/funds/${id}`,
+        headers: opsAuth(),
+        payload: { currency: 'eur' },
+      });
+      expect(res.statusCode).toBe(409);
+    });
   });
 
   // ── Missing prerequisites ─────────────────────────────────────────────────

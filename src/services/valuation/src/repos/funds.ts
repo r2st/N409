@@ -206,6 +206,40 @@ export async function deleteFund(db: Queryable, id: string): Promise<boolean> {
   return (rowCount ?? 0) > 0;
 }
 
+/**
+ * Whether anything under this portfolio is already denominated in its currency.
+ *
+ * `fund_portfolios.currency` is the *only* currency in this subsystem: 0086
+ * gives `fund_positions.cost_basis`, `fund_marks.fair_value` and every money
+ * column of `lp_terms` a bare `numeric` and no unit of their own, so the
+ * portfolio's code is what says what all of them mean. Changing it therefore
+ * restates the whole book without touching a number — a $40m NAV becomes a
+ * €40m NAV, the LP waterfall pays a preferred return in a unit the contributed
+ * capital was never measured in, and the NAV endpoint hands the new code out
+ * beside the old figures.
+ *
+ * A portfolio with nothing under it yet is a different case: the code was
+ * simply typed wrong at creation and there is nothing to restate, which is why
+ * this asks about the figures rather than making the column immutable.
+ *
+ * The zero test on `lp_terms` is deliberate. The row is created with defaults
+ * for the *rate* columns, so its mere existence does not mean money has been
+ * recorded; the four amount columns are what carry a unit.
+ */
+export async function fundHasDenominatedFigures(db: Queryable, fundId: string): Promise<boolean> {
+  const { rows } = await db.query<{ denominated: boolean }>(
+    `SELECT (EXISTS (SELECT 1 FROM fund_positions WHERE fund_id = $1)
+          OR EXISTS (SELECT 1 FROM lp_terms
+                      WHERE fund_id = $1
+                        AND (committed_capital <> 0
+                          OR contributed_capital <> 0
+                          OR management_fees_paid <> 0
+                          OR gp_distributions_to_date <> 0))) AS denominated`,
+    [fundId],
+  );
+  return rows[0]!.denominated;
+}
+
 // ── Positions ─────────────────────────────────────────────────────────────
 
 /**
