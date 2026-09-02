@@ -815,6 +815,36 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     'Requests currently being served',
     () => requestDrain.inFlight,
   );
+  // The settings fail-open, as something a rule can match.
+  //
+  // `SystemSettingsStore.read` degrades rather than throws, and the cold-cache
+  // branch degrades to `SYSTEM_SETTINGS_DEFAULTS`, every one of whose three
+  // operational flags is the permissive value: registration open, not in
+  // maintenance, 2FA not mandatory. It says so in the log, and the log is not
+  // what alerts here — this endpoint is. So the one state where a replica is
+  // actively contradicting an operator's configuration was reachable only by
+  // somebody already reading the journal of the right unit at the right time.
+  //
+  // A state gauge and a cumulative pair, for the reason the sweep metrics keep
+  // both: `_serving_defaults` is the incident, and the failure counts are what
+  // separate a blip that healed on the next read from a table nothing can read.
+  metricsRegistry.gauge(
+    'system_settings_serving_defaults',
+    '1 while this process is answering system settings from the permissive built-in defaults because it has never completed a read',
+    () => (settings.diagnostics().servingDefaults ? 1 : 0),
+  );
+  metricsRegistry.gauge(
+    'system_settings_read_failures_total',
+    'Failed system-settings reads, cumulative, by what was served instead',
+    () => {
+      const d = settings.diagnostics();
+      return [
+        { value: d.failedToCache, labels: { served: 'cache' } },
+        { value: d.failedToDefaults, labels: { served: 'defaults' } },
+      ];
+    },
+    ['served'],
+  );
   // Queue depth, as this process sees it: orchestrations running and waiting on
   // the auto-pipeline semaphore. The DB-backed backlogs (outbox, webhook
   // deliveries, jobs) are deliberately absent — they are a count query each,

@@ -60,6 +60,9 @@ export async function writeSettings(
 export class SystemSettingsStore {
   #cached: SystemSettings | null = null;
   #readAt = 0;
+  #failedToCache = 0;
+  #failedToDefaults = 0;
+  #servingDefaults = false;
 
   constructor(
     private readonly pool: pg.Pool,
@@ -99,13 +102,17 @@ export class SystemSettingsStore {
     try {
       this.#cached = await readSettings(this.pool);
       this.#readAt = this.now();
+      this.#servingDefaults = false;
       return this.#cached;
     } catch (err) {
       if (this.#cached) {
+        this.#failedToCache += 1;
         this.log?.warn({ err }, 'system settings read failed; serving the last values read');
         this.#readAt = this.now();
         return this.#cached;
       }
+      this.#failedToDefaults += 1;
+      this.#servingDefaults = true;
       this.log?.warn(
         { err },
         'system settings read failed with nothing cached; serving defaults, which are permissive ' +
@@ -128,5 +135,36 @@ export class SystemSettingsStore {
   invalidate(): void {
     this.#cached = null;
     this.#readAt = 0;
+  }
+
+  /**
+   * The fail-open above, as numbers a scrape can read.
+   *
+   * `read()` already says both cases out loud, and for a dozen rounds that was
+   * treated as the record. It is not the *alerting* record: nothing on this box
+   * consumes the journal (`infra/journald` is retention and rate-limit config
+   * only), and `infra/monitoring/alerts.yml` is the one written answer to "how
+   * would we know?". So the cold-cache branch — a replica answering
+   * "registration is open", "not in maintenance" and "2FA is not mandatory" to
+   * an operator who set all three the other way — could be running right now
+   * and reach nobody, which is the same silence the branch was written to end.
+   *
+   * `servingDefaults` is a *current* state and is cleared by the next
+   * successful read, so it is only meaningful while something is asking:
+   * `maintenance_mode` is consulted on every authenticated mutating request, so
+   * on a serving replica that is continuously. On an idle one it is the last
+   * answer given, which is the honest reading — a flag nobody has asked for is
+   * not being answered wrongly.
+   *
+   * The two failure tallies are cumulative for the reason
+   * `background_sweep_failures_total` is: a count with no denominator cannot
+   * separate "twice since boot" from "every read for an hour".
+   */
+  diagnostics(): { failedToCache: number; failedToDefaults: number; servingDefaults: boolean } {
+    return {
+      failedToCache: this.#failedToCache,
+      failedToDefaults: this.#failedToDefaults,
+      servingDefaults: this.#servingDefaults,
+    };
   }
 }

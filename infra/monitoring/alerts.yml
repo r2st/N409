@@ -740,6 +740,43 @@ groups:
       # The engine turns every market-data failure into a 200 with
       # `source: "fallback"`, so a dead source produces correct-looking
       # valuations on substituted figures. There is no other symptom at all.
+      # A replica answering the operator's three switches the *other* way.
+      #
+      # `SystemSettingsStore.read` must never be the reason a request fails, so
+      # it degrades. With a warm cache it degrades to values that did come from
+      # the table and are at most a TTL stale, which is right. With a cold one
+      # there is nothing but `SYSTEM_SETTINGS_DEFAULTS`, and all three
+      # operational flags default to their permissive value: registration open,
+      # not in maintenance, 2FA not mandatory. So a process that has never
+      # completed a read admits registrations an operator closed and signs
+      # people in without the second factor an operator made mandatory, for as
+      # long as the settings table is unreadable.
+      #
+      # `page` and a short `for`, unlike everything else in this group: the two
+      # rules above describe a feature quietly costing more than it should, and
+      # this one describes a security control that is off. The `for` is not zero
+      # because a single failed read during a restart or a failover is not an
+      # incident — the next read heals it, and the gauge goes back to 0 with it.
+      - alert: SystemSettingsFailOpen
+        expr: system_settings_serving_defaults == 1
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.job }} is serving the permissive built-in system settings — registration is open and 2FA is not mandatory whatever the console says'
+          runbook: 'the settings table is unreadable from this process: check the pool and `SELECT * FROM system_settings`. journalctl -u n409-valuation | grep "system settings read failed"'
+
+      # And the half the gauge above cannot show: reads that failed but found a
+      # warm cache. Nothing is fail-open there — the values came from the table
+      # — but a process serving a cache it can no longer refresh is one restart
+      # away from the rule above, and this is the warning that comes first.
+      - alert: SystemSettingsReadFailing
+        expr: rate(system_settings_read_failures_total{served="cache"}[15m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} has not been able to refresh system settings for fifteen minutes'
+          runbook: 'the values being served are stale but real; a restart would make them the permissive defaults instead — see SystemSettingsFailOpen'
+
       - alert: MarketFeedFallingBack
         expr: |
           sum(rate(market_feed_answers_total{outcome="fallback"}[1h]))

@@ -208,4 +208,88 @@ describe('SystemSettingsStore', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![1]).toContain('last values read');
   });
+
+  /**
+   * The fail-open, as something a rule can match (round 361, methodology M11).
+   *
+   * The log line above was the whole record, and the log is not what alerts on
+   * this box — `/metrics` is (see `infra/monitoring/alerts.yml`). So the one
+   * state where a replica actively contradicts the operator's configuration was
+   * reachable only by somebody already tailing the right unit's journal.
+   */
+  describe('diagnostics', () => {
+    it('reports nothing wrong before anything has failed', async () => {
+      const pool = {
+        query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+      } as unknown as pg.Pool;
+      const store = new SystemSettingsStore(pool, 5_000, () => 0);
+
+      await store.read();
+      expect(store.diagnostics()).toEqual({
+        failedToCache: 0,
+        failedToDefaults: 0,
+        servingDefaults: false,
+      });
+    });
+
+    it('flags the cold-cache fallback while it is the answer being given', async () => {
+      const pool = {
+        query: vi.fn(async () => {
+          throw new Error('connection refused');
+        }),
+      } as unknown as pg.Pool;
+      const store = new SystemSettingsStore(pool, 5_000, () => 0);
+
+      await store.read();
+      expect(store.diagnostics().servingDefaults).toBe(true);
+      expect(store.diagnostics().failedToDefaults).toBe(1);
+      // Nothing was served from cache, so that tally must stay at zero — the
+      // two are separate rules with separate severities.
+      expect(store.diagnostics().failedToCache).toBe(0);
+    });
+
+    it('clears the flag as soon as one read succeeds', async () => {
+      let fail = true;
+      const pool = {
+        query: vi.fn(async () => {
+          if (fail) throw new Error('connection refused');
+          return { rows: [], rowCount: 0 };
+        }),
+      } as unknown as pg.Pool;
+      const store = new SystemSettingsStore(pool, 5_000, () => 0);
+
+      await store.read();
+      expect(store.diagnostics().servingDefaults).toBe(true);
+      fail = false;
+      await store.read();
+      expect(store.diagnostics().servingDefaults).toBe(false);
+      // The tally is cumulative and does not heal with the state: it is the
+      // denominator-free half a rule reads as a rate.
+      expect(store.diagnostics().failedToDefaults).toBe(1);
+    });
+
+    it('counts a failed refresh over a warm cache without calling it a fail-open', async () => {
+      let fail = false;
+      const pool = {
+        query: vi.fn(async () => {
+          if (fail) throw new Error('connection refused');
+          return { rows: [{ key: 'require_mfa', value: true }], rowCount: 1 };
+        }),
+      } as unknown as pg.Pool;
+      let now = 0;
+      const store = new SystemSettingsStore(pool, 1_000, () => now);
+
+      expect(await store.get('require_mfa')).toBe(true);
+      fail = true;
+      now += 2_000;
+      expect(await store.get('require_mfa')).toBe(true);
+
+      const d = store.diagnostics();
+      expect(d.failedToCache).toBe(1);
+      expect(d.failedToDefaults).toBe(0);
+      // Nothing is permissive here — the values came from the table. This is
+      // the ticket, not the page.
+      expect(d.servingDefaults).toBe(false);
+    });
+  });
 });
