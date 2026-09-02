@@ -833,7 +833,51 @@ export function registerAuthRoutes(
 
     const digest = await hashPassword(parsed.data.password);
     const reset = await resetPasswordWithToken(deps.pool, parsed.data.token, digest);
-    if (!reset) throw problems.badRequest(DEAD_LINK_DETAIL.reset);
+    if (!reset.ok) {
+      /*
+       * The refusal half of this door (R344, methodology M5).
+       *
+       * Every other way into an account writes a row when it says no, and says
+       * why inside it — R272 argued that at the SAML door and
+       * `failedAuthPayloadCensus` holds it for the four that existed then.
+       * This one wrote nothing: a redeem that failed answered 400, and a 4xx
+       * raised on purpose leaves no log line either, so the whole event was a
+       * message in one browser.
+       *
+       * `address_changed` is why that matters now rather than in general. It
+       * is migration 0204's guard — one round old — and the case it exists for
+       * is an attacker holding a live link into the mailbox an account has
+       * just moved away from *because* that mailbox was compromised. The guard
+       * refuses them. Until this it also told nobody, so the operator who
+       * moved the address had no way to learn the link had been tried.
+       *
+       * `user_login_failed` rather than an event of its own: this is an
+       * authentication door, the payload vocabulary is already `method` +
+       * `reason` + `ip`, and `closed_account` here is the same state the
+       * password and Google doors record under that word. One query answers
+       * "who has been trying to get into this account, and from where" across
+       * all of them.
+       *
+       * Written in every refusing branch, and the success path above records
+       * too, so nothing about which branch ran is visible from outside as a
+       * latency difference — the property `forgot-password` is built around.
+       * Bounded by the same throttle that bounds the scrypt hash above:
+       * `TOKEN_REDEEM_PER_IP` an hour is the ceiling on rows this route can be
+       * made to write.
+       */
+      await recordAdminEvent(deps.pool, {
+        type: 'user_login_failed',
+        actor: { actorType: 'human', actorId: reset.userId, source: 'password_reset' },
+        subjectType: 'user',
+        subjectId: reset.userId,
+        // The address the link was sent to. For `address_changed` that is not
+        // the account's address any more, and it is the field that says which
+        // mailbox the presenter is holding a link in.
+        subjectLabel: reset.email,
+        payload: { method: 'password_reset', reason: reset.reason, ip: req.ip },
+      });
+      throw problems.badRequest(DEAD_LINK_DETAIL.reset);
+    }
     await recordAdminEvent(deps.pool, {
       type: 'user_password_changed',
       // Nobody is signed in here — the token is the whole authority — so the

@@ -48,6 +48,23 @@ const reset = (ctx: TestApp, token: string, password: string) =>
 const login = (ctx: TestApp, email: string, password: string) =>
   ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email, password } });
 
+/** The failed-auth rows this door writes, newest last. */
+async function refusals(
+  ctx: TestApp,
+  userId: string | null,
+): Promise<Array<{ reason: string; method: string; ip: string; subject_label: string | null }>> {
+  const { rows } = await ctx.pool.query(
+    `SELECT payload->>'reason' AS reason, payload->>'method' AS method, payload->>'ip' AS ip,
+            subject_label
+       FROM admin_events
+      WHERE type = 'user_login_failed' AND payload->>'method' = 'password_reset'
+        AND ($1::text IS NULL OR subject_id = $1)
+      ORDER BY occurred_at ASC, id ASC`,
+    [userId],
+  );
+  return rows;
+}
+
 describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () => {
   let ctx: TestApp;
   let admin: Awaited<ReturnType<typeof seedUser>>;
@@ -202,6 +219,59 @@ describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () =
       // And the account is untouched: the old password still works, so nothing
       // about the refusal left it half-reset.
       expect((await login(ctx, moved, 'test-password-123')).statusCode).toBe(200);
+
+      /*
+       * And the refusal is on the spine (R344, methodology M5).
+       *
+       * This is the whole case migration 0204 was written for — somebody
+       * presenting a live link into a mailbox the account has left — and the
+       * guard used to refuse it in silence: a 400, which writes no log line,
+       * and no row anywhere. The operator who moved the address had no way to
+       * learn the old link had been tried.
+       */
+      const [row, ...rest] = await refusals(ctx, user.id);
+      expect(rest).toEqual([]);
+      expect(row?.reason).toBe('address_changed');
+      // The address the link went to, which is the one the presenter holds —
+      // not the account's current address, which the reader already has.
+      expect(row?.subject_label?.toLowerCase()).toBe(user.email.toLowerCase());
+      expect(row?.ip).toBeTruthy();
+    });
+
+    it('records a token nobody can place, with no account to name', async () => {
+      const before = (await refusals(ctx, null)).length;
+      expect((await reset(ctx, 'not-a-real-token-at-all', 'whatever-password-9')).statusCode).toBe(400);
+      const rows = await refusals(ctx, null);
+      expect(rows.length).toBe(before + 1);
+      expect(rows.at(-1)?.reason).toBe('unknown_token');
+    });
+
+    it('records a live link presented for a closed account', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await forgot(ctx, user.email);
+      const [email] = await waitForOutbox(ctx, user.email, 'password_reset');
+      const token = tokenFrom(email!.body, '/reset-password');
+
+      const closed = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/users/${user.id}`,
+        headers: authHeader(admin.token),
+      });
+      expect(closed.statusCode).toBeLessThan(300);
+
+      expect((await reset(ctx, token, 'closed-account-password-1')).statusCode).toBe(400);
+      // The same word the password and Google doors use for the same state, so
+      // a closed account being tried at any door groups into one query.
+      expect((await refusals(ctx, user.id)).map((r) => r.reason)).toEqual(['closed_account']);
+    });
+
+    it('writes nothing when the redeem succeeds — the vacuity guard', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await forgot(ctx, user.email);
+      const [email] = await waitForOutbox(ctx, user.email, 'password_reset');
+      const token = tokenFrom(email!.body, '/reset-password');
+      expect((await reset(ctx, token, 'a-perfectly-good-password-1')).statusCode).toBe(200);
+      expect(await refusals(ctx, user.id)).toEqual([]);
     });
 
     it('still works when the address has not moved', async () => {

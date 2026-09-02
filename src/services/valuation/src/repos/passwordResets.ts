@@ -67,18 +67,66 @@ export async function createPasswordResetToken(pool: pg.Pool, userId: string): P
  * every session already out there to stop working.
  */
 /**
+ * Why a redeem did not set a password. One word per situation, because the
+ * three are different incidents and the route answers all of them identically.
+ *
+ *  - `unknown_token` — no live row for this secret: never existed, already
+ *    used, or expired. The ordinary one, and what a guessing sweep produces.
+ *  - `closed_account` — the token is live and the account has been closed
+ *    since it was minted. The same word the password and Google doors use for
+ *    the same state, so a closed account being tried at any door groups.
+ *  - `address_changed` — the token is live, the account is live, and the
+ *    address the link was sent to is no longer the account's login address.
+ *    This is migration 0204's guard firing, and it is the one that means
+ *    somebody holds a working link to a mailbox the account has left.
+ */
+export type PasswordResetRefusal = 'unknown_token' | 'closed_account' | 'address_changed';
+
+/** A redeem's outcome: the subject on success, and why not on every refusal. */
+export type PasswordResetOutcome =
+  | { ok: true; userId: string }
+  | {
+      ok: false;
+      reason: PasswordResetRefusal;
+      /** The account the token named, when the token was live enough to name one. */
+      userId: string | null;
+      /** The address the link was sent to — null for a pre-0204 row, or no row. */
+      email: string | null;
+    };
+
+/**
  * Redeem a reset token, returning *who* it belonged to.
  *
  * The boolean this used to return was enough for the route's answer and not
  * enough for its audit record: "a password was reset" with no subject is a row
  * nobody can act on. A reset is the one credential change that happens without
  * a session, so it is also the one the trail most needs to name.
+ *
+ * ## And the refusals, which returned `null` for three different things (R344, M5)
+ *
+ * `null` was the whole vocabulary, so the route threw one 400 for all of them
+ * and the trail recorded nothing at all — a redeem that failed left no row on
+ * the spine, no log line (a deliberate 4xx writes neither), and no counter.
+ * Every other door onto an account writes in every failing branch and says why
+ * inside the row; R272 put the argument in as many words, and the login census
+ * holds it. This door — where the token *is* the whole authority and nobody is
+ * signed in — was the one that did not.
+ *
+ * What that cost is specific rather than general. Migration 0204, one round
+ * ago, bound a token to the address it was sent to precisely because the
+ * ordinary reason a login address moves in a hurry is that the old mailbox is
+ * the thing that was compromised. The guard works. It just fires in complete
+ * silence: an attacker holding a live link into the abandoned mailbox can
+ * present it, be refused, and leave nothing behind for the operator who moved
+ * the address to find. `address_changed` is that event, and it is the reason
+ * the second UPDATE's two conditions are separated below rather than left as
+ * one `rowCount === 0`.
  */
 export async function resetPasswordWithToken(
   pool: pg.Pool,
   rawToken: string,
   passwordDigest: string,
-): Promise<{ userId: string } | null> {
+): Promise<PasswordResetOutcome> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<{ user_id: string; email: string | null }>(
       `UPDATE password_reset_tokens SET used_at = now()
@@ -87,7 +135,7 @@ export async function resetPasswordWithToken(
       [hashToken(rawToken)],
     );
     const userId = rows[0]?.user_id;
-    if (!userId) return null;
+    if (!userId) return { ok: false, reason: 'unknown_token', userId: null, email: null };
     // The address half of the guard. A token whose address no longer matches
     // the account's is one the login email moved away from since the link went
     // out — see {@link createPasswordResetToken}. It is still marked used
@@ -106,12 +154,25 @@ export async function resetPasswordWithToken(
          AND ($3::text IS NULL OR lower(email) = lower($3))`,
       [userId, passwordDigest, rows[0]?.email ?? null],
     );
-    if ((rowCount ?? 0) === 0) return null;
+    if ((rowCount ?? 0) === 0) {
+      // Which of the two conditions refused it. Asked only on the path that
+      // was already refused, so the ordinary redeem still costs what it did,
+      // and asked inside the transaction that marked the token used so the
+      // answer is the state the refusal was actually taken against.
+      const { rows: account } = await client.query<{ deleted: boolean }>(
+        'SELECT deleted_at IS NOT NULL AS deleted FROM users WHERE id = $1',
+        [userId],
+      );
+      // A row that is gone entirely reads as closed: the account is not there
+      // to have an address, so `address_changed` would be the wrong word.
+      const reason = account[0]?.deleted === false ? 'address_changed' : 'closed_account';
+      return { ok: false, reason, userId, email: rows[0]?.email ?? null };
+    }
     // A successful reset retires every other outstanding token for the user.
     await client.query(
       `UPDATE password_reset_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`,
       [userId],
     );
-    return { userId };
+    return { ok: true, userId };
   });
 }
