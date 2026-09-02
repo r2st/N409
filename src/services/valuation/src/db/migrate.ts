@@ -122,20 +122,30 @@ export function resolveMigrationTimeouts(env: NodeJS.ProcessEnv = process.env): 
   };
 }
 
-/** Raised when the migration lock could not be taken inside its deadline. */
+/**
+ * Raised when the migration lock could not be taken inside its deadline.
+ *
+ * `holders` is `null` when {@link migrationLockHolders} could not ask — which
+ * is a third thing, and used to be spelled the same as the second. See there.
+ */
 export class MigrationLockTimeoutError extends Error {
   constructor(
     readonly timeoutMs: number,
-    readonly holders: readonly number[],
+    readonly holders: readonly number[] | null,
   ) {
     super(
       `Could not acquire the migration advisory lock within ${timeoutMs}ms` +
-        (holders.length > 0
-          ? ` — held by backend pid ${holders.join(', ')}. ` +
-            'That is another replica still migrating, or a session that took the lock by hand; ' +
-            'check `SELECT * FROM pg_stat_activity WHERE pid = ANY(...)` before terminating it.'
-          : ' — no holder is visible in pg_locks, which means it was released and re-taken ' +
-            'repeatedly while this runner waited (several replicas booting at once).'),
+        (holders === null
+          ? ' — and pg_locks could not be read to say who holds it, so this message ' +
+            'cannot tell you whether anyone does. Ask it by hand: `SELECT pid FROM pg_locks ' +
+            "WHERE locktype = 'advisory' AND classid = 0 AND objid = " +
+            `${LOCK_KEY} AND granted\`.`
+          : holders.length > 0
+            ? ` — held by backend pid ${holders.join(', ')}. ` +
+              'That is another replica still migrating, or a session that took the lock by hand; ' +
+              'check `SELECT * FROM pg_stat_activity WHERE pid = ANY(...)` before terminating it.'
+            : ' — no holder is visible in pg_locks, which means it was released and re-taken ' +
+              'repeatedly while this runner waited (several replicas booting at once).'),
     );
     this.name = 'MigrationLockTimeoutError';
   }
@@ -247,8 +257,21 @@ type Queryable = Pick<pg.PoolClient, 'query'>;
  *
  * Exported because the test suite has to ask this same question, and asking it
  * in its own words is how it drifted: see `migrationRunner.test.ts`.
+ *
+ * `null` when the question could not be asked, which is not the same answer as
+ * the empty array (R352, methodology M5). It used to be: a failed read returned
+ * `[]`, and `MigrationLockTimeoutError` reads an empty holder list as a
+ * *finding* — "no holder is visible in pg_locks, which means it was released
+ * and re-taken repeatedly while this runner waited (several replicas booting at
+ * once)". So a permission error on `pg_locks`, a statement timeout, or a
+ * connection that had already gone away made a boot failure assert a specific
+ * cause that nothing had checked, and sent whoever was reading it during a
+ * stalled deploy to look for a contention problem that may not exist — while
+ * the one fact that would end the incident, the pid holding the lock, was
+ * never named. Diagnostics still must not fail the boot; what they must not do
+ * either is answer a question they did not get to ask.
  */
-export async function migrationLockHolders(db: Queryable): Promise<number[]> {
+export async function migrationLockHolders(db: Queryable): Promise<number[] | null> {
   try {
     // `pg_advisory_lock(bigint)` splits its key across classid/objid: the high
     // 32 bits and the low 32. LOCK_KEY fits in 32 bits, so classid is 0.
@@ -260,8 +283,9 @@ export async function migrationLockHolders(db: Queryable): Promise<number[]> {
     );
     return rows.map((r) => r.pid);
   } catch {
-    // Diagnostics must never be the thing that fails the boot.
-    return [];
+    // Diagnostics must never be the thing that fails the boot — but "I could
+    // not look" is what this returns, not "I looked and found nobody".
+    return null;
   }
 }
 
@@ -300,9 +324,10 @@ async function acquireMigrationLock(
     if (!announced) {
       announced = true;
       const holders = await migrationLockHolders(client);
+      const held =
+        holders === null ? 'unreadable — pg_locks could not be queried' : holders.join(', ') || 'unknown';
       opts.log(
-        `waiting for the migration lock (held by pid ${holders.join(', ') || 'unknown'}); ` +
-          `giving up after ${opts.timeoutMs}ms`,
+        `waiting for the migration lock (held by pid ${held}); ` + `giving up after ${opts.timeoutMs}ms`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, opts.pollMs));
