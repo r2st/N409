@@ -94,9 +94,13 @@ describe('valuation bridge (feature 3)', () => {
   it('renders an optional report section with only whitelisted HTML', () => {
     const from = results({ fmv: 2.0, equity: 10_000_000, dlom: 0.25 });
     const to = results({ fmv: 3.5, equity: 15_000_000, dlom: 0.2 });
-    const section = renderBridgeSection(buildBridge(from, to), { fromRef: 'V-1', toRef: 'V-2' });
+    const section = renderBridgeSection(buildBridge(from, to), {
+      fromRef: 'V-1',
+      toRef: 'V-2',
+      currency: 'USD',
+    });
     expect(section.key).toBe('value_bridge');
-    expect(section.html).toContain('$3.50');
+    expect(section.html).toContain('$3.5000');
     // The report sanitizer must not strip anything — the section is already
     // within the whitelist.
     expect(sanitizeHtml(section.html)).toBe(section.html);
@@ -287,8 +291,8 @@ describe('valuation bridge (feature 3)', () => {
 });
 
 describe('bridge report section', () => {
-  const render = (from: Record<string, unknown>, to: Record<string, unknown>) =>
-    renderBridgeSection(buildBridge(from, to), { fromRef: 'V-1', toRef: 'V-2' });
+  const render = (from: Record<string, unknown>, to: Record<string, unknown>, currency = 'USD') =>
+    renderBridgeSection(buildBridge(from, to), { fromRef: 'V-1', toRef: 'V-2', currency });
 
   it('says "decreased" and signs the change when value fell', () => {
     const section = render(
@@ -296,7 +300,7 @@ describe('bridge report section', () => {
       { fmv_per_share: 2, equity_value: 10e6 },
     );
     expect(section.html).toContain('decreased');
-    expect(section.html).toContain('$-1.50');
+    expect(section.html).toContain('-$1.5000');
     expect(section.html).toContain('(-42.9%)');
   });
 
@@ -319,14 +323,41 @@ describe('bridge report section', () => {
       { fmv_per_share: 3.5, equity_value: 15e6, discounts: { dlom: 0.2 } },
     );
     expect(section.heading).toBe('Cross-Period Value Bridge');
-    expect(section.html).toContain('<th>Total change</th><th>$1.50</th>');
+    expect(section.html).toContain('<th>Total change</th><th>$1.5000</th>');
     expect(section.html).toContain('Marketability (DLOM)');
+  });
+
+
+  /**
+   * The section states the conclusion, so it states it the way the conclusion
+   * is stated: four decimals, in the engagement's own currency. It carried a
+   * hard-coded `$` and two decimals — the pair `BridgeTab` was fixed for and
+   * this, its server-side twin, was not — so a sterling walk from £2.5013 to
+   * £2.5104 read "$2.50 → $2.51, a change of $0.01" over four contributions
+   * that had all collapsed to $0.00.
+   */
+  it('states the walk at the conclusion’s precision, in the engagement’s currency', () => {
+    const section = render(
+      { fmv_per_share: 2.5013, equity_value: 10e6 },
+      { fmv_per_share: 2.5104, equity_value: 10.04e6 },
+      'GBP',
+    );
+    expect(section.html).toContain('£2.5013');
+    expect(section.html).toContain('£2.5104');
+    expect(section.html).toContain('£0.0091');
+    // Every contribution is at the same quantum, so the table still closes on
+    // the total rather than on a column of zeroes: at two decimals the company
+    // value's £0.0100 and the allocation's -£0.0009 both printed £0.00 under a
+    // total change of £0.01.
+    expect(section.html).toContain('<th>Total change</th><th>£0.0091</th>');
+    expect(section.html).toContain('<td>£0.0100</td>');
+    expect(section.html).toContain('<td>-£0.0009</td>');
   });
 
   it('escapes a calculation reference so it cannot inject markup', () => {
     const section = renderBridgeSection(
       buildBridge({ fmv_per_share: 1, equity_value: 1e6 }, { fmv_per_share: 2, equity_value: 2e6 }),
-      { fromRef: '<b>V-1</b>', toRef: 'V & 2' },
+      { fromRef: '<b>V-1</b>', toRef: 'V & 2', currency: 'USD' },
     );
     expect(section.html).toContain('&lt;b&gt;V-1&lt;/b&gt;');
     expect(section.html).toContain('V &amp; 2');

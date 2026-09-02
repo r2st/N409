@@ -102,6 +102,17 @@ export function num(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Decimal places a per-share conclusion is stated to.
+ *
+ * The engine rounds `fmv_per_share` to four (`engine/compute.py`) and every
+ * server-side rendering of it is struck at exactly four. Named rather than
+ * written as a literal at each call site because the client states the same
+ * contract under the same name (`lib/format.PER_SHARE_DIGITS`), and a shared
+ * name is what makes a change to one of them visibly a change to a contract.
+ */
+export const PER_SHARE_DIGITS = 4;
+
 /** `$1,234.5678` at four decimals — a per-share FMV is quoted to the cent-fraction. */
 export function formatCurrency(value: number, currency: string, fractionDigits = 2): string {
   try {

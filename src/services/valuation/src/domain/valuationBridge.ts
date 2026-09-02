@@ -21,6 +21,7 @@
  * multiple) for context.
  */
 
+import { PER_SHARE_DIGITS, formatCurrency } from './reportSummary.js';
 import { isSpecialtyKind } from './specialty.js';
 import { appliedMarketMultiple } from './valuationAnalytics.js';
 import type { ValuationKind } from './valuation.js';
@@ -239,8 +240,23 @@ export function buildBridge(from: Results, to: Results): ValuationBridge {
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const usd = (v: number) =>
-  `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Every figure in this section is a per-share value or a difference between two
+ * of them, so all of it is struck at the conclusion's own precision and in the
+ * engagement's own currency.
+ *
+ * It was `$${v.toLocaleString('en-US', { …, maximumFractionDigits: 2 })}` — a
+ * hard-coded dollar sign and two decimals, in a section whose whole subject is
+ * a movement in the fourth. `BridgeTab` carried the identical pair and was
+ * fixed; this is the server-side twin of that render and was left. A walk from
+ * $2.5013 to $2.5104 would have read $2.50 → $2.51 with a $0.01 change, over an
+ * attribution table whose four LMDI contributions each collapsed to $0.00 above
+ * a "Total change" row of $0.01 — a waterfall that visibly does not close, in a
+ * signed opinion, denominated in a currency a sterling engagement was never
+ * computed in.
+ */
+const perShare = (v: number, currency: string) => formatCurrency(v, currency, PER_SHARE_DIGITS);
 
 /**
  * Optional value-bridge section for the report (feature 3). Returns a
@@ -250,8 +266,9 @@ const usd = (v: number) =>
  */
 export function renderBridgeSection(
   bridge: ValuationBridge,
-  labels: { fromRef: string; toRef: string },
+  labels: { fromRef: string; toRef: string; currency: string },
 ): { key: string; heading: string; html: string } {
+  const usd = (v: number) => perShare(v, labels.currency);
   const dir = bridge.delta >= 0 ? 'increased' : 'decreased';
   const pct = bridge.pct_change !== null ? ` (${(bridge.pct_change * 100).toFixed(1)}%)` : '';
   const intro =
