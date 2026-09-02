@@ -5,6 +5,7 @@ import type { Principal } from '../auth/rbac.js';
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { HubCapacityError, type ValuationHub } from '../realtime/hub.js';
+import { refuseRealtimeStream } from '../observability/realtimeStreams.js';
 import { authorizeStream, startStreamRevalidation, type StreamCredential } from '../realtime/streamAccess.js';
 
 declare module 'fastify' {
@@ -60,7 +61,13 @@ export function registerStreamRoutes(
     // Refuse before hijacking: once the event-stream headers are on the wire
     // there is no status left to answer with. `capacityFor` and the `join`
     // below are one synchronous run, so no second request can slip between.
-    if (deps.hub.capacityFor(id, principal.id)) {
+    const full = deps.hub.capacityFor(id, principal.id);
+    if (full) {
+      // Which ceiling was met is computed here and was thrown away here — see
+      // `observability/realtimeStreams.ts` for why a 429 on this door is
+      // invisible, and why `realtime_streams_open` reads 12 out of 1024 at the
+      // moment the ordinary refusal happens.
+      refuseRealtimeStream(req.log, full, { userId: principal.id, valuationId: id });
       throw problems.tooManyRequests('Too many open realtime streams — close a tab and retry', 30);
     }
 

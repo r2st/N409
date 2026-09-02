@@ -698,6 +698,73 @@ groups:
         annotations:
           summary: 'auto-pipeline runs have been queued behind the concurrency limit for half an hour'
 
+  - name: n409-realtime
+    rules:
+      # The realtime hub has three ceilings and had one instrument
+      # (`realtime_streams_open`, against `maxTotal`), which is the *last* of
+      # the three a caller meets. `hub.ts` sets `maxPerUser: 12`,
+      # `maxPerRoom: 64`, `maxTotal: 1024`, so the ordinary refusal happens with
+      # that gauge reading twelve out of a thousand — 1%, and healthy by every
+      # reading available — while a person cannot open a valuation. The refusal
+      # itself is `problems.tooManyRequests`, one 429 in the 4xx class beside
+      # every rate-limited request on the estate, and `scimRequests.ts` states
+      # the fact that made it invisible: there is no 4xx rule on this box.
+      # R369 (methodology M11) added the counter these read.
+      #
+      # `scope="total"` is the whole process and every user on the box, and it
+      # is the one a leak arrives as. `hub.ts` argues that nothing else bounds
+      # these connections — "a caller allowed N new requests a minute can
+      # accumulate connections for as long as it keeps them open" — and `leave`
+      # runs from the heartbeat's failed-write teardown, so a peer that vanished
+      # without a FIN is held until the next write fails. If that teardown stops
+      # firing the count climbs monotonically and the first symptom, absent this
+      # rule, is every user being refused at once and permanently.
+      #
+      # `increase(...)` and not `> 0`, for `CgroupMemoryReclaimForced`'s reason:
+      # a counter resets only on restart, so a bare comparison would hold the
+      # alert open for a month after one bad afternoon. The window asks whether
+      # it is happening now.
+      - alert: RealtimeCapacityExhausted
+        expr: increase(realtime_stream_refusals_total{scope="total"}[15m]) > 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.job }} is refusing every new realtime stream; its process-wide ceiling is met'
+          runbook: 'realtime_streams_open against realtime_stream_capacity{scope="total"} — a count that does not come down between deploys is a leaked-socket bug, not load'
+
+      # One valuation full, which turns away the next person to open it and
+      # nobody else. A ticket rather than a page: it is a sizing conversation
+      # about `maxPerRoom`, and the room empties when the tabs close.
+      - alert: RealtimeRoomFull
+        expr: increase(realtime_stream_refusals_total{scope="room"}[30m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} is turning people away from a full valuation room'
+          runbook: 'the warn line carries the valuationId; hub.ts maxPerRoom is the ceiling'
+
+      # The approach, so the leak above is caught on the way up rather than at
+      # the wall. A ratio and not an absolute for `DiskFillingUp`'s reason: the
+      # ceiling is a constructor argument and is raised without anybody
+      # remembering this file, which is why `realtime_stream_capacity` exports
+      # the number in force instead of this expression hardcoding 1024.
+      #
+      # `(… > 0)` is a filter and not defensiveness, the same as
+      # `MemoryNearCgroupLimit`: a hub constructed with a ceiling of zero would
+      # otherwise divide to `+Inf`, which is greater than any threshold, and
+      # raise a ticket that can never be closed on a hub that holds nothing.
+      #
+      # No rule on `scope="user"`. A single caller exceeding a per-caller
+      # ceiling is the ceiling working — the counter records it so the rate is
+      # available to a dashboard, and `realtimeStreams.ts` gives the argument
+      # for why it is not a page.
+      - alert: RealtimeStreamsNearCapacity
+        expr: realtime_streams_open / (realtime_stream_capacity{scope="total"} > 0) > 0.8
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} is holding over 80% of the realtime streams it will hold'
+
   - name: n409-database
     rules:
       # Anything waiting means the pool is saturated: the next query does not

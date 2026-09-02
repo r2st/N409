@@ -123,6 +123,21 @@ export class ValuationHub {
   }
 
   /**
+   * The ceilings in force, keyed by the scope a refusal names.
+   *
+   * Exported so `realtime_stream_capacity` reports the limits this process is
+   * actually running under rather than the defaults below: a constructor
+   * argument overrides them, and an alert that hardcoded 1024 would be reading
+   * a number nobody promised it. Keyed by {@link CapacityScope} rather than by
+   * the `HubLimits` field names, so the gauge and
+   * `realtime_stream_refusals_total` carry the same three label values and can
+   * be divided by one another.
+   */
+  ceilings(): Readonly<Record<CapacityScope, number>> {
+    return { user: this.limits.maxPerUser, room: this.limits.maxPerRoom, total: this.limits.maxTotal };
+  }
+
+  /**
    * Ends every open stream. Returns how many were closed.
    *
    * For shutdown, and nothing else. An SSE stream is a request that is still

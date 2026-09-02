@@ -169,6 +169,7 @@ import { registerScimMetrics } from './observability/scimRequests.js';
 import { registerSignInMetrics } from './observability/signInOutcomes.js';
 import { registerIntegrationCallbackMetrics } from './observability/integrationCallbacks.js';
 import { registerApiTokenAuthMetrics } from './observability/apiTokenAuth.js';
+import { registerRealtimeStreamMetrics } from './observability/realtimeStreams.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -893,6 +894,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     'Open per-valuation SSE connections',
     () => hub.stats().total,
   );
+  // And what the hub is *refusing*, which the gauge above cannot say: the
+  // per-user ceiling is met at twelve, so the ordinary refusal happens with
+  // that gauge reading 1% of `maxTotal`. See `observability/realtimeStreams.ts`.
+  registerRealtimeStreamMetrics(metricsRegistry, () => hub.ceilings());
   // Where PDF renders actually happen. `mode="local"` with a failure reason is
   // the signal that the offload has stopped working and this process is back to
   // blocking its event loop for half a second per report — a regression with no
