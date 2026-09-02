@@ -494,6 +494,25 @@ export function registerRollforwardRoutes(
         // is the route's job; recalculating on its own would be a second,
         // unasked-for change to a valuation somebody may be mid-review on.
         recalculation_required: before === null || Math.abs(before - run.rolled_equity_value) > 1e-9,
+        /*
+         * The two inputs this adoption deleted (round 360, methodology M5).
+         *
+         * Both clears are right — a superseded round price is not the anchor
+         * any more, and leaving `market_movement` beside the rolled value
+         * applies the same market move twice — and both were recorded in the
+         * `rollforward_applied` event and nowhere a person would look. The
+         * response carried `recalculation_required` alone, so the whole of
+         * what the panel could say was "Adopted", and the first sight of a
+         * price-per-share and a share class having been removed from the
+         * engagement was a blank pair of fields on the Params tab, later,
+         * with nothing tying them to this action.
+         *
+         * Named after what they cleared, so a client reading them does not
+         * have to tell "nothing was superseded" from "this deployment does
+         * not report it": both are always present.
+         */
+        cleared_round_price: supersededPrice,
+        cleared_market_movement: supersededMovement,
       };
     },
   );

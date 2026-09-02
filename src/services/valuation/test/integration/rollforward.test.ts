@@ -438,6 +438,21 @@ describe.skipIf(!dbUp)('roll-forward', () => {
       expect((await readEngineInputs(currentId)).last_round_post_money).toBe(42_000_000);
     });
 
+    /*
+     * Round 360 (M5). Both clears below were recorded in the admin event and
+     * nowhere a person would look: the response carried `recalculation_required`
+     * alone, so the panel's whole vocabulary for an adoption that deleted two
+     * of the engagement's inputs was the word "Adopted".
+     */
+    it('reports on the response which inputs the adoption cleared', async () => {
+      // The same run, re-applied — idempotent, and still answers for what the
+      // first press cleared.
+      const res = await apply(runId);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().cleared_round_price).toBe(true);
+      expect(res.json().cleared_market_movement).toBe(true);
+    });
+
     it('clears the superseded round price and the class that named it', async () => {
       // The failure this prevents: `compute` root-finds off a round price when
       // one is present, so a rolled anchor adopted beside last year's $1.25

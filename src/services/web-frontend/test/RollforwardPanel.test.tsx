@@ -126,6 +126,8 @@ function mockApi(
     recalc?: boolean;
     /** Status for `/bridge-candidates` alone — the panel loads it separately. */
     candidatesStatus?: number;
+    /** What the apply reports having cleared from the engine inputs (R360). */
+    cleared?: { round_price?: boolean; market_movement?: boolean };
   } = {},
 ) {
   const calls: Call[] = [];
@@ -155,7 +157,11 @@ function mockApi(
       return jsonResponse({ status: opts.writeStatus, detail: 'Refused upstream.' }, opts.writeStatus);
     }
     if (path.endsWith('/rollforward')) return jsonResponse({ run: opts.runResult ?? run() }, 201);
-    return jsonResponse({ recalculation_required: opts.recalc ?? true });
+    return jsonResponse({
+      recalculation_required: opts.recalc ?? true,
+      cleared_round_price: opts.cleared?.round_price ?? false,
+      cleared_market_movement: opts.cleared?.market_movement ?? false,
+    });
   });
   return calls;
 }
@@ -492,6 +498,43 @@ describe('RollforwardPanel', () => {
 
     await screen.findByText(/Adopted \$52,500,000 as the backsolve anchor\. Re-run the calculation/);
     expect(calls.some((c) => c.path.endsWith('/rollforward/run-1/apply'))).toBe(true);
+  });
+
+  /*
+   * Round 360 (M5). Adopting a roll-forward clears the round price per share
+   * and its share class when the round is superseded, and clears
+   * `market_movement` when the rolled value already crossed the interval that
+   * adjustment covers. Both clears are right and both were silent: the
+   * response carried `recalculation_required` alone, the clears went only into
+   * the `rollforward_applied` event, and the first sight of two removed inputs
+   * was a blank pair of fields on the Params tab later.
+   */
+  it('says which inputs the adoption cleared', async () => {
+    mockApi(
+      { runs: [run()], applied_anchor: 45_000_000 },
+      { recalc: true, cleared: { round_price: true, market_movement: true } },
+    );
+    renderPanel();
+    await screen.findByRole('button', { name: 'Adopt run' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Adopt run' }));
+
+    await screen.findByText(/Adopted \$52,500,000 as the backsolve anchor/);
+    const said = await screen.findByText(
+      /supersedes the round price per share and its share class and the market-movement adjustment, so they have been cleared/,
+    );
+    expect(said).toHaveAttribute('role', 'alert');
+  });
+
+  it('says nothing about cleared inputs when the adoption cleared none', async () => {
+    mockApi({ runs: [run()], applied_anchor: 45_000_000 }, { recalc: true });
+    renderPanel();
+    await screen.findByRole('button', { name: 'Adopt run' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Adopt run' }));
+
+    await screen.findByText(/Adopted \$52,500,000 as the backsolve anchor/);
+    expect(screen.queryByText(/has been cleared from this engagement/)).toBeNull();
   });
 
   it('says the calculation already ran on the anchor when no re-run is needed', async () => {

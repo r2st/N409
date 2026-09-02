@@ -162,6 +162,11 @@ export function RollforwardPanel({
   const [error, setError] = useState<string | null>(null);
   const { token, retryProps } = useRetry(() => setError(null));
   const [note, setNote] = useState<string | null>(null);
+  /*
+   * A consequence of the last action that is neither a refusal nor good news
+   * (round 360, methodology M5). See `adopt`.
+   */
+  const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [priorId, setPriorId] = useState('');
@@ -209,6 +214,7 @@ export function RollforwardPanel({
   const run = async (work: () => Promise<unknown>, failure: string) => {
     setBusy(true);
     setError(null);
+    setWarning(null);
     try {
       await work();
       await load();
@@ -295,16 +301,39 @@ export function RollforwardPanel({
 
   const adopt = (row: RollforwardRun) =>
     run(async () => {
-      const res = await api<{ recalculation_required: boolean }>(
-        `/valuations/${valuationId}/rollforward/${row.id}/apply`,
-        { method: 'POST', body: {} },
-      );
+      const res = await api<{
+        recalculation_required: boolean;
+        cleared_round_price?: boolean;
+        cleared_market_movement?: boolean;
+      }>(`/valuations/${valuationId}/rollforward/${row.id}/apply`, { method: 'POST', body: {} });
       setNote(
         res.recalculation_required
           ? `Adopted ${amount(row.rolled_equity_value)} as the backsolve anchor. Re-run the calculation for ` +
               'the concluded value to reflect it.'
           : `Adopted ${amount(row.rolled_equity_value)}. The calculation already ran on this anchor.`,
       );
+      /*
+       * What the adoption deleted (round 360, M5).
+       *
+       * Adopting a roll-forward clears the round price per share and its share
+       * class when the round is superseded, and clears `market_movement` when
+       * the rolled value has already been carried across the interval that
+       * adjustment covers. Both are right; neither was ever said. The response
+       * carried `recalculation_required` alone, the clears went into the
+       * `rollforward_applied` event, and the first a person saw of two removed
+       * inputs was a blank pair of fields on the Params tab with nothing tying
+       * them to the button they pressed here.
+       */
+      const cleared = [
+        res.cleared_round_price ? 'the round price per share and its share class' : null,
+        res.cleared_market_movement ? 'the market-movement adjustment' : null,
+      ].filter((s): s is string => s !== null);
+      if (cleared.length > 0)
+        setWarning(
+          `The rolled anchor supersedes ${cleared.join(' and ')}, so ${
+            cleared.length > 1 ? 'they have' : 'it has'
+          } been cleared from this engagement's inputs.`,
+        );
     }, 'Could not adopt the roll-forward as the backsolve anchor.');
 
   const addAdjustment = () =>
@@ -351,6 +380,14 @@ export function RollforwardPanel({
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
         </div>
+      )}
+      {warning && (
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          {warning}
+        </p>
       )}
       {note && (
         <div
