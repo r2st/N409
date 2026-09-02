@@ -409,6 +409,9 @@ describe('registerProcessMetrics', () => {
     const text = r.render();
     expect(seriesOf(text, 'n409_metric_series_folded')).toEqual([
       'n409_metric_series_folded{metric="folded_total"} 1',
+      // `registerProcessMetrics` registers this one (R376) and it carries no
+      // labels at all, so it holds exactly one series and can never fold.
+      'n409_metric_series_folded{metric="log_alert_lines_total"} 0',
       'n409_metric_series_folded{metric="roomy_total"} 0',
     ]);
     // The count, as context for the rule: two real label sets plus the one

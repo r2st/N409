@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { buildInfo } from './build.js';
+import { setAlertLineSink } from './logger.js';
 import {
   INTERNAL_TOKEN_ENV,
   INTERNAL_TOKEN_HEADER,
@@ -689,6 +690,31 @@ export function registerProcessMetrics(
     () => registry.seriesCensus().map((e) => ({ value: e.cardinality, labels: { metric: e.metric } })),
     ['metric'],
   );
+  // The alerting contract, at the endpoint that alerts (R376, methodology M11).
+  //
+  // `logFailure` stamps `alert: true` on a failure no retry is coming for, and
+  // forty-odd sites either use it or write the field by hand. Nothing consumed
+  // it: journald is retention configuration, not a shipper, and this endpoint
+  // is what an alert rule reads — so the estate's one "a person must act" flag
+  // reached nobody who was not already reading the journal. Several of the
+  // conditions behind it have no other number at all, a document that will no
+  // longer decrypt being the sharpest of them.
+  //
+  // Registered here because every Node service already makes this one call, and
+  // the sink is installed from the counter so a service without a metrics
+  // registry logs exactly as it did. See `setAlertLineSink` in logger.ts for
+  // why it is counted at the logger and why it carries no labels.
+  const alertLines = registry.counter(
+    'log_alert_lines_total',
+    'Log lines carrying alert: true — permanent failures the code says a person must act on',
+  );
+  // Minted at registration, exactly as `UPSTREAM_CIRCUITS` is: a counter
+  // publishes no series until something increments it, and a rule cannot tell
+  // an absent series from a healthy one — `increase()` over nothing is nothing,
+  // for ever, on a process that has never once alerted and on one whose logger
+  // is not wired at all.
+  alertLines.inc(undefined, 0);
+  setAlertLineSink(() => alertLines.inc());
   registry.gauge(
     'n409_metric_series_folded',
     '1 once an instrument has begun folding label sets into __other__ — its attribution is no longer complete',

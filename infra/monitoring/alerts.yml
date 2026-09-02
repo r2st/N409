@@ -435,6 +435,44 @@ groups:
           summary: '{{ $labels.metric }} has run out of label sets — rules selecting on its labels are matching less than they did'
           runbook: 'compare n409_metric_series{metric="{{ $labels.metric }}"} against the 200 in MAX_SERIES_PER_METRIC; the fix is the unbounded label, not the cap'
 
+      # The estate's own alerting contract, at the endpoint that alerts.
+      #
+      # `logFailure` (shared/failure.ts) classifies a failure and stamps
+      # `alert: true` on the permanent ones — the ones no retry is coming for —
+      # and forty-odd sites across the services either go through it or write
+      # the field by hand. Until R376 (methodology M11) nothing consumed it:
+      # journald is retention and rate-limit configuration, not a shipper, and
+      # this file is read against /metrics. So the one flag the code raises to
+      # mean *a person has to act* was visible only to somebody already reading
+      # the journal, which is to say after the fact.
+      #
+      # Several of the conditions behind it have no other number anywhere: a
+      # stored document that will not decrypt or fails its integrity check (the
+      # platform accepted a file it can no longer return), a chargeback lost, a
+      # refund that failed after the charge was taken, a Stripe subscription
+      # sending updates against no row of ours. Each is permanent, each needs a
+      # person, and each moved nothing an alert rule could see.
+      #
+      # `increase`, and a threshold of zero, for the reason `MetricCollectFailing`
+      # gives: the field means the code has already decided this is not routine,
+      # so there is no benign rate of it to calibrate against. A ticket rather
+      # than a page because the classifier's default is `permanent` — an
+      # unrecognised error alerts rather than being downgraded, which is the
+      # right default and not one to wake somebody for.
+      #
+      # Unlabelled on purpose: this is the detector and the journal is the
+      # diagnosis. The line itself carries the error, the ids, the sweep and the
+      # classified `failure_reason`; a label carrying any of those would put
+      # caller-shaped cardinality on the one counter that has to be trustworthy
+      # while things are going wrong.
+      - alert: PermanentFailuresLogged
+        expr: increase(log_alert_lines_total[30m]) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} logged a failure it says nothing will retry'
+          runbook: 'journalctl -u n409-{{ $labels.job }} --since -1h | grep ''"alert":true'' — the line carries err, the ids and failure_reason'
+
   - name: n409-dependencies
     rules:
       # The platform has stopped calling a dependency altogether. Pages: every

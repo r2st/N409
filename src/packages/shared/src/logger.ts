@@ -319,6 +319,66 @@ function requestIdMixin(): Record<string, string> {
   };
 }
 
+/**
+ * How many lines carrying the alerting contract this process has written.
+ *
+ * ## Why this is here (R376, methodology M11)
+ *
+ * `failure.ts` declares one alerting contract: `logFailure` classifies a
+ * failure and stamps `alert: true` on the permanent ones — "no retry is
+ * coming, a person has to act" — and forty-odd sites across the estate either
+ * go through it or hand-write the same field. Nothing consumed it. The journal
+ * is retention and rate-limit configuration (`infra/journald`), not a shipper,
+ * and `GET /metrics` is what an alert rule reads; so the one flag the codebase
+ * raises to mean *page somebody* was visible only to whoever was already
+ * reading the journal, which is the definition of after the fact.
+ *
+ * The concrete cases are the ones with no metric of their own: a stored
+ * document that will not decrypt or fails its integrity check (data loss, and
+ * `readStoredBlob` says so with `alert: true` and nothing else), a chargeback
+ * lost, a refund that failed after the charge was taken, a Stripe subscription
+ * sending updates we hold no row for. Each is a permanent failure with a
+ * person-shaped remedy and none of them moves a number an alert rule can see.
+ *
+ * Counted at the logger rather than at the forty call sites, because the
+ * contract is the field: a site added next round is counted by construction,
+ * and one that stops stamping the field stops counting, which is the same
+ * event. `formatters.log` runs on every line pino actually emits — after the
+ * level filter, with the mixin merged in — and never on one it drops, so this
+ * counts lines written rather than lines attempted.
+ *
+ * Deliberately unlabelled. The metric is the detector and the journal is the
+ * diagnosis: `journalctl -u n409-valuation | grep '"alert":true'` is the line
+ * itself, with the error, the ids and the classified `failure_reason` on it.
+ * A label carrying any of those would be caller-controlled cardinality on a
+ * counter whose whole job is to be reliable when things are going wrong.
+ */
+let alertSink: (() => void) | null = null;
+
+/**
+ * Install the counter the alerting contract is tallied into.
+ *
+ * Called by `registerProcessMetrics`, so every Node service gets it from the
+ * one call they all already make. Null clears it, which is what a test does
+ * between cases; a process with no sink installed logs exactly as before.
+ */
+export function setAlertLineSink(sink: (() => void) | null): void {
+  alertSink = sink;
+}
+
+/** Count a line if it carries the alerting contract. Never throws. */
+function countAlertLine(obj: Record<string, unknown>): Record<string, unknown> {
+  if (obj.alert === true) {
+    try {
+      alertSink?.();
+    } catch {
+      // swallow: a broken counter must never be the reason a log line is lost,
+      // and this runs inside pino's write path for every line in the process.
+    }
+  }
+  return obj;
+}
+
 export function createLogger(opts: LoggerOptions): Logger {
   return pino({
     name: opts.service,
@@ -333,6 +393,7 @@ export function createLogger(opts: LoggerOptions): Logger {
       level(label) {
         return { level: label };
       },
+      log: countAlertLine,
     },
     base: { service: opts.service },
     timestamp: pino.stdTimeFunctions.isoTime,

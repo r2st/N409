@@ -5,6 +5,7 @@ export {
   SENSITIVE_FIELDS,
   serializeError,
   serializeRequest,
+  setAlertLineSink,
   type LoggerOptions,
 } from './logger.js';
 export { incomingSpanUrlAttributes, startTelemetry, type TelemetryHandle } from './otel.js';
