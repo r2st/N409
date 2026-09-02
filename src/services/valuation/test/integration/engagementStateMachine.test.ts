@@ -5,6 +5,7 @@ import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { advanceStage, ensureEngagement } from '../../src/repos/engagements.js';
 import { invalidateValuation } from '../../src/repos/valuations.js';
+import { ULID_FIELD_MESSAGE } from '../../src/domain/ulidField.js';
 
 const dbUp = await isDbAvailable();
 
@@ -181,6 +182,61 @@ describe.skipIf(!dbUp)('engagement state machine', () => {
   });
 
   /**
+   * What the three terse refusals say now (R350, methodology M19).
+   *
+   * `refuseTransition` answered `reopen_required` with a paragraph naming the
+   * consequence and the exact field to send, and the other three with a
+   * category noun apiece — "Unknown engagement stage", "already at its final
+   * stage", "already at that stage" — none of which named a stage. All three
+   * are things an operator with a board open in front of them cannot resolve
+   * by looking: the unknown one is the only answer to a typo, since
+   * `AdvanceBody` deliberately types `stage` as a string so the transition
+   * table stays the one place a stage is decided; and `same_stage` is a lost
+   * race rather than a mistake, so the missing fact is where the engagement
+   * *is*.
+   */
+  describe('what a refused transition says', () => {
+    it('names what was sent and what would have been accepted', async () => {
+      const id = await startEngagement('TypoCo');
+      const res = await advance(id, { stage: 'analysys' });
+      expect(res.statusCode).toBe(422);
+      const body = res.json();
+      expect(body.detail).toContain('analysys');
+      expect(body.detail).toContain('data_collection');
+      // Where it is now, which is the other half of choosing a target.
+      expect(body.detail).toContain('Kickoff');
+      // The extension is for the integration; the prose is for the person.
+      expect(body.allowed_stages).toContain('board_approval');
+    });
+
+    it('names the stage the engagement is actually at on a lost race', async () => {
+      const id = await startEngagement('RaceCo');
+      expect((await advance(id, { stage: 'analysis' })).statusCode).toBe(200);
+      const res = await advance(id, { stage: 'analysis' });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().detail).toContain('Analysis');
+      expect(res.json().detail).toMatch(/reload/i);
+    });
+
+    it('names the final stage, and the way back out of it', async () => {
+      const id = await startEngagement('EndCo');
+      await advance(id, { stage: 'complete' });
+      const res = await advance(id, {});
+      expect(res.statusCode).toBe(409);
+      expect(res.json().detail).toContain('Complete');
+      expect(res.json().detail).toContain('reopen');
+    });
+
+    it('does not let a stage name reorder the sentence it is quoted in', async () => {
+      // `stage` is caller-supplied and lands in prose a terminal draws.
+      const id = await startEngagement('BidiCo');
+      const res = await advance(id, { stage: 'analysis\u202egnp.exe' });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().detail).not.toContain('\u202e');
+    });
+  });
+
+  /**
    * `terminal: true` on `complete` was honoured by the unnamed-target path and
    * ignored by the named one. Reopening is legitimate; doing it by choosing a
    * line in a select box, and recording it as an ordinary forward step, is not.
@@ -322,15 +378,32 @@ describe.skipIf(!dbUp)('engagement state machine', () => {
       const id = await startEngagement('GhostCo');
       const res = await assign(id, newUlid());
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toBe('Unknown analyst');
+      // R350: `Unknown analyst` named no field and no remedy, in a function
+      // whose third refusal is a full sentence. The extension is unchanged and
+      // still not what the reader sees.
+      expect(res.json().detail).toContain('no user with that id');
+      expect(res.json().detail).toMatch(/reload/i);
       expect(res.json().errors).toEqual([{ path: ['analyst_id'] }]);
     });
 
-    it('answers a malformed id the same way', async () => {
+    /**
+     * This assertion has been wrong since R333, which put `ulidField()` on
+     * `AssignBody` and so moved the refusal from `assertAssignableAnalyst` to
+     * the schema — the detail became `Invalid analyst — analyst_id: …` and the
+     * test went on asserting the handler's old string. Left failing on main
+     * until R350, the same shape R347 found on the fund-link assertion.
+     *
+     * The answer it asserts now is the reachable one. The handler's own
+     * `isUlid` branch stays as the guard for a direct caller, but nothing on
+     * the wire reaches it.
+     */
+    it('answers a malformed id the same way, from the schema', async () => {
       const id = await startEngagement('MalformedCo');
       const res = await assign(id, 'not-a-ulid');
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toBe('Invalid analyst id');
+      expect(res.json().detail).toContain('analyst_id');
+      expect(res.json().detail).toContain(ULID_FIELD_MESSAGE);
+      expect(res.json().errors[0].path).toEqual(['analyst_id']);
     });
   });
 

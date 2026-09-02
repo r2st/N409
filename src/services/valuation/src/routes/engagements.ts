@@ -12,9 +12,11 @@ import {
   analystChaseBlock,
   analystIsChasable,
   ENGAGEMENT_EVENT_TYPES,
+  ENGAGEMENT_STAGE_KEYS,
   ENGAGEMENT_STAGES,
   planStageTransition,
   slaStatus,
+  stageByKey,
   stageDurations,
   type StageTransitionRefusal,
 } from '../domain/engagement.js';
@@ -37,6 +39,7 @@ import { isRetiredNow, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
 import { ulidField } from '../domain/ulidField.js';
+import { quoteForMessage } from '../domain/displayText.js';
 
 /**
  * Engagement lifecycle management (feature 8). Ops-only: track the stage an
@@ -91,15 +94,58 @@ async function engagementView(pool: pg.Pool, engagement: EngagementRow, now: Dat
   };
 }
 
-/** The refusal a transition plan turns into on the wire. */
-function refuseTransition(reason: StageTransitionRefusal): Error {
+/**
+ * The refusal a transition plan turns into on the wire.
+ *
+ * Three of the four used to name no stage at all — "Unknown engagement stage",
+ * "The engagement is already at its final stage", "The engagement is already at
+ * that stage" — while the fourth, `reopen_required`, is a paragraph naming the
+ * consequence and the exact field to send. That gap is the finding rather than
+ * any one string: the same function answers one caller with a remedy and three
+ * with a category (R350, methodology M19).
+ *
+ * What each of the three was missing is different, and all three are known
+ * here:
+ *
+ *   - `unknown_stage` is reachable, because `AdvanceBody` types `stage` as
+ *     `z.string().max(60)` rather than as the enum — deliberately, so the
+ *     refusal comes from `planStageTransition` and the transition table stays
+ *     the one place a stage is decided. That makes this the *only* answer to a
+ *     typo or to a stale build's key, and it named neither what was sent nor
+ *     what would have been accepted. `ai.ts` already answers its twin with
+ *     `Unknown pipeline "…"`, and the document upload puts its allowed values
+ *     in an extension; this now does both.
+ *   - `same_stage` is a lost race, not a mistake. Two operators on the pipeline
+ *     board, one moves the engagement, the other's board still shows where it
+ *     was — so "already at that stage" withholds the one fact the reader is
+ *     missing, which is *which* stage it is at now.
+ *   - `already_final` reaches an implicit advance (`{}`) on a finished
+ *     engagement. Naming the stage matters here for the same reason, and the
+ *     remedy is the reopen the caller has not asked for.
+ *
+ * The stage is quoted through `quoteForMessage`: `to` is caller-supplied on the
+ * unknown arm, and a bidi control in it reorders the sentence a person reads.
+ */
+function refuseTransition(reason: StageTransitionRefusal, from: string, to: string | undefined): Error {
+  const label = (key: string): string => stageByKey(key)?.label ?? key;
+  const at = `The engagement is at “${label(from)}”`;
   switch (reason) {
     case 'unknown_stage':
-      return problems.unprocessable('Unknown engagement stage');
+      return problems.unprocessable(
+        `“${quoteForMessage(to ?? '', 60)}” is not an engagement stage. ${at}; the stages are ` +
+          `${ENGAGEMENT_STAGES.map((stage) => stage.key).join(', ')}.`,
+        { allowed_stages: ENGAGEMENT_STAGE_KEYS },
+      );
     case 'already_final':
-      return problems.conflict('The engagement is already at its final stage');
+      return problems.conflict(
+        `${at}, the final stage, so there is no next one to advance to. Name a stage to move it ` +
+          'back to, and send "reopen": true with it.',
+      );
     case 'same_stage':
-      return problems.conflict('The engagement is already at that stage');
+      return problems.conflict(
+        `${at} already. If your board showed it somewhere else, somebody has moved it since — ` +
+          'reload before moving it again.',
+      );
     case 'reopen_required':
       return problems.conflict(
         'This engagement is complete. Reopening it puts it back on the pipeline board and back ' +
@@ -127,9 +173,21 @@ function refuseTransition(reason: StageTransitionRefusal): Error {
 async function assertAssignableAnalyst(pool: pg.Pool, analystId: string): Promise<void> {
   const invalid = (detail: string): Error =>
     problems.unprocessable(detail, { errors: [{ path: ['analyst_id'] }] });
-  if (!isUlid(analystId)) throw invalid('Invalid analyst id');
+  // Two category nouns and a sentence, in one function, for three refusals a
+  // caller answers identically — by picking somebody else out of the list
+  // (R350). The third one below already said what to do; these did not say
+  // even which field was wrong, and the `errors` extension that carries
+  // `analyst_id` is not rendered anywhere (see `validationProblem`).
+  if (!isUlid(analystId))
+    throw invalid(
+      'The analyst id is not a user id. Pick the analyst from the list rather than typing an id.',
+    );
   const user = await findUserById(pool, analystId);
-  if (!user) throw invalid('Unknown analyst');
+  if (!user)
+    throw invalid(
+      'There is no user with that id — the account may have been deleted since the list was ' +
+        'loaded. Reload the page and pick the analyst again.',
+    );
   // `isOps` rather than the role set directly: a suspended (`ignored`) account
   // keeps its `admin`/`reviewer` row, so the bare set says yes to somebody who
   // cannot open the engagement they would be assigned — and the overdue sweep
@@ -259,7 +317,7 @@ export function registerEngagementRoutes(
     const plan = planStageTransition(engagement.current_stage, parsed.data.stage, {
       reopen: parsed.data.reopen,
     });
-    if (!plan.ok) throw refuseTransition(plan.reason);
+    if (!plan.ok) throw refuseTransition(plan.reason, engagement.current_stage, parsed.data.stage);
 
     const updated = await advanceStage(
       deps.pool,
