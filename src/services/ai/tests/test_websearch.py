@@ -1092,3 +1092,73 @@ class TestHitsFromScheme:
             rows, url_key="url", title_key="title", snippet_key="description", limit=5
         )
         assert [h.url for h in hits] == ["https://sec.gov/x"]
+
+
+class TestProviderWordsCost:
+    """The 200-character bound is on the work as well as on the sentence.
+
+    Round 385, methodology M8. Five of the six arms hand `_provider_words` the
+    provider's whole response body (`resp.text`), and nothing on the way in
+    bounds it — these calls read off an `httpx.Client` with no size ceiling.
+    The first form cleaned all of it and cut afterwards: 359 ms and 49 MB of
+    peak heap for a 5 MB error page, to keep 201 characters, in a Python loop
+    that is the whole process waiting.
+
+    Asserted as machinery, because the answer is identical either way — which
+    is exactly why the tests written with the bound could not see this.
+    """
+
+    def test_a_huge_body_is_neither_walked_nor_copied_whole(self):
+        import tracemalloc
+
+        body = "<h1>502 Bad Gateway</h1>" + ("<p>filler</p>" * 160_000)
+        assert len(body) > 2_000_000
+        tracemalloc.start()
+        try:
+            said = websearch._provider_words(body)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert said == body[: websearch.MAX_PROVIDER_WORDS] + "\u2026"
+        # The pre-fix form peaks at roughly ten times the body in per-character
+        # strings and their pointers; this one holds the bound and nothing else.
+        assert peak < 100_000, f"held {peak} bytes to keep {len(said)} characters"
+
+    def test_a_body_that_fits_is_still_read_to_the_end(self):
+        """The discriminator: a reader that merely stopped early passes above."""
+        body = "searxng is read-only right now"
+        assert websearch._provider_words(body) == body
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "   leading and trailing   ",
+            "\n\tcontrols become question marks\n",
+            "  ",
+            "",
+            "\u202egnp.exe",
+            "a" + " " * 300 + "b",
+            " " * 300 + "late text",
+            "short" + " " * 300,
+        ],
+    )
+    def test_the_strip_still_happens_where_the_bound_is_not_reached(self, raw):
+        """`.strip()` is what makes this more than a slice, so it is pinned.
+
+        Leading whitespace is dropped as the walk goes and an interior run is
+        held aside until text follows it — the two halves of `.strip()`, done
+        without a second pass. Each case here is one of the ways those differ
+        from a plain prefix.
+        """
+        cleaned = "".join(
+            "?"
+            if (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ord(ch) in (0x2028, 0x2029))
+            else ("" if ch in websearch._BIDI_CONTROLS else ch)
+            for ch in raw
+        ).strip()
+        expected = (
+            cleaned
+            if len(cleaned) <= websearch.MAX_PROVIDER_WORDS
+            else cleaned[: websearch.MAX_PROVIDER_WORDS] + "\u2026"
+        )
+        assert websearch._provider_words(raw) == expected

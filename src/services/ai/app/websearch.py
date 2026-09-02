@@ -905,17 +905,44 @@ def _provider_words(raw: object, limit: int = MAX_PROVIDER_WORDS) -> str:
     line and `errors._scrubbed` over the response body, and this is neither of
     those jobs. It bounds and it de-fangs; what a credential in a provider's
     error body costs is already answered elsewhere.
+
+    THE 200 BOUNDS THE WORK AS WELL AS THE SENTENCE (round 385, methodology
+    M8). What five of the arms hand this is `resp.text` — the provider's whole
+    response body, which nothing on the way in bounds: these calls read
+    `resp.json()`/`resp.text` off an `httpx.Client` with no size ceiling. The
+    first form built a cleaned copy of all of it and cut afterwards, so a 5 MB
+    error page cost 359 ms and 49 MB of peak heap to keep 201 characters — and
+    `re`-free though it is, it is a Python loop, so it is the whole process
+    waiting. Cleaning maps each character to zero or one, so one character past
+    the bound is proof the bound applies.
+
+    `.strip()` is what makes this more than a slice. Leading whitespace never
+    survives it, so it is dropped as the walk goes; an interior run survives
+    only if text follows it, so it is held aside until something does and never
+    grows past what the bound can hold. A body that is entirely whitespace (or
+    entirely reordering controls) is still walked whole — there is no answer
+    until the last character says there is nothing after it — but it allocates
+    nothing while doing so.
     """
     text = raw if isinstance(raw, str) else str(raw)
-    cleaned = "".join(
-        "?" if (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ord(ch) in (0x2028, 0x2029))
-        else ("" if ch in _BIDI_CONTROLS else ch)
-        for ch in text
-    )
-    cleaned = cleaned.strip()
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[:limit] + "…"
+    kept: list[str] = []
+    pending: list[str] = []
+    for ch in text:
+        if ch in _BIDI_CONTROLS:
+            continue
+        code = ord(ch)
+        out = "?" if (code < 0x20 or 0x7F <= code <= 0x9F or code in (0x2028, 0x2029)) else ch
+        if out.isspace():
+            if kept and len(kept) + len(pending) < limit:
+                pending.append(out)
+            continue
+        if pending:
+            kept.extend(pending)
+            pending.clear()
+        kept.append(out)
+        if len(kept) > limit:
+            return "".join(kept[:limit]) + "…"
+    return "".join(kept)
 
 
 def _json_object(resp: httpx.Response, provider: str) -> dict:
