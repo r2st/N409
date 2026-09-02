@@ -305,29 +305,61 @@ def estimate_volatility(
             continue
         vols.append(vol)
 
-    if not vols:
-        if manual_override is not None:
-            # The analyst pinned a value; the dead comps cost nothing.
-            vols = [float(manual_override)]
-        else:
-            raise EngineInputError(
-                "no comparable had measurable price movement — check the price series "
-                "or provide manual_override"
-            )
+    if not vols and manual_override is None:
+        raise EngineInputError(
+            "no comparable had measurable price movement — check the price series "
+            "or provide manual_override"
+        )
 
-    median_vol = statistics.median(vols)
-    mean_vol = statistics.fmean(vols)
-    confidence, cv = _confidence(vols)
+    # A DISTRIBUTION IS OVER WHAT WAS MEASURED (round 386, methodology M2).
+    #
+    # The analyst pinned a value, so the dead comps cost nothing — the *answer*
+    # stands. What used to stand with it was `vols = [manual_override]`, and
+    # every figure below is struck from `vols`: the override came back as the
+    # `median_volatility`, the `mean_volatility`, the `min_volatility` and the
+    # `max_volatility` of a set no comp had entered, with a
+    # `coefficient_of_variation` of 0.0 saying they all agreed and a
+    # `company_count` of 1 counting a company that is not there.
+    #
+    # It is a report surface, not only a field. `compute._resolve_auto` files
+    # the whole estimate under `meta["volatility"]`, `shapeEstimate` copies the
+    # five figures into `volatility_estimates`, and `reportExhibits` prints them
+    # as a "Distribution" table directly under the line "Guideline companies
+    # measured: 0" — which it derives from `companies`, so the exhibit
+    # contradicted itself on the same page. Three flat comps under a pinned 0.62
+    # published a peer distribution of 62.0% / 62.0% / 62.0% / 62.0%.
+    #
+    # Null is the honest figure and the shape every reader already handles:
+    # `fin()` maps a missing number to null, the exhibit's `push()` drops a null
+    # row, and `measuredCount` was already derived from `companies` rather than
+    # trusted from here. The empty-`comparables` branch above says the same
+    # thing by omitting the keys.
+    if vols:
+        median_vol: float | None = statistics.median(vols)
+        confidence, cv = _confidence(vols)
+        measured: dict = {
+            "median_volatility": round(median_vol, 4),
+            "mean_volatility": round(statistics.fmean(vols), 4),
+            "min_volatility": round(min(vols), 4),
+            "max_volatility": round(max(vols), 4),
+            "coefficient_of_variation": round(cv, 4),
+        }
+    else:
+        median_vol = None
+        confidence = "low"
+        measured = {
+            "median_volatility": None,
+            "mean_volatility": None,
+            "min_volatility": None,
+            "max_volatility": None,
+            "coefficient_of_variation": None,
+        }
 
     recommended = float(manual_override) if manual_override is not None else median_vol
     return {
         "method": method if manual_override is None else "manual",
         "recommended_volatility": round(recommended, 4),
-        "median_volatility": round(median_vol, 4),
-        "mean_volatility": round(mean_vol, 4),
-        "min_volatility": round(min(vols), 4),
-        "max_volatility": round(max(vols), 4),
-        "coefficient_of_variation": round(cv, 4),
+        **measured,
         "confidence": "manual" if manual_override is not None else confidence,
         "manual_override": round(float(manual_override), 4) if manual_override is not None else None,
         # Counts the comps the recommendation actually rests on. `companies`

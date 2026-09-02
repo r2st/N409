@@ -151,6 +151,59 @@ def test_a_manual_override_survives_a_full_set_of_dead_comps() -> None:
     assert len(out["excluded_companies"]) == 3
 
 
+def test_dead_comps_publish_no_peer_distribution() -> None:
+    """Round 386, methodology M2. The answer stands; the *distribution* cannot.
+
+    The rescue used to be `vols = [manual_override]`, and the five figures
+    below are all struck from `vols` — so the pinned assumption came back as
+    the median, mean, minimum and maximum of a peer set no peer had entered,
+    with a coefficient of variation of 0.0 saying they agreed and a
+    `company_count` of 1 counting a company that is not there.
+
+    `reportExhibits.ts` prints exactly these five as a "Distribution" table,
+    under a "Guideline companies measured" line it derives from `companies` —
+    so the exhibit read `0` companies above four identical percentages. A null
+    is what the whole chain already handles: `fin()` maps it through,
+    `push()` drops the row, and `measuredCount` never trusted the count.
+    """
+    out = estimate_volatility([comp(f"D{i}", FLAT) for i in range(3)], manual_override=0.62)
+    assert out["recommended_volatility"] == 0.62
+    assert out["company_count"] == 0
+    for key in (
+        "median_volatility",
+        "mean_volatility",
+        "min_volatility",
+        "max_volatility",
+        "coefficient_of_variation",
+    ):
+        assert out[key] is None, f"{key} was published off an empty measured set"
+
+
+def test_a_measured_set_still_reports_its_distribution() -> None:
+    """The discriminator: nulling the five unconditionally would pass above."""
+    out = estimate_volatility([comp("A", MOVING), comp("B", [p * 1.01 for p in MOVING])])
+    assert out["company_count"] == 2
+    assert out["median_volatility"] is not None
+    assert out["min_volatility"] <= out["median_volatility"] <= out["max_volatility"]
+    assert out["coefficient_of_variation"] is not None
+
+
+def test_a_pinned_override_beside_live_comps_keeps_both_figures() -> None:
+    """A measured distribution and an override are two facts, not one.
+
+    The override is the recommendation; the comps that *did* move are still the
+    peer set the exhibit tabulates, and nulling them would lose the disclosure
+    the analyst overrode.
+    """
+    out = estimate_volatility(
+        [comp("LIVE", MOVING), comp("DEAD", FLAT)], manual_override=0.62
+    )
+    assert out["recommended_volatility"] == 0.62
+    assert out["company_count"] == 1
+    assert out["median_volatility"] is not None
+    assert out["median_volatility"] != 0.62
+
+
 # --- the autopilot path, where the zero used to end up ----------------------
 
 
