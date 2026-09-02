@@ -9304,3 +9304,150 @@
 #            will reach for `problems.badRequest` with a category noun again —
 #            the new census sees `safeParse` refusals only, and by construction
 #            a hand-rolled parse has none.
+# R367 — Performance optimization (M8), fourteenth round. Three fixes, no
+#            migration, no index, no SQL, 10 new tests, at
+#            `9e0fbbb4..7377308d`.
+#
+#            The R231 diff recipe over R359-R366 found almost nothing to
+#            measure — credential doors, readiness and scrape targets, state
+#            transitions, schema refusals and error prose — and between them
+#            those rounds added one new SQL statement (an `EXISTS` on
+#            `user_invitations`' own unique index) and no loop. So
+#            the round went where R314 and R358 pointed instead: the Python
+#            tiers, timed at their own declared ceilings. Two of the three
+#            findings are the same shape as each other and as R358's, and the
+#            shape is worth naming: **a bound on the input is not a bound on
+#            the work, and the work is what the box pays for.**
+#
+#            **A worksheet was built whole to read its first four hundred
+#            rows.** R338 gave the workbook extractor a character budget and
+#            stopped the *loop* over a sheet's rows at `MAX_CHARS_PER_DOC`. It
+#            did not stop the parse: `_xlsx_text` handed the whole part to
+#            `_parse_xml_part`, so expat built an `Element` per row and per cell
+#            of a sheet the reader abandons a few hundred rows in, and
+#            `root.iter()` was materialised into a list before it was sliced.
+#            That cost is bounded — `_BoundedZip` will not inflate a part past
+#            the archive's budget — and bounded is not small: a 40,000-row
+#            sheet, 0.6 MB compressed and 12 MB of XML, cost **339 ms and
+#            209 MB of peak heap to produce 20,033 characters that were
+#            complete after row 700**. The budget that bound allows an archive
+#            of a few megabytes to reach 128 MB of XML, which is a tree this
+#            3.8 GB box does not have the memory for, and an AI request carries
+#            three documents. `_iter_sheet_rows` streams it: `iterparse`, the
+#            row ceiling enforced as it goes, and each finished row cleared out
+#            of its *parent* — clearing the row alone frees its cells and
+#            leaves an empty `<row/>` behind, which at the ceiling is the whole
+#            leak. 339 -> 11 ms and 209 -> 28 MB; 5,000 rows 39 -> 9 ms and
+#            26 -> 7 MB. What is left is the metered bytes themselves, which
+#            are 1x rather than the tree's 20x. The document type declaration
+#            refusal moved with the parse — `iterparse` expands internal
+#            entities exactly as `fromstring` does, and a worksheet is as good
+#            a place to carry a billion laughs as the shared strings are.
+#            Verified as identity, not as a speedup: 59 workbooks (sparse rows,
+#            blank rows, shared strings, refless cells, truncated and missing
+#            parts, 1/3/20 sheets) at four budgets against the tree form. The
+#            two divergences are the same deliberate one — a sheet damaged
+#            *past* the character budget now yields its rows rather than the
+#            "could not be read" note, because the read stops before it reaches
+#            the damage. The note is owed where a read was attempted and
+#            failed; this reader already says nothing at all about the sheets
+#            the budget stopped it from opening.
+#
+#            **The engine's innermost loop rebuilt a tuple per segment per
+#            draw.** `_common_payoff_factory` returns the evaluator every Monte
+#            Carlo path goes through, and it iterated `zip(lows, highs,
+#            slopes)` — three parallel lists that never change, re-zipped into a
+#            fresh iterator and a fresh 3-tuple per segment on every call. At
+#            `MAX_PATHS` against the 200-class cap that is tens of millions of
+#            tuples allocated and freed to read the same waterfall. One
+#            prebuilt list instead: at 200,000 paths, **1097 -> 994 ms** at the
+#            200-class cap, 746 -> 676 at fifty, 338 -> 299 at ten — about a
+#            tenth of a synchronous request whose declared ceiling is already a
+#            second. Bit-identical, and that is the point rather than a bonus:
+#            144 runs across 2-200 classes, 2-20,000 paths, three seeds and
+#            both scenario forms produce byte-identical JSON, including the two
+#            that raise `EngineDegradedError` at the same draw.
+#
+#            **The archive checksum was a byte loop in JavaScript.** Every byte
+#            of every ZIP entry this platform writes goes through `crc32` — the
+#            evidence bundle, and far more often every .xlsx export, since an
+#            .xlsx is a ZIP of XML parts built by the same writer. R330 had
+#            already taken it from 21.8 to 6.2 ms over a 2.7 MB
+#            `calculations.json` by indexing rather than iterating a Buffer,
+#            which was the right fix for the loop and left the loop.
+#            `node:zlib` computes the same checksum natively: over a 7.6 MB
+#            entry, **16.6 ms against 0.22 ms**, on the event loop of the
+#            process serving every other request.
+#
+#            **What the guards had to be, because none of this is visible in an
+#            output.** The workbook reader returns the same 20,033 characters
+#            streamed or not, which is the trap `test_extraction_budget_work`
+#            was written for one layer up; its guards assert the *parse* — no
+#            worksheet may reach `_parse_xml_part`, rows parsed must not move
+#            when the sheet is deepened tenfold, the row ceiling still bounds a
+#            sheet of blank rows, and a finished row is weakly unreachable once
+#            the next is asked for. Three of the seven fail against the pre-fix
+#            loop, and the deepening assertion needed `shallow > 0` beside it:
+#            a reader that does not stream parses no rows through that door, so
+#            `0 == 0` was a green light for exactly the form under test. The
+#            engine guard pins the *arithmetic*, not the spelling, because the
+#            dangerous rewrite there is the one that looks like this one —
+#            precomputing each class's cumulative allocation per breakpoint and
+#            evaluating a draw as a lookup is the obvious next optimisation and
+#            it reorders the additions, and these sums are `s_common` and
+#            `s_common_sq`, so they are the published
+#            `standard_error_per_share` and the `conservation_error` that
+#            decides whether a run is refused, on an endpoint whose seed is a
+#            reproducibility promise. Equality against an independent naive
+#            walk, not `approx`. And a delegated checksum needs a stronger
+#            guard than a delegated anything else: CRC-32 has variants that
+#            agree on the appnote's `123456789` vector and on the empty buffer
+#            and disagree elsewhere, so the table-driven implementation stays in
+#            the test as its model of the appnote.
+#
+#            gap: **the AI tier redacts documents it never sends, measured and
+#            deliberately not fixed.** `_load_docs` extracts up to
+#            `MAX_TOTAL_CHARS` (60,000) and redacts every character of it;
+#            `_corpus` then fits the corpus to a per-pipeline limit that is
+#            45,000 for most and **15,000 for `run_comparables`**, and it breaks
+#            at the first document that does not fit. At R358's post-fix rate
+#            (~1.1 ms/kB) that is roughly 45 ms of GIL-held redaction per
+#            request over text the model never sees, and every one of the seven
+#            callers discards the `report()` that is the only thing depending
+#            on it. The fix is to redact inside the budget loop — but the
+#            layered defence in `test_prompt_redaction` is explicit that the
+#            assembly-site redaction is the layer that catches an agent calling
+#            `chat` directly, and moving it to `_corpus` leaves an unredacted
+#            `DocText` list in the hand of any future caller that renders its
+#            own corpus. Worth doing as one function that extracts, redacts and
+#            budgets in a single pass so no raw text is ever returned; not
+#            worth doing as a two-step where it is.
+#            gap: `buildZip` deflates synchronously on the API event loop.
+#            `deflateRawSync` at level 6 is **40 ms for one 7.6 MB entry**, and
+#            an evidence bundle is twenty entries; a 10,000-row .xlsx export is
+#            the same order and far more frequent. `node:zlib`'s async form
+#            runs on the libuv threadpool and would take all of it off the
+#            loop — this is the argument R98 made when it moved the report
+#            renderer out of process, and R322 called the list-export PDF "the
+#            only such renderer left" without counting this one. Not taken here
+#            because `buildZip` and `buildXlsx` have 63 call sites in the test
+#            tree, several of them `expect(() => buildXlsx([])).toThrow(...)`
+#            over refusals that are not the compression; the conversion is
+#            mechanical but it is not small, and half-converting it leaves two
+#            code paths through the one writer every archive on the platform
+#            goes through.
+#            gap: the two Python units now run **seven** `BaseHTTPMiddleware`
+#            layers each, the seventh added by R361's metrics hook. Starlette
+#            builds an anyio task group and a pair of memory-object streams per
+#            layer per request; measured through `TestClient` a bare
+#            `GET /health` on the engine is 1.7 ms against a 13.9 ms `compute`,
+#            so it is real and it is not yet the thing to fix. Pure-ASGI
+#            middleware is the standing answer and it is a rewrite of seven
+#            files across two services, so it wants its own round rather than a
+#            corner of this one.
+#            gap: `format:check` is red on main again — **18 files**, up from
+#            the five R358 found and the two R314 found, and none of them
+#            touched by this round. It is failing continuously and nobody is
+#            reading it, which is the state a gate is worth least in. The
+#            29 failing tests in the AI service's suite are likewise
+#            pre-existing at `9e0fbbb4` and untouched here.
