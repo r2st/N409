@@ -153,6 +153,45 @@ describe('PackageTab', () => {
     expect(section('Funding rounds & transactions')).toHaveTextContent('3');
   });
 
+  /*
+   * Round 360 (M5). The route has reported all five caps since they went in —
+   * its own comment says "the explorer counts the files, the financings and
+   * the secondary trades in its headings too" — and three of them were
+   * declared nowhere in this tab and read nowhere, so a badge over a capped
+   * list was a wrong number on the one tab whose claim is to be the complete
+   * package.
+   */
+  it('marks the capped lists as pages of longer ones', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        package: {
+          ...FULL,
+          documents_truncated: true,
+          funding_rounds_truncated: true,
+          transactions_truncated: false,
+        },
+      }),
+    );
+    renderTab();
+    await screen.findByText('Company profile');
+
+    expect(section('Documents')).toHaveTextContent('1+');
+    expect(within(section('Documents')).getByTestId('list-truncated')).toHaveTextContent(
+      'Showing 1 documents. More exist than are listed.',
+    );
+    // One node over two capped lists: either cap short-changes the badge.
+    expect(section('Funding rounds & transactions')).toHaveTextContent('3+');
+  });
+
+  it('leaves the badge alone when nothing was capped', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ package: FULL }));
+    renderTab();
+    await screen.findByText('Company profile');
+
+    expect(section('Documents')).not.toHaveTextContent('1+');
+    expect(section('Funding rounds & transactions')).not.toHaveTextContent('3+');
+  });
+
   it('drops the params that are not methodology choices from the count', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ package: FULL }));
     renderTab();

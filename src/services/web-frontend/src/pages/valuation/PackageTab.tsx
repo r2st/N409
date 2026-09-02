@@ -48,9 +48,22 @@ interface PackageData {
     error: string | null;
     created_at: string;
   }>;
-  /** Both run histories are pages of longer logs; see the `truncated` note on `Node`. */
+  /**
+   * Every list on this tab is a page of a longer one; see the `truncated` note
+   * on `Node`.
+   *
+   * The route has reported all five since the caps went in — its own comment
+   * says "the explorer counts the files, the financings and the secondary
+   * trades in its headings too" — and three of them were declared nowhere here
+   * and read nowhere, so the badge over a capped list was a wrong number on
+   * the one tab whose whole claim is to be the complete package (round 360,
+   * methodology M5).
+   */
   ai_jobs_truncated: boolean;
   calculations_truncated: boolean;
+  documents_truncated: boolean;
+  funding_rounds_truncated: boolean;
+  transactions_truncated: boolean;
   overwrites: Array<{ id: string; category: string; field_key: string; value: unknown }>;
   report: {
     id: string;
@@ -202,7 +215,13 @@ export function PackageTab() {
         )}
       </Node>
 
-      <Node label="Documents" count={pkg.documents.length} to={`${base}/documents`} defaultOpen>
+      <Node
+        label="Documents"
+        count={pkg.documents.length}
+        truncated={pkg.documents_truncated}
+        to={`${base}/documents`}
+        defaultOpen
+      >
         {pkg.documents.length === 0 ? (
           <None>No documents uploaded.</None>
         ) : (
@@ -351,7 +370,12 @@ export function PackageTab() {
         )}
       </Node>
 
-      <Node label="Funding rounds & transactions" count={pkg.funding_rounds.length + pkg.transactions.length}>
+      {/* One node over two capped lists: either cap short-changes the badge. */}
+      <Node
+        label="Funding rounds & transactions"
+        count={pkg.funding_rounds.length + pkg.transactions.length}
+        truncated={pkg.funding_rounds_truncated || pkg.transactions_truncated}
+      >
         {pkg.funding_rounds.length + pkg.transactions.length === 0 ? (
           <None>No rounds or securities transactions recorded.</None>
         ) : (
