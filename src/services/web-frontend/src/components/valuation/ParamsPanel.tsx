@@ -978,21 +978,50 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                   setSaved(false);
                   setForm((f) => {
                     if (!f) return f;
-                    const total = WEIGHTS.reduce((sum, w) => sum + (Number(f[w.key]) || 0), 0);
+                    const raw = WEIGHTS.map(({ key }) => Number(f[key]) || 0);
+                    const total = raw.reduce((sum, w) => sum + w, 0);
                     if (total <= 0) return f;
+                    /*
+                     * One weight absorbs the rounding, so the four always sum
+                     * to exactly 1.0000 at four decimal places — and it is the
+                     * *largest* of them, not the last (round 343, M19).
+                     *
+                     * Absorbing into the last one made the residual whatever
+                     * three roundings left over, and that is a figure with no
+                     * relation to the weight it lands on. Two ways it came out
+                     * wrong, both reachable from the four boxes on this screen:
+                     *
+                     *  - 1 / 1 / 4 / 0 scales to .1667 / .1667 / .6667, which
+                     *    is 1.0001 — so the fourth became **-0.0001**. Σ then
+                     *    reads 1.0000 and the button disappears, leaving the
+                     *    analyst who pressed "Scale to 1.0000" with a field
+                     *    error ("between 0 and 1") and no control to clear it.
+                     *  - 1 / 1 / 1 / 0 leaves 0.0001 over, so an approach the
+                     *    analyst weighted at *zero* comes back weighted. It is
+                     *    numerically nothing and it is not nothing on the
+                     *    deliverable: the approach weights are disclosed, and
+                     *    the exhibit would list a method the file says was not
+                     *    used.
+                     *
+                     * The largest weight is at least 1/4 of the total, so a
+                     * residual of at most three half-ticks can never take it
+                     * below zero, and a weight of zero stays zero because it is
+                     * never the absorber unless every weight is zero — which
+                     * `total <= 0` has already returned on.
+                     */
+                    let absorber = 0;
+                    raw.forEach((w, i) => {
+                      if (w > raw[absorber]!) absorber = i;
+                    });
                     const scaled = { ...f };
-                    // The last weight absorbs the rounding, so the four always
-                    // sum to exactly 1.0000 at four decimal places.
                     let used = 0;
                     WEIGHTS.forEach(({ key }, i) => {
-                      if (i === WEIGHTS.length - 1) {
-                        scaled[key] = (Math.round((1 - used) * 1e4) / 1e4).toString();
-                        return;
-                      }
-                      const w = Math.round(((Number(f[key]) || 0) / total) * 1e4) / 1e4;
+                      if (i === absorber) return;
+                      const w = Math.round((raw[i]! / total) * 1e4) / 1e4;
                       used += w;
                       scaled[key] = w.toString();
                     });
+                    scaled[WEIGHTS[absorber]!.key] = (Math.round((1 - used) * 1e4) / 1e4).toString();
                     return scaled;
                   });
                 }}

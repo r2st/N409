@@ -270,6 +270,49 @@ describe('ParamsPanel — approach weights', () => {
     });
   });
 
+  /**
+   * The residual has to land on a weight big enough to take it (R343, M19).
+   *
+   * 1 / 1 / 4 / 0 scales to .1667 / .1667 / .6667 — 1.0001 — so absorbing the
+   * remainder into the *last* box drove it to -0.0001. Σ then read 1.0000, the
+   * rescale button disappeared, and the analyst who had just pressed "Scale to
+   * 1.0000" was left holding a field error and no control that would clear it.
+   */
+  it('never scales a weight below zero when the roundings overshoot', async () => {
+    const { user } = await renderPanel();
+
+    await user.type(screen.getByLabelText('Asset approach weight'), '1');
+    await user.type(screen.getByLabelText('OPM backsolve weight'), '1');
+    await user.type(screen.getByLabelText('Income (DCF) weight'), '4');
+    await user.click(await screen.findByTestId('normalise-weights'));
+
+    await waitFor(() => expect(screen.getByText('Σ 1.0000')).toBeInTheDocument());
+    expect(screen.getByLabelText('Market (comps) weight')).toHaveValue(0);
+    expect(screen.getByLabelText('Income (DCF) weight')).toHaveValue(0.6666);
+    expect(screen.queryByTestId('save-blocked')).toBeNull();
+  });
+
+  /**
+   * The other direction of the same defect: 1 / 1 / 1 / 0 leaves 0.0001 over,
+   * which the last box used to absorb — so an approach the analyst weighted at
+   * zero came back weighted. The approach weights are disclosed on the report,
+   * so that is a method listed on the exhibit that the file says was not used.
+   */
+  it('leaves an approach the analyst excluded at zero', async () => {
+    const { patched, user } = await renderPanel();
+
+    await user.type(screen.getByLabelText('Asset approach weight'), '1');
+    await user.type(screen.getByLabelText('OPM backsolve weight'), '1');
+    await user.type(screen.getByLabelText('Income (DCF) weight'), '1');
+    await user.click(await screen.findByTestId('normalise-weights'));
+
+    await waitFor(() => expect(screen.getByText('Σ 1.0000')).toBeInTheDocument());
+    expect(screen.getByLabelText('Market (comps) weight')).toHaveValue(0);
+
+    await user.click(screen.getByRole('button', { name: /save methodology/i }));
+    expect(await savedBody(patched)).toMatchObject({ weight_market: 0 });
+  });
+
   it('has nothing to rescale when every weight is zero', async () => {
     const { user } = await renderPanel();
     await user.type(screen.getByLabelText('Asset approach weight'), '0');
