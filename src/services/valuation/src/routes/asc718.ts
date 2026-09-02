@@ -364,16 +364,24 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     const parsed = SettingsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid ASC 718 settings', parsed.error);
     const b = parsed.data;
-    const settings = await upsertAsc718Settings(deps.pool, id, {
-      companyType: b.company_type,
-      ticker: b.ticker ?? null,
-      expectedTermMethod: b.expected_term_method,
-      esppDiscountPct: b.espp_discount_pct ?? null,
-      esppLookbackMonths: b.espp_lookback_months ?? null,
-      rsuPerformanceConditions: b.rsu_performance_conditions ?? null,
-      tsrPeerBasket: b.tsr_peer_basket ?? null,
-      updatedBy: principal.id,
-    });
+    const settings = await upsertAsc718Settings(
+      deps.pool,
+      id,
+      {
+        companyType: b.company_type,
+        ticker: b.ticker ?? null,
+        expectedTermMethod: b.expected_term_method,
+        esppDiscountPct: b.espp_discount_pct ?? null,
+        esppLookbackMonths: b.espp_lookback_months ?? null,
+        rsuPerformanceConditions: b.rsu_performance_conditions ?? null,
+        tsrPeerBasket: b.tsr_peer_basket ?? null,
+        updatedBy: principal.id,
+      },
+      // On the engagement's spine, in the transaction that moves the row —
+      // `asc718_settings_updated` names the fields that moved and what they
+      // had been. See `upsertAsc718Settings` for why this write had no trace.
+      { actorType: 'human', actorId: principal.id, source: 'api' },
+    );
     return { settings };
   });
 

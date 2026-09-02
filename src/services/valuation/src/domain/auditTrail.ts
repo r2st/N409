@@ -134,6 +134,25 @@ export const EVENT_CATALOG = {
   methodology_decision_recorded: D('Methodology decision recorded', 'methodology', 'critical'),
   overwrite_applied: D('Analyst overwrite applied', 'methodology', 'critical'),
   overwrite_reverted: D('Analyst overwrite reverted', 'methodology', 'critical'),
+  /*
+   * How the stock-compensation charge is measured, which nothing recorded
+   * (round 392, methodology M11).
+   *
+   * `asc718_settings` is the engagement's saved ASC 718 election: the expected
+   * term every grant that states none of its own inherits, the ESPP discount
+   * and lookback, the RSU performance conditions, the TSR peer basket, and
+   * whether the issuer is measured as public — which moves the underlying and
+   * the volatility onto a market feed. Each of those changes a figure that
+   * lands in somebody's financial statements. The row kept `updated_by` and
+   * `updated_at`, so it could say who saved last and never what they changed;
+   * `PUT .../asc718/settings` was the only per-engagement settings door in the
+   * service whose write reached no spine at all.
+   *
+   * `critical`, beside `params_updated` and `overwrite_applied`, for the reason
+   * the severity is defined: it is a methodology election an auditor has to be
+   * able to explain. `internal`, like the rest of the working assumptions.
+   */
+  asc718_settings_updated: D('ASC 718 settings changed', 'methodology', 'critical'),
   scenario_saved: D('Scenario saved', 'methodology', 'notice', 'client'),
   scenario_deleted: D('Scenario deleted', 'methodology', 'notice', 'client'),
 
