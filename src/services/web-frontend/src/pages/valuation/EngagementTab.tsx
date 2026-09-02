@@ -63,6 +63,16 @@ interface EngagementView {
   sla: Sla | null;
   stages: Stage[];
   durations: Duration[];
+  /**
+   * The stage timings were summed over a *page* of the stage trail.
+   *
+   * The route has reported this since the cap went in, and said what it costs:
+   * "a trail that ran past the cap understates every stage after it". Nothing
+   * here read it, so an engagement long enough to hit the cap drew a Stage
+   * timing table of short hours and "on time" verdicts, which is a claim about
+   * how the file was run rather than an absence (round 360, methodology M5).
+   */
+  durations_truncated?: boolean;
   activity: ActivityEntry[];
 }
 
@@ -257,6 +267,13 @@ export function EngagementTab() {
             </tbody>
           </table>
         </div>
+        {view.durations_truncated && (
+          <p role="alert" className="mt-3 text-xs text-amber-900">
+            Only part of this engagement’s stage trail could be read, so the hours below the cap are
+            missing from every stage after it — these timings, and the SLA verdicts on them,
+            understate the time actually spent.
+          </p>
+        )}
       </section>
 
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

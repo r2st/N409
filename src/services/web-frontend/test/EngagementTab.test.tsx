@@ -163,6 +163,31 @@ describe('EngagementTab', () => {
     expect(review).toHaveTextContent('in progress');
   });
 
+  /*
+   * Round 360 (M5). The route sums time-in-stage over a *page* of the stage
+   * trail and has reported `durations_truncated` since the cap went in, with
+   * its own note on what it costs: "a trail that ran past the cap understates
+   * every stage after it". Nothing here read it, so a long engagement drew
+   * short hours and "on time" verdicts — a claim about how the file was run,
+   * not an absence.
+   */
+  it('says when the stage timings were summed over part of the trail', async () => {
+    mockApi({ ...VIEW, durations_truncated: true });
+    renderTab();
+    await screen.findByText('Stage timing (expected vs actual)');
+
+    const said = await screen.findByText(/understate the time actually spent/);
+    expect(said).toHaveAttribute('role', 'alert');
+  });
+
+  it('says nothing about the trail when the whole of it was read', async () => {
+    mockApi();
+    renderTab();
+    await screen.findByText('Stage timing (expected vs actual)');
+
+    expect(screen.queryByText(/understate the time actually spent/)).toBeNull();
+  });
+
   it('renders a dash where a stage carries no SLA at all', async () => {
     mockApi({
       ...VIEW,
