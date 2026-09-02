@@ -8705,3 +8705,112 @@
 #            It needs the glyph-to-subset indirection pdfkit deliberately keeps
 #            per document, so it is a change to the library's model, not to
 #            this call site.
+# R359 — Cross-cutting concern audit (M4), authorization boundaries. Four
+#            fixes plus a census, no migration, 30 new tests, at
+#            `bc850840..a7710463`.
+#
+#            The concern swept was **re-authentication**: the password prompt
+#            that sits in front of a credential-level action on an already
+#            signed-in session. `auth/reauth.ts` states why it exists — the
+#            session may not be the owner's, and a credential minted from a
+#            borrowed cookie outlives the password change made on noticing,
+#            because `bumpSessionEpoch` deliberately does not touch API or
+#            SCIM tokens. R262 applied it to `POST /me/tokens` and wrote the
+#            reasoning out at length. Nobody applied it to the three stronger
+#            doors beside it, and no guard asked.
+#
+#            **The firm key was the one credential mint with no prompt.**
+#            `POST /partners/:partnerId/tokens` is self-service for a firm's
+#            org admin, hands out a key that reads that firm's whole book, and
+#            had the "no key mints its successor" refusal and nothing else.
+#            The personal key next to it — strictly weaker, scoped to one
+#            person — has asked for a password since R262, and its docstring
+#            gives the reason in general terms without either author noticing
+#            it applied harder to the route in the other file. Both screens
+#            that mint firm keys now carry the prompt.
+#
+#            **The SCIM bearer was minted with neither guard.** This file's own
+#            opening paragraph calls a SCIM token "a standing bearer grant to
+#            create and deactivate users" and names it and `saml_config` "the
+#            highest-leverage writes in the schema" — and the mint asked for
+#            nothing and accepted an API-token caller. It matters more here
+#            than anywhere: SCIM carries no session and no principal, so none
+#            of the six route-authorization sweeps apply to what it does with
+#            that grant, and it is revoked by its own record, so an API key's
+#            successor survived that key's revocation.
+#
+#            **Repointing the identity provider asked for nothing.** `PUT
+#            /admin/sso/saml` is not spelled like a mint, which is why it was
+#            missed — but the paragraph above it already said repointing it
+#            "hands that IdP the ability to assert any employee's address and
+#            be believed — and the JIT provisioning on the other side will mint
+#            the account". That is the issuing of a credential over every
+#            account in the tenant at once. Both guards, and the console's
+#            SAML form confirms each save.
+#
+#            **The public user was built twice.** Found while adding the field
+#            the client needed: `routes/auth.ts` and `routes/account.ts` each
+#            projected the account by hand, and the lists had drifted —
+#            `totp_enabled` was added to the sign-in copy when MFA shipped and
+#            never to `/me`, which is the bootstrap read, so a reloaded tab
+#            held an account object the sign-in response would not have
+#            recognised. Both shapes are inferred, so neither compiler nor
+#            schema had an opinion. One `domain/publicUser.ts` now, pinned by
+#            comparing the two key sets rather than any one field.
+#
+#            **The third kind of account was offered three password forms.**
+#            Five controls on the settings page ask "is there a password to
+#            confirm?" and all five answered `sso_provider !== 'google'`.
+#            `sso_provider` is only ever `'google'` or null, and migration 0082
+#            added SAML/SCIM-provisioned users who have neither it nor a
+#            digest. The server was right — it skips its check when there is no
+#            digest — but the client never got that far: its own
+#            `required('password', …)` refused to submit, so the email change,
+#            the password change and the token mint were dead controls and the
+#            account was labelled "Email & password". `hasPassword()` asks the
+#            server now.
+#
+#            **The census, and why it has two halves.** `credentialIssuingRoutes`
+#            asserts both guards over a named list of the four doors — and
+#            derives membership of that list from the *writes*, so a handler
+#            calling `createApiToken`, `createScimToken` or `upsertSamlConfig`
+#            must appear in it. A hand-written list under a docstring claiming
+#            "every" is how `partnerApiScoping` came to cover four of ten
+#            operations (R157). Proven by breaking each guard: dropping the
+#            SCIM API-token refusal fails two cases, dropping the firm mint's
+#            password check fails one, and a fifth `createApiToken` caller
+#            anywhere in `src/routes` fails the exhaustiveness case.
+#
+#            **What the existing sweeps could not see, and why.** Six
+#            mechanisms cover route authorization and all six ask "did this
+#            handler consult the caller". Every one of these routes did: the
+#            firm mint calls `canManageTokens`, the SSO pair calls
+#            `canManageUsers`, and all three passed `privilegedRouteAuthorization`
+#            and the coverage census. Re-authentication is a different question
+#            — "is the caller still there" rather than "who is the caller" —
+#            and nothing in the estate was asking it. That is the M4 shape:
+#            the concern was correct, uniform and complete on one route, and
+#            simply absent from its three siblings.
+#
+#            gap: `POST /api/v1/users` creates an account with an emailed
+#            invitation, at an address the caller chooses. An API token acting
+#            as an administrator can therefore leave behind a way in that
+#            survives its own revocation — a different mechanism from the four
+#            doors above (it is audited and visible in the console) but the
+#            same escalation, and this round did not touch it.
+#            gap: maintenance mode and the mandatory-2FA gate live in
+#            `app.authenticate`, so they cover session and API-token callers and
+#            nothing else. SCIM provisioning, board signing, intake submission
+#            and auditor notes all write during a maintenance window that tells
+#            everybody else "changes are temporarily disabled". Whether that is
+#            the intent is a product question, and the setting's own definition
+#            does not say.
+#            gap: `format:check` is still red on main — the same five files
+#            R314 and R358 found, none of them touched here, plus nothing new:
+#            `PartnerPortalPage.test.tsx` was edited this round and its one
+#            pre-existing deviation was left where it was.
+#            gap: the two password boxes on the SSO console are distinguished
+#            for a screen reader by their labels and for everyone else by
+#            position. Two confirmations of different things on one screen is a
+#            layout question this round answered with an `aria-label` and did
+#            not design.
