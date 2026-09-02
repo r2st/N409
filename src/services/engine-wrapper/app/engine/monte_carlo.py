@@ -256,14 +256,24 @@ def _common_payoff_factory(classes: list[dict]):
     """
     segments = _segments(classes)
     index = {c["name"]: i for i, c in enumerate(classes)}
-    lows = [seg["from"] for seg in segments]
-    # `None` (unbounded) becomes infinity, so the inner loop has no branch.
-    highs = [math.inf if seg["to"] is None else seg["to"] for seg in segments]
-    slopes = [[(index[name], frac) for name, frac in seg["participants"].items()] for seg in segments]
+    # One tuple per segment, built once. `zip(lows, highs, slopes)` inside the
+    # loop below is a fresh iterator and a fresh 3-tuple per segment per draw —
+    # at `MAX_PATHS` against the 200-class cap that is tens of millions of
+    # tuples allocated and freed to read three lists that never change
+    # (R367, methodology M8). `None` (unbounded) becomes infinity here, so the
+    # inner loop has no branch.
+    rows = [
+        (
+            seg["from"],
+            math.inf if seg["to"] is None else seg["to"],
+            [(index[name], frac) for name, frac in seg["participants"].items()],
+        )
+        for seg in segments
+    ]
 
     def payoff(exit_value: float, into: list[float]) -> None:
         """Adds each class's share of `exit_value` into `into`, in place."""
-        for lo, hi, participants in zip(lows, highs, slopes):
+        for lo, hi, participants in rows:
             if exit_value <= lo:
                 # Segments are ordered, so nothing above this one is reached
                 # either — the exit value ran out inside the previous tranche.
