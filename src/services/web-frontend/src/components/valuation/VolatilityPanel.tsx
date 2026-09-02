@@ -44,6 +44,23 @@ const METHODS = [
   { value: 'parkinson', label: 'Parkinson high-low range' },
 ] as const;
 
+/**
+ * How a *stored* run describes itself.
+ *
+ * `manual` is not a selectable estimator — it is what the engine calls a run
+ * whose figure the analyst pinned — so it lives beside METHODS rather than in
+ * it. Without it the history table fell through to `?? row.method` and printed
+ * the raw enum word `manual` in a column whose other rows are sentences. The
+ * wording matches `VOLATILITY_METHOD_LABELS.manual` on the server, which is
+ * what Exhibit F-1 prints for the same row.
+ */
+const METHOD_LABELS: Record<string, string> = {
+  historical: 'Close-to-close (daily log returns)',
+  ewma: 'EWMA (RiskMetrics, λ = 0.94)',
+  parkinson: 'Parkinson high-low range',
+  manual: 'Analyst-selected',
+};
+
 const WINDOWS = [
   { value: 365, label: '1 year' },
   { value: 730, label: '2 years' },
@@ -100,6 +117,20 @@ interface VolatilityResponse {
 
 const pct = (v: number | null | undefined, digits = 1): string =>
   typeof v === 'number' ? `${(v * 100).toFixed(digits)}%` : '—';
+
+/**
+ * A min–max pair, or one dash when there is no pair.
+ *
+ * R386 made the cross-sectional figures null when no comparable had measurable
+ * price movement and a pinned override rescued the run — a distribution is over
+ * what was measured, and nothing was. Printed through `pct` on each bound that
+ * rendered as `—–—`, a range between two absences.
+ */
+const range = (lo: number | null, hi: number | null): string =>
+  lo === null || hi === null ? '—' : `${pct(lo)}–${pct(hi)}`;
+
+/** A run whose figure the analyst pinned rather than the estimator measured. */
+const isPinned = (e: Estimate): boolean => e.method === 'manual';
 
 export function VolatilityPanel({ valuationId }: { valuationId: string }) {
   const [data, setData] = useState<VolatilityResponse | null>(null);
@@ -159,8 +190,17 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
       // The count that matters is the measured one, not the set size — a peer
       // whose feed failed is in the set and not in the median, and reporting
       // only "estimated" would overstate the breadth of the number.
+      //
+      // A pinned figure did not come "from" the peers at all: with every comp
+      // flat it is a number the analyst typed over a set of zero measurements,
+      // and "62.0% from 0 companies" reads as an estimator that measured
+      // nothing and answered anyway. Said as what it is, with the count kept
+      // beside it because that is still the breadth the run rests on.
+      const noun = e.measured_count === 1 ? 'company' : 'companies';
       setNote(
-        `${pct(e.recommended)} from ${e.measured_count} ${e.measured_count === 1 ? 'company' : 'companies'}` +
+        (isPinned(e)
+          ? `${pct(e.recommended)} as pinned, against ${e.measured_count} measured ${noun}`
+          : `${pct(e.recommended)} from ${e.measured_count} ${noun}`) +
           (e.excluded.length > 0 ? `. Not measured: ${e.excluded.map((x) => x.ticker).join(', ')}.` : '.') +
           ' Not yet adopted as the valuation assumption.',
       );
@@ -236,12 +276,14 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
               divergent ? 'border-amber-300 bg-amber-50' : 'border-paper-300 bg-surface'
             }`}
           >
-            <div className="overline text-ink-400">Derived from peers</div>
+            <div className="overline text-ink-400">
+              {isPinned(latest) ? 'Selected by the analyst' : 'Derived from peers'}
+            </div>
             <div className="tnum mt-1 font-display text-2xl font-semibold text-ink-900">
               {pct(latest.recommended)}
             </div>
             <div className="mt-1 text-xs text-ink-400">
-              {latest.measured_count} {latest.measured_count === 1 ? 'company' : 'companies'} ·{' '}
+              {latest.measured_count} {latest.measured_count === 1 ? 'company' : 'companies'} measured ·{' '}
               {latest.window_start} to {latest.window_end}
               {latest.applied_at === null && ' · not adopted'}
             </div>
@@ -251,9 +293,9 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
 
       {divergent && (
         <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          The valuation applies {pct(applied)} against a derived {pct(latest.recommended)}. Either adopt the
-          derivation or state the basis for the departure in the report — Exhibit F-1 will print the
-          difference either way.
+          The valuation applies {pct(applied)} against a {isPinned(latest) ? 'selected' : 'derived'}{' '}
+          {pct(latest.recommended)}. Either adopt the {isPinned(latest) ? 'selection' : 'derivation'} or state
+          the basis for the departure in the report — Exhibit F-1 will print the difference either way.
         </p>
       )}
 
@@ -347,12 +389,19 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
                         <td className="px-5 py-3">{c.used ? 'Included' : 'Excluded'}</td>
                       </tr>
                     ))}
+                  {/* The same two sentences Exhibit F-1 prints under the same
+                      table. A pinned run's selected figure is not the median of
+                      the rows above it — under a full set of dead comps it is
+                      the median of nothing — and calling it one made the panel
+                      and the deliverable say different things about one run. */}
                   <tr className="border-t border-paper-300 font-semibold">
-                    <td className="px-5 py-3 text-ink-900">Median — selected</td>
+                    <td className="px-5 py-3 text-ink-900">
+                      {isPinned(latest) ? 'Analyst selection' : 'Median of included peers — selected'}
+                    </td>
                     <td className="tnum px-4 py-3 text-right text-ink-900">{pct(latest.recommended)}</td>
                     <td />
                     <td className="px-5 py-3 text-ink-500">
-                      {pct(latest.min_volatility)}–{pct(latest.max_volatility)}
+                      {range(latest.min_volatility, latest.max_volatility)}
                     </td>
                   </tr>
                 </tbody>
@@ -394,9 +443,7 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
                         {row.window_start} to {row.window_end}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-ink-500">
-                      {METHODS.find((m) => m.value === row.method)?.label ?? row.method}
-                    </td>
+                    <td className="px-4 py-3 text-ink-500">{METHOD_LABELS[row.method] ?? row.method}</td>
                     <td className="tnum px-4 py-3 text-right font-medium text-ink-900">
                       {pct(row.recommended)}
                     </td>

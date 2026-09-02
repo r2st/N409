@@ -289,7 +289,7 @@ describe('VolatilityPanel', () => {
       'CCC',
       'BBB',
       'AAA',
-      'Median — selected',
+      'Median of included peers — selected',
     ]);
     expect(within(rows[0]!).getByText('Excluded')).toBeInTheDocument();
     expect(within(rows[1]!).getByText('Included')).toBeInTheDocument();
@@ -297,6 +297,85 @@ describe('VolatilityPanel', () => {
     expect(within(rows[0]!).getAllByRole('cell')[2]?.textContent).toBe('—');
     // The footer states the dispersion the confidence grade came from.
     expect(within(rows[3]!).getByText('48.0%–81.0%')).toBeInTheDocument();
+  });
+
+  it('does not call a pinned figure the median of the peers under it', async () => {
+    /*
+     * R386: a full set of comps with no measurable price movement, rescued by a
+     * pinned override, reports null for every cross-sectional figure — the
+     * distribution is over what was measured and nothing was. The footer used
+     * to read "Median — selected" above a table whose every row says
+     * "Excluded", with a range of "—–—" beside it. Exhibit F-1 already said
+     * "Analyst selection" for the same run; the panel disagreed with the
+     * deliverable.
+     */
+    mockApi({
+      estimates: [
+        estimate({
+          method: 'manual',
+          confidence: 'manual',
+          manual_override: 0.62,
+          median_volatility: null,
+          mean_volatility: null,
+          min_volatility: null,
+          max_volatility: null,
+          coefficient_of_variation: null,
+          measured_count: 0,
+          companies: [
+            { ticker: 'AAA', volatility: 0, used: false },
+            { ticker: 'BBB', volatility: 0, used: false },
+          ],
+          excluded: [
+            { ticker: 'AAA', reason: 'no measurable price movement' },
+            { ticker: 'BBB', reason: 'no measurable price movement' },
+          ],
+        }),
+      ],
+    });
+    renderPanel();
+
+    const table = await screen.findByRole('table', { name: 'Per-company volatility' });
+    const foot = within(table).getAllByRole('row').at(-1)!;
+    expect(within(foot).getByText('Analyst selection')).toBeInTheDocument();
+    expect(screen.queryByText(/Median — selected/)).not.toBeInTheDocument();
+    // A range between two absences is one dash, not "—–—".
+    expect(within(foot).getAllByRole('cell')[3]?.textContent).toBe('—');
+    // And the card over it does not claim the peers produced the figure.
+    expect(screen.getByText('Selected by the analyst')).toBeInTheDocument();
+    expect(screen.queryByText('Derived from peers')).not.toBeInTheDocument();
+    expect(screen.getByText(/0 companies measured/)).toBeInTheDocument();
+  });
+
+  it('names a pinned run in the history rather than printing the enum word', async () => {
+    mockApi({ estimates: [estimate({ method: 'manual', confidence: 'manual', manual_override: 0.62 })] });
+    renderPanel();
+
+    const table = await screen.findByRole('table', { name: 'Volatility derivation history' });
+    expect(within(table).getByText('Analyst-selected')).toBeInTheDocument();
+    expect(within(table).queryByText('manual', { selector: 'td' })).not.toBeInTheDocument();
+  });
+
+  it('says a pinned figure was pinned, not measured "from" an empty set', async () => {
+    mockApi(
+      {},
+      {
+        estimateResult: estimate({
+          method: 'manual',
+          confidence: 'manual',
+          manual_override: 0.62,
+          measured_count: 0,
+          excluded: [{ ticker: 'AAA', reason: 'no measurable price movement' }],
+        }),
+      },
+    );
+    renderPanel();
+    await screen.findByText('No volatility derivation recorded');
+
+    await userEvent.type(screen.getByLabelText(/Pin a figure/), '62');
+    await userEvent.click(screen.getByRole('button', { name: 'Estimate' }));
+
+    await screen.findByText(/62\.0% as pinned, against 0 measured companies/);
+    expect(screen.queryByText(/from 0 companies/)).not.toBeInTheDocument();
   });
 
   it('lists the peers considered and not measured, with the reason', async () => {
