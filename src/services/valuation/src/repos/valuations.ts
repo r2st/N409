@@ -389,19 +389,52 @@ export interface SortSpec {
  */
 export const MAX_SORT_TERMS = 10;
 
-/** Parses "company_name:asc,created_at:desc"; returns null on any bad part. */
-export function parseSort(raw: string | undefined): SortSpec[] | null {
-  if (!raw) return [];
+/**
+ * Why a sort string was refused, as facts rather than as prose.
+ *
+ * The parse has four ways to fail and answered all four with `null`, which is
+ * how both call sites came to say the two words `Invalid sort` — there was
+ * nothing else to say. The prose is built from this in
+ * `domain/sortRefusal.ts`; keeping the reason structural is what stops a
+ * message being assembled here, where the column list lives but the reader
+ * does not.
+ */
+export type SortRefusal =
+  | { reason: 'too_many'; count: number }
+  | { reason: 'unknown_column'; term: string; column: string }
+  | { reason: 'bad_direction'; term: string; direction: string };
+
+export type SortParse = { specs: SortSpec[]; refusal: null } | { specs: null; refusal: SortRefusal };
+
+/** Parses "company_name:asc,created_at:desc", saying which part it disliked. */
+export function parseSortTerms(raw: string | undefined): SortParse {
+  if (!raw) return { specs: [], refusal: null };
   const parts = raw.split(',');
-  if (parts.length > MAX_SORT_TERMS) return null;
+  if (parts.length > MAX_SORT_TERMS)
+    return { specs: null, refusal: { reason: 'too_many', count: parts.length } };
   const specs: SortSpec[] = [];
   for (const part of parts) {
-    const [column, dir = 'asc'] = part.trim().split(':');
-    if (!(SORTABLE_COLUMNS as readonly string[]).includes(column ?? '')) return null;
-    if (dir !== 'asc' && dir !== 'desc') return null;
+    const term = part.trim();
+    const [column, dir = 'asc'] = term.split(':');
+    if (!(SORTABLE_COLUMNS as readonly string[]).includes(column ?? ''))
+      return { specs: null, refusal: { reason: 'unknown_column', term, column: column ?? '' } };
+    if (dir !== 'asc' && dir !== 'desc')
+      return { specs: null, refusal: { reason: 'bad_direction', term, direction: dir } };
     specs.push({ column: column as SortableColumn, dir });
   }
-  return specs;
+  return { specs, refusal: null };
+}
+
+/**
+ * The same parse, as the boolean the SQL sweep and `sort.test.ts` ask for.
+ *
+ * Kept because "did this parse at all" is the question every caller that is
+ * not composing a refusal has — `orderBySql` is only ever handed terms this
+ * returned — and because a null-or-terms answer is the shape those two guards
+ * assert against.
+ */
+export function parseSort(raw: string | undefined): SortSpec[] | null {
+  return parseSortTerms(raw).specs;
 }
 
 /**

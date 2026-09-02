@@ -319,7 +319,7 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
     refuseIfRetired(valuation, 'accepting research runs');
 
     const parsed = z.object({ region: z.enum(RESEARCH_REGIONS).default('un') }).safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid region');
+    if (!parsed.success) throw invalidBody('Invalid research region', parsed.error);
 
     /*
      * The facts once, not once per topic (R290).

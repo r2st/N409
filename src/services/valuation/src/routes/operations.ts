@@ -123,7 +123,7 @@ export function registerOperationsRoutes(
     const parsed = ValuationFilterQuery.safeParse(req.query);
     if (!parsed.success) throw invalidQuery(parsed.error);
     const mode = z.object({ buckets: z.enum(['groups', 'named']).default('groups') }).safeParse(req.query);
-    if (!mode.success) throw problems.badRequest('Invalid buckets mode');
+    if (!mode.success) throw invalidQuery(mode.error, 'Invalid buckets mode');
 
     const scope = valuationScope(principal);
     const filters = toRepoFilters(parsed.data);
@@ -223,7 +223,7 @@ export function registerOperationsRoutes(
     refuseIfRetired(source, 'available to clone');
 
     const parsed = z.object({ roll_forward: z.boolean().default(false) }).safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid clone request');
+    if (!parsed.success) throw invalidBody('Invalid clone request', parsed.error);
 
     // Ops clone on behalf of the original owner; a client clones as themselves.
     const userId = isOps(principal) ? source.user_id : principal.id;

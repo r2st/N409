@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { problems, retryPhrase } from '@n409/shared';
 import { forbidden } from '../../src/domain/accessProblem.js';
+import { invalidSort } from '../../src/domain/sortRefusal.js';
+import { MAX_SORT_TERMS, SORTABLE_COLUMNS, parseSortTerms } from '../../src/repos/valuations.js';
 import { problemCalls } from './errorBodyDisclosure.test.js';
 
 /**
@@ -585,5 +587,147 @@ describe('the layers below the routes', () => {
     const details = [...table.matchAll(/^\s{4}'((?:[^\\']|\\.)*)',$/gm)].map((m) => m[1]!);
     expect(details.length, 'one message per refusal').toBe(kinds.length);
     expect(new Set(details).size, 'two refusals sharing a sentence is the bug').toBe(kinds.length);
+  });
+});
+
+/**
+ * R366 — the schema rejections that never reached the helpers.
+ *
+ * R180 moved ~150 validation refusals onto `invalidQuery`/`invalidBody` so the
+ * failing field names land in `detail`, and left a census behind. That census
+ * is written over the *old idiom* — `problems.*(…, { errors: parsed.error.issues })`
+ * — which is a shape a route only has if it already decided to forward the
+ * issues. Six routes never had it: they checked `!parsed.success`, threw a
+ * category noun, and dropped the `ZodError` on the floor. Nothing matched them
+ * because there was nothing left to match.
+ *
+ * What the callers got:
+ *
+ *   * `GET /valuations/counts?buckets=weekly` → "Invalid buckets mode", when
+ *     zod had already written "buckets: Invalid enum value. Expected 'groups'
+ *     | 'named', received 'weekly'".
+ *   * `POST /valuations/:id/clone` with `{"roll_forward":"yes"}` → "Invalid
+ *     clone request", for one optional boolean.
+ *   * `POST /valuations/:id/research/refresh-all` → "Invalid region", with the
+ *     region list one field away.
+ *   * `POST /debt/rating-spread` with `{"rating":"AAAAA"}` → "Provide a
+ *     rating", which is also false: they provided one.
+ *
+ * So the rule is stated over the fact instead — a `safeParse` this service
+ * refuses is answered by the helpers — and the exceptions are named one by
+ * one, because each is a decision rather than an oversight and an unnamed
+ * exemption is indistinguishable from the bug.
+ */
+describe('a refused safeParse goes through the helpers', () => {
+  /**
+   * `if (!x.success)` and the ~140 characters that answer it, whitespace
+   * flattened so the answer on the next line is still in the span.
+   */
+  function refusalAnswers(text: string): string[] {
+    const flat = text.replace(/\s+/g, ' ');
+    return [...flat.matchAll(/if\s*\(\s*!\s*(\w+)(?:\.data)?\.success\s*\)\s*([^;]{0,140})/g)].map(
+      (m) => m[2]!,
+    );
+  }
+
+  /** Routes whose refusal is deliberately not a problem document naming fields. */
+  const EXEMPT: Record<string, string> = {
+    // A browser mid-SSO gets a navigation with `?sso_error=`, not a body it
+    // will never render. See `refuseSso`.
+    'src/routes/auth.ts': 'SSO flow refusals are redirects',
+    // The public signing link: a token that does not parse and a token that
+    // has been used answer identically, on purpose.
+    'src/routes/boardApproval.ts': 'public token routes do not distinguish malformed from spent',
+    // "Pass two valuation ids as ?a=…&b=…" already names the format, which is
+    // the whole content of the two-issue ZodError behind it.
+    'src/routes/compare.ts': 'the hand-written detail states the expected query',
+    // An unsubscribe link that does not parse is a 404 page, not an error body.
+    'src/routes/unsubscribe.ts': 'returns false to the caller, raises nothing',
+    // A malformed `:slug` path parameter, which the sibling assertion above
+    // requires to stay wordless for the same reason `registerParamValidation`
+    // does.
+    'src/routes/valuationTags.ts': 'malformed path parameter, deliberately a bare 404',
+  };
+
+  it('finds the call sites it is auditing', () => {
+    const total = routeSources.reduce((n, { text }) => n + refusalAnswers(text).length, 0);
+    expect(total, 'safeParse refusals across the route table').toBeGreaterThan(150);
+  });
+
+  it('names the fields on every schema rejection a route answers', () => {
+    const findings: string[] = [];
+    for (const { rel, text } of routeSources) {
+      if (rel in EXEMPT) continue;
+      for (const answer of refusalAnswers(text)) {
+        if (/invalidQuery|invalidBody|validationDetail/.test(answer)) continue;
+        findings.push(`${rel} → ${answer.trim().slice(0, 70)}`);
+      }
+    }
+    expect(findings, 'schema rejections answered without the failing field names').toEqual([]);
+  });
+
+  it('keeps every exemption pointing at a route that still exists', () => {
+    // An exemption for a file that has been renamed or has lost its refusal is
+    // an exemption for whatever moves in next.
+    for (const rel of Object.keys(EXEMPT)) {
+      const source = routeSources.find((s) => s.rel === rel);
+      expect(source, `${rel} is exempted and no longer exists`).toBeDefined();
+      expect(refusalAnswers(source!.text).length, `${rel} no longer refuses a safeParse`).toBeGreaterThan(0);
+    }
+  });
+});
+
+/**
+ * R366 — `?sort=`, the one refusal that could not reach the helpers.
+ *
+ * `parseSort` is a hand-rolled parse, so there is no `ZodError` to hand
+ * `invalidQuery`, and both list endpoints answered its three distinct failures
+ * with the two words `Invalid sort`. A caller who wrote `?sort=name:asc` — the
+ * column is `company_name` — was told nothing they could act on, and the
+ * spelling they needed is a fixed list of eight the server was holding.
+ */
+describe('a refused sort says which term and what is allowed', () => {
+  it('names the column that is not sortable, and the ones that are', () => {
+    const refusal = parseSortTerms('name:asc');
+    expect(refusal.refusal).toEqual({ reason: 'unknown_column', term: 'name:asc', column: 'name' });
+    const detail = invalidSort(refusal.refusal!).detail ?? '';
+    expect(detail).toContain('name');
+    // The list, not a description of it: the caller is holding a string they
+    // composed and needs the spelling.
+    for (const column of SORTABLE_COLUMNS) expect(detail).toContain(column);
+  });
+
+  it('names the direction it would have accepted', () => {
+    const refusal = parseSortTerms('created_at:sideways');
+    expect(refusal.refusal?.reason).toBe('bad_direction');
+    const detail = invalidSort(refusal.refusal!).detail ?? '';
+    expect(detail).toContain('sideways');
+    expect(detail).toMatch(/asc/);
+    expect(detail).toMatch(/desc/);
+  });
+
+  it('says how many terms it will take', () => {
+    const refusal = parseSortTerms(
+      Array(MAX_SORT_TERMS + 1)
+        .fill('created_at:asc')
+        .join(','),
+    );
+    expect(refusal.refusal?.reason).toBe('too_many');
+    const detail = invalidSort(refusal.refusal!).detail ?? '';
+    expect(detail).toContain(String(MAX_SORT_TERMS));
+  });
+
+  it('is a 400, because a query string that does not parse is malformed', () => {
+    expect(invalidSort({ reason: 'too_many', count: 99 }).status).toBe(400);
+  });
+
+  it('leaves a sort it accepts alone', () => {
+    expect(parseSortTerms('company_name:asc,created_at:desc')).toEqual({
+      specs: [
+        { column: 'company_name', dir: 'asc' },
+        { column: 'created_at', dir: 'desc' },
+      ],
+      refusal: null,
+    });
   });
 });

@@ -34,7 +34,7 @@ import {
   findValuationById,
   listValuations,
   markValuationRead,
-  parseSort,
+  parseSortTerms,
   patchValuation,
   type ValuationFilters,
   type ValuationRow,
@@ -55,6 +55,7 @@ import { visibleCommentKinds } from '../auth/operations.js';
 import { loadValuationCounters } from '../repos/valuationCounters.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { invalidSort } from '../domain/sortRefusal.js';
 import { forbidden } from '../domain/accessProblem.js';
 import { UlidParam } from '../plugins/params.js';
 import { ulidField } from '../domain/ulidField.js';
@@ -447,8 +448,9 @@ export function registerValuationRoutes(
     if (!parsed.success) throw invalidQuery(parsed.error);
     const { page, per_page } = parsed.data;
 
-    const sort = parseSort(parsed.data.sort);
-    if (sort === null) throw problems.badRequest('Invalid sort');
+    const parsedSort = parseSortTerms(parsed.data.sort);
+    if (parsedSort.refusal !== null) throw invalidSort(parsedSort.refusal);
+    const sort = parsedSort.specs;
 
     const readerSide = readerSideFor(principal);
     const { items, total } = await listValuations(deps.pool, valuationScope(principal), {

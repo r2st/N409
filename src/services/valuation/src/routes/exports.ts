@@ -3,11 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canEditWorkingData, canReadValuation, isOps, valuationScope, type Principal } from '../auth/rbac.js';
-import {
-  exportValuations,
-  findValuationById,
-  parseSort,
-} from '../repos/valuations.js';
+import { exportValuations, findValuationById, parseSortTerms } from '../repos/valuations.js';
 import { readerSideFor, ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { toCsv as recordsToCsv } from '../domain/csv.js';
 import { tablePdf, type PdfColumn } from '../export/pdf.js';
@@ -20,6 +16,7 @@ import { latestCalculationForKind } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidQuery } from '../domain/validationProblem.js';
+import { invalidSort } from '../domain/sortRefusal.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { withTransaction } from '../db/pool.js';
@@ -302,8 +299,9 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
      */
     const filters = toRepoFilters(parsed.data, readerSideFor(principal));
 
-    const sort = parseSort(parsed.data.sort);
-    if (sort === null) throw problems.badRequest('Invalid sort');
+    const parsedSort = parseSortTerms(parsed.data.sort);
+    if (parsedSort.refusal !== null) throw invalidSort(parsedSort.refusal);
+    const sort = parsedSort.specs;
 
     const generatedAt = new Date();
     const stamp = generatedAt.toISOString().slice(0, 10);

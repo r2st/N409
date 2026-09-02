@@ -445,7 +445,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.post('/api/v1/debt/rating-spread', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const rating = z.object({ rating: z.string().trim().min(1).max(4) }).safeParse(req.body);
-    if (!rating.success) throw problems.unprocessable('Provide a rating');
+    if (!rating.success) throw invalidBody('Invalid rating lookup', rating.error);
     return engine('/engine/v1/debt-rating-spread', { rating: rating.data.rating });
   });
 }
