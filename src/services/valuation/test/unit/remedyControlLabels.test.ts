@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CONNECTOR_PANELS, connectorPanelPath } from '../../src/domain/connectorRefusal.js';
+import { RESTART_TAB, integrationCallbackRefusal } from '../../src/domain/oauthCallbackRefusal.js';
 
 /**
  * A remedy that names a control is held to the words actually on it (R374, M19).
@@ -100,6 +101,32 @@ describe('a remedy names a control by the words on it', () => {
 
   it('composes the remedy phrase from the two halves it checked', () => {
     expect(connectorPanelPath(CONNECTOR_PANELS.capTable)).toBe('Cap Table → Live sync');
+  });
+
+  /**
+   * The third table that names a tab, and the one this census did not read when
+   * it was written: the sentence a browser is shown when an integration
+   * callback cannot be matched to the request that started it. It said "the Cap
+   * table tab" against the tab labelled "Cap Table" — the same paraphrase R374
+   * removed from `CONNECTOR_PANELS`, surviving one file over because nothing
+   * looked here.
+   */
+  it('names every callback restart tab exactly as the tab is labelled', () => {
+    const workspace = readFileSync(WORKSPACE, 'utf8');
+    const findings = Object.entries(RESTART_TAB)
+      .filter(([, tab]) => !workspace.includes(`label="${tab}"`))
+      .map(([kind, tab]) => `${kind} → tab "${tab}"`);
+    expect(findings, 'callback remedies naming a tab that is labelled otherwise').toEqual([]);
+  });
+
+  it('puts the checked tab name into the sentence a reader is shown', () => {
+    // The name has to reach the prose, or the assertion above is checking a
+    // constant nothing renders.
+    for (const [kind, tab] of Object.entries(RESTART_TAB)) {
+      expect(integrationCallbackRefusal(kind as keyof typeof RESTART_TAB)).toContain(
+        `the ${tab} tab`,
+      );
+    }
   });
 
   /**

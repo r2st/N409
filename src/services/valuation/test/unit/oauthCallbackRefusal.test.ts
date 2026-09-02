@@ -47,7 +47,9 @@ describe('the sentence a stranded OAuth redirect shows', () => {
     // press Connect" is useless without saying where Connect is.
     expect(integrationCallbackRefusal('accounting')).toContain('Documents tab');
     expect(integrationCallbackRefusal('hris')).toContain('Grants tab');
-    expect(integrationCallbackRefusal('capTable')).toContain('Cap table tab');
+    // "Cap Table", capital T: the tab is labelled that, and a remedy is read
+    // by searching the screen for the words in it (see remedyControlLabels).
+    expect(integrationCallbackRefusal('capTable')).toContain('Cap Table tab');
     expect(new Set(KINDS.map(integrationCallbackRefusal)).size).toBe(3);
   });
 

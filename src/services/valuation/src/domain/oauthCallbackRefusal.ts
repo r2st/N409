@@ -42,11 +42,24 @@
 /** The integrations that authenticate their callback with a signed state. */
 export type IntegrationCallbackKind = 'accounting' | 'hris' | 'capTable';
 
-/** Where in the product the reader restarts, named as they would name it. */
-const RESTART_AT: Record<IntegrationCallbackKind, string> = {
-  accounting: 'the Documents tab of the valuation you were connecting',
-  hris: 'the Grants tab of the valuation you were connecting',
-  capTable: 'the Cap table tab of the valuation you were connecting',
+/**
+ * Which valuation tab the reader restarts on, spelled as the tab is labelled.
+ *
+ * The tab name alone, with the sentence composed below, for the reason
+ * `CONNECTOR_PANELS` carries its two halves separately: a remedy that names a
+ * control is read by searching the screen for the words in it, so the words
+ * have to be the ones on the screen, and that is only checkable if the name is
+ * a field rather than a clause inside a sentence. `remedyControlLabels` holds
+ * each of these to a `<Tab label="…">` in `ValuationWorkspace`.
+ *
+ * "Cap table" was the third instance of the paraphrase R374 removed from the
+ * connector remedies — the tab is labelled "Cap Table" — in the one remedy
+ * table that census did not read.
+ */
+export const RESTART_TAB: Record<IntegrationCallbackKind, string> = {
+  accounting: 'Documents',
+  hris: 'Grants',
+  capTable: 'Cap Table',
 };
 
 /**
@@ -60,6 +73,6 @@ export function integrationCallbackRefusal(kind: IntegrationCallbackKind): strin
     'matched to the approval that came back. That usually means more than 30 minutes passed on ' +
     'the provider’s approval screen, or this page was re-opened from browser history. ' +
     'Nothing has been connected and no access was granted. ' +
-    `Go back to ${RESTART_AT[kind]} and press Connect again.`
+    `Go back to the ${RESTART_TAB[kind]} tab of the valuation you were connecting and press Connect again.`
   );
 }
