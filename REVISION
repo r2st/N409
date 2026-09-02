@@ -11530,3 +11530,111 @@
 #            written conditionally" does not exist.
 #            gap: `organizationContents` and the detach still read two
 #            statements. They agree now by hand.
+#
+# R389 — Cross-cutting concerns audit (M4). One concern — does what a repo
+#            writes onto the audit spine reach the reader it was written for —
+#            censused across all 77 payload literals, five fixes and one new
+#            census, at `728bb90c..144295e7`.
+#
+#            THE CENSUS R387 SAID DID NOT EXIST. R384 put
+#            `organization_deleted: true` on a `portfolio_membership_changed`
+#            payload because the change list it sits beside is character for
+#            character the one a hand detachment produces. Nothing read it for
+#            three rounds; R387 gave it `EVENT_NOTES` and closed with "nothing
+#            walks the payloads repos actually write looking for the next flag
+#            beside `changes`. The census that would find it does not exist."
+#            `eventCircumstanceCensus.test.ts` walks every `payload:` literal
+#            handed to `recordEvent`/`recordEvents` — every one inside the call,
+#            not the first, because four batch writes put theirs inside a `.map`
+#            callback — and classifies each key whose value the *writer chose*
+#            rather than carried: a boolean, a string literal, a shorthand of a
+#            single-valued union. Fifteen such keys, each now read as a change,
+#            read as a note, or argued inert in a list carrying the reason. Two
+#            assertions run the other way: a note nothing writes is a sentence
+#            this build promises and can never say, and an INERT entry for a key
+#            no payload carries is a position about nothing. The valuation
+#            service is the only writer of `valuation_events` — the report, AI
+#            and engine tiers do not touch it — so the walk is the whole estate.
+#
+#            d2934ac — four more circumstances, written for a reader, read by
+#            nobody. Every one is a sweep writing the event a person writes.
+#            `reason: 'account_closed'`: `releaseAssignedWork` takes unfinished
+#            work off a closed account and writes each engagement
+#            `assigned_reviewer_id: 01H… → —`, the list an operator clearing the
+#            reviewer by hand produces, plus a `reason` whose own comment routes
+#            it through `extractChanges` — which does not read it. The firm
+#            dashboard flags unowned work by asking whether the column is null,
+#            so "why is nobody on this file" is asked of exactly this row.
+#            `reaped`: the stale-work sweeps end a wedged pipeline run and a
+#            wedged AI job by writing the terminal event a worker writes when it
+#            reports a failure it saw. `retry_scheduled`, put beside it by R268
+#            "on the spine rather than only in a column" *because* "reaped alone
+#            reads as an ending either way" — and read by nothing, so the spine
+#            said neither. `retry` and `reason: 'newer_run_active'`: an
+#            `auto_pipeline_started` from the retry sweep is the event an upload
+#            writes, and R272 moved the withdrawal of an owed retry onto the
+#            spine because in an `error` suffix "nothing reads it".
+#
+#            `EVENT_NOTES` is keyed by event type now, which the census forced.
+#            A flag alone is not the whole address of a circumstance: `reason`
+#            is how two sweeps say why they acted and also how `applyOverwrite`
+#            carries an analyst's own typed justification, free text straight
+#            onto the payload. Flag-keyed, an overwrite whose author typed
+#            `account_closed` would have been annotated "Released automatically
+#            when the account holding this work was closed" — a sentence the
+#            trail states on its own authority about something that did not
+#            happen, which is worse than the silence it replaces. `eventNote`
+#            collects every declared circumstance rather than the first, because
+#            the reaper states two; `Object.hasOwn` at both levels, since the
+#            payload is `jsonb` off an append-only spine and `constructor` is a
+#            key every object answers to.
+#
+#            538cf0b — the census, and the one row it found:
+#            `auto_pipeline_toggled`'s `{ enabled }`. `extractChanges` reads
+#            four payload shapes and a bare boolean is none of them, so every
+#            toggle rendered as "Automated pipeline toggled" and nothing else,
+#            on the one row where which way it went is the entire content of the
+#            event. Not a circumstance — a value that moved, so
+#            `changes: { auto_pipeline: { from, to } }`.
+#
+#            e2e2ee5 — the circumstance reached the screen and not the file.
+#            `changeLogCsv` is the surface an auditor works in and the reason
+#            `events.json` has a flat companion; it dropped `note`, so the
+#            export showed `organization_id | 01H8XYZ | —` for a dissolution and
+#            a hand detachment alike, and the same for a released engagement
+#            against a hand-cleared reviewer. A `note` column, last, repeating
+#            per row as `label`, `category` and `severity` already do — a column
+#            rather than a row, so `AuditTrailTab`'s objection about the
+#            truncation warning ("a CSV has no comment syntax") does not apply.
+#            144295e pins the bundle's header column by column, which is what
+#            caught the column being added.
+#
+#            732a8a3 — a re-file is two before/after pairs, spelled so nothing
+#            reads them. `refileDocument` wrote a fifth payload shape —
+#            `from_category`/`to_category`, `from_kind`/`to_kind` — and a fifth
+#            shape is no shape: `document_refiled` reached the tab as the bare
+#            words "Document re-filed" and the change log emitted no row for it
+#            at all, on a `client`-visible type whose only question is "was this
+#            reclassified, and from what to what?". Written as a change list.
+#            The census gains the rule that finds the next one: a `from_x` with
+#            a matching `to_x`. `from_number` on the clone event is not one — it
+#            names the engagement the copy came from and has no `to_number`.
+#
+#            gap: `signature_recorded` and `signature_removed` — R388's — carry
+#            `role`, `signer_name` and the superseded signatory in a payload no
+#            surface renders, so the row is a bare label. That is the estate's
+#            norm for a "a thing happened" event (`document_uploaded` is the
+#            same), so it is a policy question about which of the 66 types
+#            deserve a change list, not a defect in these two. Left alone.
+#            gap: the census's rule is the value the writer *chose*. A key
+#            carrying a variable whose type is a wide union — a status, a
+#            decision — is a discriminator this walk cannot see, and
+#            `boardApprovals`' `decision` is only in the inert list because it
+#            happens to sit beside a `from`/`to` pair.
+#            gap: an event already on the spine keeps the shape it was written
+#            with. The three payload rewrites this round fix what is written
+#            from here; rows older than the commit render as they always did,
+#            and nothing backfills an append-only table.
+#            gap: `discarded_signoffs` is still a list of ids of rows that no
+#            longer exist — R388's gap, and still a PII decision rather than a
+#            repair.
