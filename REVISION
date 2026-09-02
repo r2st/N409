@@ -9984,3 +9984,110 @@
 #            `fraction` rule. The form refuses `25` there, so the hundredfold is
 #            caught rather than concluded — but the refusal is the only thing
 #            that says which unit the field wanted.
+# R372 — State machine & transition verification (M3). Two findings, one
+#            migration, 8 new tests, and both findings are the same question
+#            asked of two different state machines: which invariant is actually
+#            enforced, and by what. One was enforced by a rule that could only
+#            see half the artifact; the other only by a `<select>` in a browser.
+#
+#            The round read the doors onto five state machines. Three had
+#            nothing new to say and are worth naming. `pipeline_runs` is the
+#            most-guarded row in the estate — terminal states and the `attempts`
+#            generation both pinned, the reaper and the retry claim under
+#            `FOR UPDATE SKIP LOCKED`, the retired-engagement question re-asked
+#            at the two places the run writes rather than only where it was
+#            queued. `client_intake_links` re-resolves its token on every
+#            mutation, states its liveness test once (`LIVE_LINK_SQL`) and locks
+#            the row before conversion so a double-click cannot own two
+#            engagements. `mfa_backup_codes` / `mfa_trusted_devices` have one
+#            disable door and it wipes both.
+#
+#            **A signature certifying a conclusion computed after it.** R304
+#            added rule 4 to `assertPublishGate`: the report body the analyst
+#            signed must still be the current one, because an attestation is
+#            about the artifact it was given against. That rule stops exactly
+#            where the prose stops. The figures are not in the body —
+#            `{{figures}}`, `{{exhibits}}` and `{{signatures}}` are markers the
+#            stored chapters keep, and `routes/reports.ts` resolves them against
+#            `latestCalculationForKind` on the way to the PDF — so the concluded
+#            equity value and FMV/share on a signed report are late-bound in a
+#            way the chapters are not, and re-running the engine restates them
+#            without writing a report version, which is the only thing rule 4
+#            can see. That leaves the ordinary correction sequence open: sign,
+#            notice a wrong input, recompute, re-run QA (rules 2 and 3 both pass
+#            — the review is keyed to the new run and to a body nobody touched),
+#            publish. The certification page then prints "/s/ …, Date signed"
+#            against a number the signer never saw, and it is the number that
+#            matters most: USPAP SR 10-3 certifies the analyses and the opinion,
+#            not the paragraphs around them, and the §409A safe harbour turns on
+#            an appraiser having concluded *this* figure. Rule 5 asks rule 4's
+#            question of the run, before rule 4's `if (!report) return` — an
+#            engagement with no report body still has a conclusion, and the
+#            auditor portal and the partner API both serve it. It is last after
+#            the QA rules for R304's own reason: the remedy is two steps in an
+#            order, re-run QA over the new run and then sign what QA cleared,
+#            and a gate that named the signature first would send the operator
+#            to sign a run no reviewer had graded.
+#
+#            **A methodology decision two later entries both revised.**
+#            `methodology_decisions.supersedes` is the decision log's only edge
+#            and the only thing that strikes an entry through, so two rows
+#            pointing at one prior decision fork it: the earlier entry is struck
+#            through exactly once, and the log — and the evidence bundle an
+#            auditor reads it out of — carries two live, contradictory revisions
+#            of one methodology choice with nothing to order them. The rule
+#            existed, and existed only in the browser: `DecisionsTab` builds its
+#            "Supersedes" select from `decisions.filter((d) => !d.superseded)`,
+#            so the control cannot offer a revised entry. A select is a
+#            snapshot, and every ordinary way past it is a stale one — the
+#            second of two operators working the same engagement, a tab left
+#            open while a colleague revises the row it is listing, a retried
+#            submit. The route's own read could not have closed it either, being
+#            one statement earlier on another connection, so the check is taken
+#            under `FOR UPDATE` on the decision being revised: in the direction
+#            that matters there is no answer row to lock — what must not race is
+#            a revision that does not exist yet — so both writers queue on the
+#            target and the loser re-reads into the winner's row. 409 naming the
+#            revision that got there first, because the operator's next step is
+#            to read it and decide whether they still disagree. Migration 0205
+#            indexes the lookup, which is taken while holding that lock.
+#
+#            gap: rule 5 asks about `latestSucceededCalculation` — the row rule
+#            2 already grades — while the deliverable renders from
+#            `latestCalculationForKind`. On a 409A engagement they are the same
+#            row. On a specialty one an off-kind 409A run after the signature
+#            does not move the printed figures and now demands a re-sign anyway:
+#            the conservative direction, and the one rule 2 already takes about
+#            that row, but the gate and the renderer are asking two different
+#            questions of the same word "latest".
+#            gap: `auditor_access` grants are minted and revoked with nothing on
+#            any trail. Neither route writes a valuation event or an admin
+#            event, so the grant of a third party's read access to a client's
+#            deliverable — and its withdrawal — are recoverable only from
+#            `created_at`/`revoked_at` on a row the listing caps at 200. The
+#            row is the record and is never deleted, which is why this is
+#            recorded rather than fixed; what is missing is *who*, and any
+#            reachability from the engagement's own history.
+#            gap: `convertIntakeLink` locks the link and asks three questions of
+#            it — the firm is live, the prospect submitted, it is not already
+#            converted — and never asks whether the link was revoked. Revoking
+#            is the only control a firm has for "this prospect asked us to
+#            stop", and a revoked submission still converts into a live
+#            engagement. Not fixed because the neighbouring predicate is the
+#            wrong shape for it: expiry legitimately must *not* block
+#            conversion — it bounds the prospect's writing window, not the
+#            firm's processing — so this wants one clause and not
+#            `LIVE_LINK_SQL`, and which of the two the product means is a
+#            decision rather than an omission.
+#            gap: a decision may still supersede one in a different category —
+#            a `dlom` entry revising a `volatility` one is nonsense the log will
+#            accept and render. The browser's select does not scope by category
+#            either, so unlike the fork above there is no existing rule to make
+#            the server agree with; it wants somebody to say whether a
+#            re-categorised revision is a mistake or a correction.
+#            came back clean: restoring a retired engagement under an archived
+#            firm is not R364's shape one table over. `patchPartner`'s
+#            `archived` flag moves `partners.archived_at` and nothing else, so
+#            live work under a withdrawn firm is an ordinary existing state
+#            rather than one a restore would create — the checked-and-negative
+#            answer is worth as much as the finding would have been.
