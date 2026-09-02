@@ -12,7 +12,7 @@ import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { api, apiDownload, tokenExpiry, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
-import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
+import { canManageUsers, hasPassword, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
 import type { ApiToken, User } from '../lib/types';
 import {
@@ -489,10 +489,11 @@ function ApiTokensCard() {
   /*
    * Minting a token is a credential-level action, so the server re-authenticates
    * it — same rule and same shape as closing the account below. And the same
-   * exception: a Google SSO account has no password to confirm, so asking for
-   * one would be a box nobody can fill.
+   * exception: an account with no password has none to confirm, so asking for
+   * one would be a box nobody can fill. `hasPassword` rather than a read of
+   * `sso_provider`, which cannot see a SAML/SCIM account.
    */
-  const needsPassword = user?.sso_provider !== 'google';
+  const needsPassword = hasPassword(user);
 
   const load = () =>
     api<{ tokens: ApiToken[]; truncated: boolean }>('/me/tokens')
@@ -762,11 +763,10 @@ function CloseAccountCard() {
   const [busy, setBusy] = useState(false);
 
   /*
-   * The password box is not rendered for a Google SSO account — there is no
-   * password to confirm — so the rule has to ask who is signed in rather than
-   * demand a field that is not on screen.
+   * The password box is not rendered for an account that has no password — so
+   * the rule has to ask that rather than demand a field that is not on screen.
    */
-  const needsPassword = user?.sso_provider !== 'google';
+  const needsPassword = hasPassword(user);
   const { errorFor, blurHandler, handleSubmit } = useFormValidation(
     { password },
     { password: needsPassword ? required('password', 'Password') : undefined },
@@ -827,7 +827,10 @@ export function SettingsPage() {
   const { user } = useAuth();
   if (!user) return null;
 
-  const isSso = user.sso_provider === 'google';
+  // The three password-based cards, and the label beside them, ask whether the
+  // account *has* a password rather than whether it is a Google account: a
+  // SAML/SCIM user has neither, and was being offered all three.
+  const passworded = hasPassword(user);
   const accessTag = isOps(user) ? 'Operations' : isPartner(user) ? 'Partner' : 'Client';
 
   return (
@@ -859,7 +862,13 @@ export function SettingsPage() {
           </div>
           <div>
             <dt className="overline text-ink-400">Sign-in</dt>
-            <dd className="mt-1 text-sm text-ink-900">{isSso ? 'Google SSO' : 'Email & password'}</dd>
+            <dd className="mt-1 text-sm text-ink-900">
+              {passworded
+                ? 'Email & password'
+                : user.sso_provider === 'google'
+                  ? 'Google SSO'
+                  : 'Single sign-on'}
+            </dd>
           </div>
           <div>
             <dt className="overline text-ink-400">Email verified</dt>
@@ -904,11 +913,11 @@ export function SettingsPage() {
       <ProfileCard />
       {/* Google owns the email on an SSO account, and there's no password to
           re-authenticate the change with. */}
-      {!isSso && <ChangeEmailCard />}
+      {passworded && <ChangeEmailCard />}
       <NotificationPreferencesCard />
       <ApiTokensCard />
-      {!isSso && <ChangePasswordCard />}
-      {!isSso && <MfaCard />}
+      {passworded && <ChangePasswordCard />}
+      {passworded && <MfaCard />}
       <SessionCard />
       <DataExportCard />
       <CloseAccountCard />

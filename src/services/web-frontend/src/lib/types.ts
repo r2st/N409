@@ -11,6 +11,15 @@ export interface User {
   timezone: string | null;
   verified: boolean;
   sso_provider: string | null;
+  /**
+   * Whether this account signs in with a password at all.
+   *
+   * Stated by the server because the client cannot infer it: `sso_provider` is
+   * only ever `'google'`, and a SAML- or SCIM-provisioned account has neither
+   * that nor a password. Absent on older payloads, where `sso_provider` is the
+   * best guess available.
+   */
+  has_password?: boolean;
   partner_id: string | null;
   roles: string[];
   /** Whether TOTP 2FA is enabled (feature: MFA). Absent on older payloads. */

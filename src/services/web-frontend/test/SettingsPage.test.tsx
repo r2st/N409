@@ -196,13 +196,35 @@ describe('SettingsPage — email change', () => {
   });
 
   it('is hidden for a Google SSO account, along with the password form', async () => {
-    mockApi(() => undefined, { ...baseUser, sso_provider: 'google' });
+    mockApi(() => undefined, { ...baseUser, sso_provider: 'google', has_password: false });
     renderSettings();
     await settled();
 
     await screen.findByText('Profile');
     expect(screen.queryByRole('button', { name: 'Update email' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Update password' })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The third kind of account (round 359, methodology M4).
+   *
+   * `sso_provider` is only ever `'google'`, and migration 0082 added users who
+   * have neither it nor a password digest — provisioned through SAML or SCIM.
+   * Every password-based control on this page was gated on `!== 'google'`, so
+   * those accounts were offered an email change, a password change and a token
+   * prompt they could not complete: the server skips its check when there is no
+   * digest, but the client's own `required('password', …)` would not submit.
+   */
+  it('hides the same forms from a SAML/SCIM account, which has no sso_provider either', async () => {
+    mockApi(() => undefined, { ...baseUser, sso_provider: null, has_password: false });
+    renderSettings();
+    await settled();
+
+    await screen.findByText('Profile');
+    expect(screen.queryByRole('button', { name: 'Update email' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update password' })).not.toBeInTheDocument();
+    // And is not called a password account by the label beside them.
+    expect(screen.getByText('Single sign-on')).toBeInTheDocument();
   });
 });
 
@@ -361,7 +383,16 @@ describe('SettingsPage — sessions and account closure', () => {
   });
 
   it('asks a Google SSO user for no password when closing', async () => {
-    mockApi(() => undefined, { ...baseUser, sso_provider: 'google' });
+    mockApi(() => undefined, { ...baseUser, sso_provider: 'google', has_password: false });
+    renderSettings();
+    await settled();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Close my account' }));
+    expect(screen.queryByLabelText('Confirm your password')).not.toBeInTheDocument();
+  });
+
+  it('asks a SAML/SCIM user for none either — they have no password to confirm', async () => {
+    mockApi(() => undefined, { ...baseUser, sso_provider: null, has_password: false });
     renderSettings();
     await settled();
 

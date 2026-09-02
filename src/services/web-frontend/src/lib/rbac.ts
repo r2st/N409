@@ -56,6 +56,25 @@ export function isOps(user: Pick<User, 'roles'> | null): boolean {
   return Boolean(user?.roles.some((r) => OPS_ROLES.has(r)));
 }
 
+/**
+ * Does this account sign in with a password?
+ *
+ * The question behind every "confirm your current password" box on the
+ * settings page, and it was asked as `sso_provider !== 'google'` at five call
+ * sites. That is right for the two account kinds the product started with and
+ * wrong for the third: a SAML- or SCIM-provisioned user has no password digest
+ * *and* no `sso_provider` (migration 0082), so every one of those reads treated
+ * them as a password account and put a box on screen they could never fill —
+ * the server skips its own check for them, but `useFormValidation` refused to
+ * submit the form.
+ *
+ * The server states it now (`has_password` on the `/me` payload). The
+ * `sso_provider` fallback is only for a payload minted before it did.
+ */
+export function hasPassword(user: Pick<User, 'has_password' | 'sso_provider'> | null): boolean {
+  return user?.has_password ?? user?.sso_provider !== 'google';
+}
+
 export function isPartner(user: Pick<User, 'roles'> | null): boolean {
   return !isOps(user) && Boolean(user?.roles.some((r) => PARTNER_ROLES.has(r)));
 }
