@@ -243,7 +243,15 @@ describe.skipIf(!dbUp)('communication settings — refusals', () => {
       }
     });
 
-    it('404s a preview naming a malformed engagement id', async () => {
+    it('422s a preview naming a malformed engagement id, and names the field', async () => {
+      // This asked for a 404 and had been failing on `main` since R331, which
+      // moved every body id field onto `ulidField()` under a census: the id is
+      // now refused by the schema, one statement before the lookup the 404 came
+      // from. 422 is the right answer and the better one — a malformed id is a
+      // fault in the request rather than a claim about what exists, and the
+      // problem body names `valuation_id` so the caller can see which field it
+      // was. The route's own `isUlid` check behind the schema is unreachable
+      // for this input now, and stays as the belt to the schema's braces.
       const tpl = await createTemplate();
       const res = await ctx.app.inject({
         method: 'POST',
@@ -251,7 +259,8 @@ describe.skipIf(!dbUp)('communication settings — refusals', () => {
         headers: auth(),
         payload: { valuation_id: 'not-a-ulid' },
       });
-      expect(res.statusCode).toBe(404);
+      expect(res.statusCode).toBe(422);
+      expect(res.json().errors?.[0]?.path).toContain('valuation_id');
     });
 
     it('renders an engagement with no partner and no measurement date', async () => {
