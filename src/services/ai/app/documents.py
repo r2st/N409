@@ -322,10 +322,59 @@ def _rich_text(node: ElementTree.Element) -> str:
 
 
 def _xlsx_shared_strings(zf: _BoundedZip) -> list[str]:
+    """The workbook's string table — every piece of text in it, once.
+
+    ## An absent table and an unreadable one are not the same thing (R344, M5)
+
+    Both were `return []`, and the two are opposite facts. A workbook with no
+    `xl/sharedStrings.xml` genuinely has no shared strings: a sheet of numbers
+    has none, and neither does one whose text is all written inline, so `[]` is
+    the true answer and the extraction that follows is complete.
+
+    A `sharedStrings.xml` that will not parse is the other case, and `[]` is
+    then not an answer at all — it is the whole of the workbook's text,
+    discarded. XLSX stores a text cell as `t="s"` plus an *index* into this
+    table and nothing else, so with an empty table every one of them resolves
+    through `_xlsx_cell_value`'s `except (ValueError, IndexError): return ""`.
+    Measured on the reader as it stood: a three-row cap table whose string part
+    was truncated extracted as
+
+        === Sheet: Cap Table ===
+        \t2000000
+        Common\t7000000
+
+    — the column headers gone, the security class of a two-million-share
+    position gone, and the numbers all present and correct. Nothing raised, so
+    `extract_texts` counted no failure; nothing logged, so `documents_unreadable`
+    stayed at zero; and what went to the model was a cap table that reads as
+    complete and says something different from the file the client uploaded.
+    This is the tier that has no operator in the loop by construction — the
+    corpus is read by an LLM and its answers land in an extraction the analyst
+    reviews as extracted fact.
+
+    So the unreadable table is raised, which is the degrade this module already
+    has: `extract_texts` catches it, puts `[could not extract text: …]` in the
+    corpus where the workbook's text would be, warns with
+    `document_extract_failed`, and counts it into the `documents_unreadable`
+    denominator. A blank-but-declared document is a thing both of this module's
+    readers can act on; a silently blanked one is not.
+
+    `ValueError` rather than `MalformedDocument`, which means something narrower
+    here — a part this reader refuses on sight — and rather than
+    `DocumentTooLarge`, which the callers above let through on purpose.
+    """
     try:
-        root = _parse_xml_part(zf.read("xl/sharedStrings.xml"))
-    except (KeyError, ElementTree.ParseError):
+        data = zf.read("xl/sharedStrings.xml")
+    except KeyError:
         return []
+    try:
+        root = _parse_xml_part(data)
+    except ElementTree.ParseError as exc:
+        raise ValueError(
+            "this workbook's shared string table could not be read, so every piece of "
+            "text in it — column headings, security class names — would have come out "
+            "blank while its numbers came out intact"
+        ) from exc
     # Each <si> may hold one <t> or rich-text runs of <r><t>; join the runs.
     return [_rich_text(si) for si in root.iter(f"{_SSML}si")]
 
@@ -487,12 +536,35 @@ def _xlsx_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
             ]
         blocks: list[str] = []
         size = 0
-        for name, path in sheets[:MAX_XLSX_SHEETS]:
+        opened = sheets[:MAX_XLSX_SHEETS]
+        unreadable = 0
+        for name, path in opened:
             if size >= limit:
                 break
             try:
                 root = _parse_xml_part(zf.read(path))
             except (KeyError, ElementTree.ParseError):
+                # The tab is named in the corpus with a note where its rows
+                # would be, rather than being dropped out of it (R344, M5).
+                #
+                # `continue` alone made a tab the workbook *declares* vanish
+                # from the extraction, and it vanished completely: the sheet
+                # headings are the only evidence in this text of how many
+                # sheets there were, so a workbook whose cap table part was
+                # truncated came out as its financials and nothing else — a
+                # document that reads, to the model and to the analyst reading
+                # what the model concluded, exactly like a workbook that never
+                # had a cap table in it.
+                #
+                # Still not fatal, which is the right call and the reason the
+                # `continue` was written: one damaged part must not cost the
+                # sheets that are fine. `UNREAD_NOTE` two hundred lines up
+                # makes the same trade for the same reason — say what is
+                # missing, keep what is not.
+                unreadable += 1
+                note = f"=== Sheet: {name} ===\n[this sheet could not be read]"
+                blocks.append(note)
+                size += len(note) + 2
                 continue
             lines = [f"=== Sheet: {name} ==="]
             size += len(lines[0]) + 2
@@ -505,6 +577,20 @@ def _xlsx_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
                     if size >= limit:
                         break
             blocks.append("\n".join(lines))
+        if unreadable:
+            # The audience the corpus note cannot reach. A part that will not
+            # parse is a property of the file, so one line is a client's odd
+            # export; the same line under every upload is this reader, and the
+            # denominator is what separates them — the pair `documents_unreadable`
+            # reports one layer up, for the same reason.
+            _log.warning(
+                "sheets in a workbook could not be read",
+                extra={
+                    "event": "xlsx_sheets_unreadable",
+                    "count": unreadable,
+                    "total": len(opened),
+                },
+            )
         return "\n\n".join(blocks)
 
 

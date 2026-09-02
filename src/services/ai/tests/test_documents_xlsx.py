@@ -588,3 +588,118 @@ def test_a_wide_part_with_no_declaration_is_still_read():
 def test_an_ordinary_workbook_still_parses():
     [doc] = extract_texts([_doc(_xlsx_bytes())])
     assert "Series A\t2000000" in doc.text
+
+
+# ── A part that will not parse (R344, methodology M5) ────────────────────────
+
+
+def _xlsx_with(parts: dict[str, str]) -> bytes:
+    """The minimal workbook with named parts replaced or added."""
+    base = {
+        "[Content_Types].xml": _CONTENT_TYPES,
+        "xl/workbook.xml": _WORKBOOK,
+        "xl/sharedStrings.xml": _SHARED_STRINGS,
+        "xl/worksheets/sheet1.xml": _SHEET1,
+    }
+    base.update(parts)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, body in base.items():
+            zf.writestr(name, body)
+    return buf.getvalue()
+
+
+#: Well-formed up to the point where it stops — what a truncated upload,
+#: a partial write or a repaired file leaves behind.
+_TRUNCATED_STRINGS = (
+    '<?xml version="1.0"?>'
+    '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    "<si><t>Class</t></si"
+)
+
+
+def test_an_unreadable_string_table_is_declared_and_not_blanked(caplog):
+    """Every `t="s"` cell resolves through this table; `[]` empties all of them.
+
+    The numbers survive a broken string table and the text does not, so the
+    silent version of this produced a cap table with the right share counts
+    against no security classes at all — which is not a degraded reading of the
+    file, it is a different file.
+    """
+    with caplog.at_level("WARNING"):
+        [doc] = extract_texts([_doc(_xlsx_with({"xl/sharedStrings.xml": _TRUNCATED_STRINGS}))])
+
+    assert doc.text.startswith("[could not extract text:")
+    assert "shared string table" in doc.text
+    # The half-read workbook must not reach the corpus beside the note.
+    assert "2000000" not in doc.text
+    assert [r for r in caplog.records if getattr(r, "event", None) == "document_extract_failed"]
+    tally = [r for r in caplog.records if getattr(r, "event", None) == "documents_unreadable"]
+    assert [(r.count, r.total) for r in tally] == [(1, 1)]
+
+
+def test_a_workbook_with_no_string_table_is_read_as_it_always_was():
+    """The other half of the pair: an absent part is a fact, not a failure.
+
+    A sheet whose text is written inline carries no `sharedStrings.xml` at all,
+    and refusing that would refuse an ordinary workbook.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        zf.writestr("xl/workbook.xml", _WORKBOOK)
+        zf.writestr("xl/worksheets/sheet1.xml", _SHEET1)
+    [doc] = extract_texts([_doc(buf.getvalue())])
+
+    assert not doc.text.startswith("[could not extract text:")
+    assert "Common\t7000000" in doc.text  # the inline string is still there
+
+
+_TWO_SHEET_WORKBOOK = """<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheets>
+    <sheet name="Cap Table" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+    <sheet name="Financials" sheetId="2" r:id="rId2" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+  </sheets>
+</workbook>"""
+
+_SHEET2 = """<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="inlineStr"><is><t>Revenue</t></is></c><c r="B1"><v>4200000</v></c></row>
+  </sheetData>
+</worksheet>"""
+
+
+def test_an_unreadable_sheet_is_named_rather_than_dropped(caplog):
+    """A tab the workbook declares must not disappear out of the extraction.
+
+    Dropped, the corpus reads exactly like a workbook that never had that tab —
+    and the sheet headings are the only evidence in this text of how many there
+    were.
+    """
+    raw = _xlsx_with(
+        {
+            "xl/workbook.xml": _TWO_SHEET_WORKBOOK,
+            "xl/worksheets/sheet1.xml": '<?xml version="1.0"?><worksheet><sheetData><row',
+            "xl/worksheets/sheet2.xml": _SHEET2,
+        }
+    )
+    with caplog.at_level("WARNING"):
+        [doc] = extract_texts([_doc(raw)])
+
+    assert "=== Sheet: Cap Table ===" in doc.text
+    assert "[this sheet could not be read]" in doc.text
+    # And the sheet that is fine is still read in full.
+    assert "Revenue\t4200000" in doc.text
+    # Not counted as a failed document: the file was read, one part of it was not.
+    assert not doc.text.startswith("[could not extract text:")
+    [line] = [r for r in caplog.records if getattr(r, "event", None) == "xlsx_sheets_unreadable"]
+    assert (line.count, line.total) == (1, 2)
+
+
+def test_an_intact_workbook_logs_nothing_about_its_sheets(caplog):
+    """Vacuity guard: the line above is a condition, not a constant."""
+    with caplog.at_level("WARNING"):
+        extract_texts([_doc(_xlsx_bytes())])
+    assert not [r for r in caplog.records if getattr(r, "event", None) == "xlsx_sheets_unreadable"]
