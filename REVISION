@@ -10213,3 +10213,113 @@
 #            'payments'` for the query to find. Left alone because closing it
 #            means deciding what the payments endpoint's ordering *means*, and
 #            the honest answer is that it has none.
+#
+# R374 — Error message quality (M19), at `39cf838..9c4d958`. Five findings, no
+#            migration, 12 new tests. Two of the five were gaps R357 and R358
+#            recorded and could not close; the other three came from reading
+#            the estate's own copy tables end to end, which is still the only
+#            thing that finds a sentence that parses and says nothing.
+#
+#            39cf838 — a remedy that names a control is read by *searching the
+#            page for the words in it*, so a paraphrase fails that search as
+#            completely as a wrong name and what the reader concludes is that
+#            the control is not there. Four were paraphrases: `adminUsers` sent
+#            a self-targeted session revoke to "Settings → sign out everywhere"
+#            against a button reading "Sign out everywhere else" in a card
+#            headed "Sessions", and all three `CONNECTOR_PANELS` entries named
+#            a tab and a heading that matched neither ("Cap table" for the tab
+#            "Cap Table", "Sync" for "Live sync", "HRIS sync" for "HRIS /
+#            payroll sync", "Accounting" for "Accounting integrations"). R262
+#            stated the rule and R357 found violations by reading; both recorded
+#            that nothing enforces it, because the remedies are in the valuation
+#            service and the labels are in web-frontend with no import path
+#            between the packages. There is no import path but there is a
+#            filesystem: `remedyControlLabels` reads the frontend's sources as
+#            text and holds each half of every connector remedy, and every
+#            `Settings → …` remedy, to text the frontend draws — as whole
+#            element text or a whole literal, since "Sync" occurs a hundred
+#            places and none of them is the control.
+#
+#            53cf6d8 — SCIM's `POST /Users` answered every taken userName with
+#            the sentence that fits one of three cases: "it was not created by
+#            this directory, so it has not been linked". `findUserByEmail`
+#            filters neither `provisioned_by` nor `deleted_at`, so that was
+#            also said about accounts this directory had provisioned and then
+#            deprovisioned — the rehire, whose IdP mints a fresh externalId and
+#            POSTs. The admin was told the address belongs to somebody else and
+#            handed a remedy naming nothing they can do, while the relink was
+#            two calls away on their own side of the wire. The refusal now says
+#            which case it is; the id is named only for an account this
+#            directory manages, being the same row the filtered GET already
+#            returns to this token. That the case was reachable was not
+#            hypothetical — the assertion this replaced created the account
+#            through this directory and then asserted the sentence saying it
+#            had not been.
+#
+#            b189ff7 — `Unknown template_key` was the whole answer at both
+#            campaign write sites: the column name, the word "unknown", and
+#            neither the key that was rejected nor where keys come from. One
+#            level up, the template delete's 409 was the same shape — "Template
+#            is referenced by an auto email campaign" gives the reason and
+#            withholds the referent, and the remedy is to go and detach them on
+#            a console with no listing of campaigns by template. Both now name
+#            the thing. The PATCH's inherited-key branch is deliberately not
+#            written: it can complain about a key the request did not carry, but
+#            the state is unreachable (a referenced template cannot be deleted,
+#            and `TemplatePatch` omits `key`), and a sentence for a case no
+#            caller can be in is R180's vacuous check wearing a message.
+#
+#            0a2d095 — `describeActionFailure`'s operation half is read exactly
+#            when the problem body carried no `detail`, so it is the whole
+#            message on the failures a reader can least interpret. Three
+#            controls shared one: `WorkflowActions` sent "Workflow action
+#            failed." from advance, restart and reassign alike through a single
+#            `run(path)` helper — R357's banned "Action failed." with the
+#            section heading prefixed, and the heading is the word the reader is
+#            already looking at. "Sync failed." stood for the HRIS pull and the
+#            cap-table pull in two panels of two subsystems. Both are banned by
+#            name now, and the census reads the whole operation argument rather
+#            than the literal after the comma, so a site that writes two
+#            operations as a ternary is audited instead of dropped from the
+#            population — which had it backwards, those being the sites that
+#            bothered to tell two operations apart.
+#
+#            9c4d958 — R350 fixed the write handlers that discarded the server's
+#            refusal unread and left the loads with a stated argument: the page
+#            is visibly missing its content and the reader's next move is the
+#            retry either way. True of a 503, false of a 403 — the one refusal
+#            on a read that says why you may not see this and that no retry
+#            changes — and `forbidden()` here carries action, reason and remedy.
+#            Sixteen `.catch(() => setError('Could not load X.'))` sites threw
+#            all of it away. `describeLoadFailure` is deliberately smaller than
+#            its write twin: it surfaces a `detail` the server wrote and
+#            otherwise returns the page's own sentence, because "Nothing was
+#            changed" and "can leave the change either applied or not" say
+#            nothing true about a GET. Three existing tests were asserting the
+#            page constant against a mock that had sent a `detail`, so they were
+#            pinning the behaviour this removes.
+#
+#            gap: `remedyControlLabels` covers the two remedy families that name
+#            a control by a path — `CONNECTOR_PANELS` and `Settings → …`. The
+#            rest of the estate's remedies name a control in prose ("the API
+#            tokens panel on the partner portal", "raise the cap on the
+#            Documents tab") and no boundary rule reads a label out of a
+#            sentence reliably, so those stay held by reading. The `Settings`
+#            arm is an enumeration for the same reason.
+#            gap: `AiPanel` renders `job.error ?? 'Pipeline failed.'`,
+#            `CalculationPanel` `calc.error ?? 'failed'` and `PackageTab`
+#            `c.error ?? '—'`. Audited this round and left: every writer of a
+#            failed `ai_jobs` or `calculations` row sets `error` — the two
+#            reapers write their own reason, and both `createCalculation`
+#            callers pass `describeForUser(err)` — and `packageView` projects
+#            the column, so no reader reaches the fallback. R350 recorded it
+#            against a settlement write that itself failed, and that row is left
+#            `running` rather than `failed` until the reaper settles it, so it
+#            is not drawn as a shrug either. A dash for a failed run is still
+#            the worst of the three if it ever becomes reachable.
+#            gap: the engine tier answers a `TypeError` from `compute_wacc` /
+#            `project_financials` with `invalid wacc inputs: {exc}`, which is
+#            CPython's own text and names the internal function. It names the
+#            offending keyword too, which is the half a caller needs, so it is
+#            left — but it is the one place in the estate where an upstream
+#            language runtime's wording reaches a `detail` unread.
