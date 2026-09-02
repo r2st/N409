@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { GoogleCompletePage } from '../src/pages/GoogleCompletePage';
 
 /**
@@ -18,15 +18,23 @@ vi.mock('../src/lib/auth', () => ({
   useAuth: () => ({ adoptToken }),
 }));
 
+/** Renders the login route too, since an SSO hand-off may now end up there. */
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/auth/google/complete']}>
       <Routes>
         <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
         <Route path="/" element={<div data-testid="landed">workspace</div>} />
+        <Route path="/login" element={<SecondFactorProbe />} />
       </Routes>
     </MemoryRouter>,
   );
+}
+
+/** Stands in for `LoginPage`, reporting the challenge it was handed in state. */
+function SecondFactorProbe() {
+  const state = useLocation().state as { mfaChallenge?: string } | null;
+  return <div data-testid="second-factor">{state?.mfaChallenge ?? 'none'}</div>;
 }
 
 describe('GoogleCompletePage', () => {
@@ -78,6 +86,27 @@ describe('GoogleCompletePage', () => {
     expect(await screen.findByText("Google sign-in didn't complete")).toBeInTheDocument();
     expect(adoptToken).not.toHaveBeenCalled();
     expect(screen.getByRole('link', { name: 'Back to sign in' })).toHaveAttribute('href', '/login');
+  });
+
+  /*
+   * The second half of R354's fix, from the browser's side.
+   *
+   * Both SSO doors used to answer a 2FA-enabled account with `#token=` — a full
+   * session that never met the factor its owner had enrolled here. They now
+   * answer `#mfa=<challenge>`, and this page's job is to get that to the one
+   * screen that can redeem it without leaving it in the address bar on the way.
+   */
+  it('carries an MFA challenge to the sign-in screen instead of adopting a session', async () => {
+    const challenge = 'mfa_01N409CHALLENGE0000000000';
+    window.history.replaceState(null, '', `/auth/google/complete#mfa=${challenge}`);
+    renderPage();
+
+    expect(await screen.findByTestId('second-factor')).toHaveTextContent(challenge);
+    // Nothing was adopted: no session exists yet, which is the whole point.
+    expect(adoptToken).not.toHaveBeenCalled();
+    // And the challenge is a bearer credential for the second step, so it comes
+    // out of the URL for the same reason the token does.
+    expect(window.location.hash).toBe('');
   });
 
   it('offers a way back when the token is rejected', async () => {

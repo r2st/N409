@@ -88,8 +88,18 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [providers, setProviders] = useState<AuthProviders | null>(null);
   const [providersFailed, setProvidersFailed] = useState(false);
-  // Second-factor step: set once the password step returns a challenge.
-  const [challenge, setChallenge] = useState<string | null>(null);
+  /*
+   * Second-factor step: set once the password step returns a challenge — or
+   * handed to us by `GoogleCompletePage`, which is where an SSO hand-off lands.
+   *
+   * Since R354 both SSO doors answer a 2FA-enabled account with a challenge
+   * rather than a session, exactly as the password door does. The redirect
+   * carries it in the fragment and that page routes here with it in `state`,
+   * so the code is collected by the one screen that knows how to.
+   */
+  const [challenge, setChallenge] = useState<string | null>(
+    (location.state as { mfaChallenge?: string } | null)?.mfaChallenge ?? null,
+  );
   const [code, setCode] = useState('');
   const [useBackup, setUseBackup] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);

@@ -236,6 +236,46 @@ describe('LoginPage', () => {
       });
     }
 
+    /*
+     * The SSO half of the same step (R354, methodology M6).
+     *
+     * Both SSO doors now answer a 2FA-enabled account with a challenge rather
+     * than a session — the fence the password step above has always applied,
+     * reached through the button beside it. `GoogleCompletePage` takes the
+     * challenge out of the redirect fragment and routes here with it, and this
+     * screen is the only place that knows how to redeem one, so it has to open
+     * on the code step rather than on the password form.
+     */
+    it('opens on the code step when an SSO hand-off arrives with a challenge', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const u = String(url);
+        if (u.endsWith('/auth/providers')) return jsonResponse({ password: true, google: true });
+        if (u.endsWith('/auth/mfa/verify')) {
+          expect(JSON.parse(String(init?.body))).toMatchObject({ challenge: 'sso-ch-1', code: '123456' });
+          return jsonResponse({ user: me, token: 'tok-sso' });
+        }
+        if (u.endsWith('/auth/me')) return jsonResponse({ user: me });
+        throw new Error(`unexpected fetch ${u}`);
+      });
+      render(
+        <MemoryRouter initialEntries={[{ pathname: '/login', state: { mfaChallenge: 'sso-ch-1' } }]}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/" element={<div>ROLE_LANDING</div>} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>,
+      );
+      expect(await screen.findByRole('heading', { name: 'Two-factor authentication' })).toBeInTheDocument();
+      // No password box: the caller has already proved whatever the IdP asked.
+      expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+
+      await userEvent.type(screen.getByLabelText('Authenticator code'), '123456');
+      await userEvent.click(screen.getByRole('button', { name: 'Verify' }));
+      await waitFor(() => expect(getToken()).toBe('tok-sso'));
+    });
+
     async function reachTheCodeStep() {
       renderLogin();
       await userEvent.type(screen.getByLabelText('Email'), 'ada@acme.com');

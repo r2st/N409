@@ -758,6 +758,47 @@ export function registerAuthRoutes(
       });
       return refuseSso(req, reply, 'account_deactivated', problems.forbidden('This account is deactivated'));
     }
+    /*
+     * THE SECOND FACTOR, ON THE DOOR THAT NEVER ASKED FOR IT (R354, M6).
+     *
+     * `POST /auth/login` answers a 2FA-enabled account with a challenge instead
+     * of a session, and `POST /auth/mfa/verify` is the only thing that turns
+     * one into the other. This door issued the session outright.
+     *
+     * `upsertGoogleUser` matches on the address alone: an account created with
+     * a password here, which then enrolled TOTP here, is *linked* the first
+     * time that address arrives from Google — its `password_digest` and its
+     * `totp_secret` are left exactly as they were, and `sso_provider` is
+     * stamped `google` on the way past. So the factor the owner enrolled, and
+     * the one `require_mfa` refuses to let them remove, was skipped in full by
+     * the button next to the password box: whoever controls the Google identity
+     * for that address holds the account, and the second factor never came into
+     * it. That is the one thing enrolling a second factor is done to prevent,
+     * and no trace of the bypass appears anywhere — the sign-in is an ordinary
+     * `user_login` on the spine.
+     *
+     * The trusted-device exemption is the password door's, unchanged and read
+     * from the same cookie: a browser this account has already completed a
+     * challenge on stays exempt for its 30 days whichever door it comes back
+     * through.
+     *
+     * Answered the way the password door answers it, in each of this route's
+     * two response shapes — the fragment the SPA reads, and the JSON body an
+     * API caller gets. No `user_login` row and no `signed_in`: nobody has
+     * signed in yet.
+     */
+    if (user.totp_enabled) {
+      const deviceToken = req.cookies?.[DEVICE_COOKIE];
+      const trusted = deviceToken ? await isDeviceTrusted(deps.pool, user.id, deviceToken) : false;
+      if (!trusted) {
+        recordSsoOutcome('google', 'mfa_challenged');
+        const challenge = await signMfaChallenge(user.id, deps.jwt);
+        if (req.headers.accept?.includes('text/html')) {
+          return reply.redirect(`/auth/google/complete#mfa=${encodeURIComponent(challenge)}`, 302);
+        }
+        return { mfa_required: true, challenge };
+      }
+    }
     await recordAdminEvent(deps.pool, {
       type: 'user_login',
       actor: { actorType: 'human', actorId: user.id },

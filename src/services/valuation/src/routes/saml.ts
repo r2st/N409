@@ -2,8 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { SAML, generateServiceProviderMetadata } from '@node-saml/node-saml';
 import { problems } from '@n409/shared';
-import { signSession, type JwtConfig } from '../auth/jwt.js';
-import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
+import { signMfaChallenge, signSession, type JwtConfig } from '../auth/jwt.js';
+import { DEVICE_COOKIE, setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
+import { isDeviceTrusted } from '../repos/mfa.js';
 import { getSamlConfig, type SamlConfigRow } from '../repos/ssoConfig.js';
 import { consumeSamlAssertion, type SamlAssertionRef } from '../repos/samlReplay.js';
 import { createProvisionedUser, findUserByEmail, type UserWithRoles } from '../repos/users.js';
@@ -381,6 +382,32 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
           'account_deactivated',
           problems.forbidden('This account is deactivated'),
         );
+      }
+
+      /*
+       * The second factor, on this door too (R354, M6).
+       *
+       * The same gap the Google callback had, reached from the other SSO flow.
+       * A user JIT-provisioned by an assertion has no password and so cannot
+       * enrol here at all (`routes/mfa.ts` refuses an account with no
+       * `password_digest`) — but an account that *was* created here with a
+       * password, enrolled TOTP, and whose address later arrives in an
+       * assertion is matched by `findUserByEmail` above and signed straight in.
+       * Its owner enrolled a factor on this platform, and while `require_mfa`
+       * is on they are not allowed to remove it; this door removed it for them.
+       *
+       * Challenged rather than refused, and exempt on a trusted device, exactly
+       * as the password door and the Google callback are. The hand-off is the
+       * fragment the SPA already reads back from this redirect.
+       */
+      if (user.totp_enabled) {
+        const deviceToken = req.cookies?.[DEVICE_COOKIE];
+        const trusted = deviceToken ? await isDeviceTrusted(deps.pool, user.id, deviceToken) : false;
+        if (!trusted) {
+          recordSsoOutcome('saml', 'mfa_challenged');
+          const challenge = await signMfaChallenge(user.id, deps.jwt);
+          return reply.redirect(`/auth/google/complete#mfa=${encodeURIComponent(challenge)}`, 302);
+        }
       }
 
       // The third sign-in door. Password and Google both wrote `user_login`

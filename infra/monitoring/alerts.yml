@@ -785,10 +785,18 @@ groups:
       # A ratio against `signed_in`, and sustained: one person with a personal
       # address hitting `domain_not_allowed` is Tuesday. Half an hour in which
       # most attempts are refused is a setting somebody changed.
+      #
+      # `mfa_challenged` is excluded from both halves, for the reason
+      # `SignInsFailing` excludes it from the password door's ratio: since R354
+      # an account that has enrolled a second factor here is answered by either
+      # SSO flow with a challenge rather than a session, and that is neither a
+      # sign-in nor a refusal. Counting it as a refusal would page on a firm
+      # that has mandated 2FA; counting it as a sign-in would let a wall of
+      # challenges hide a hand-off refusing everybody else.
       - alert: SsoRefusingSignIns
         expr: |
-          sum by (flow) (rate(sso_outcomes_total{outcome!="signed_in"}[30m]))
-            / sum by (flow) (rate(sso_outcomes_total[30m])) > 0.5
+          sum by (flow) (rate(sso_outcomes_total{outcome!~"signed_in|mfa_challenged"}[30m]))
+            / sum by (flow) (rate(sso_outcomes_total{outcome!="mfa_challenged"}[30m])) > 0.5
         for: 30m
         labels: { severity: page }
         annotations:

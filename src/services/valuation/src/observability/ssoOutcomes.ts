@@ -43,8 +43,18 @@ let outcomes: Counter | null = null;
 /** Which door. Derived from the route rather than passed, so it cannot drift. */
 export type SsoFlow = 'saml' | 'google';
 
-/** The refusal codes, plus the one outcome that is not a refusal. */
-export type SsoOutcome = SsoRefusalCode | 'signed_in';
+/**
+ * The refusal codes, plus the two outcomes that are not refusals.
+ *
+ * `mfa_challenged` is neither a sign-in nor a refusal, for the reason the
+ * password door's counter gives it the same treatment (`signInOutcomes.ts`):
+ * an account that has enrolled a second factor here is *answered* by the SSO
+ * hand-off with a challenge rather than a session, and counting those as
+ * refusals would make a firm that has mandated 2FA look like a firm whose IdP
+ * has stopped working. `SsoRefusingSignIns` excludes it from both halves of
+ * its ratio.
+ */
+export type SsoOutcome = SsoRefusalCode | 'signed_in' | 'mfa_challenged';
 
 export function registerSsoMetrics(registry: MetricsRegistry): void {
   outcomes = registry.counter(

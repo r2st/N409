@@ -4,7 +4,17 @@ import { useAuth } from '../lib/auth';
 import { Spinner } from '../components/ui';
 import { handOffAfterSignIn } from '../components/SignedInHandoff';
 
-/** Landing page for the Google OIDC redirect: /auth/google/complete#token=… */
+/**
+ * Landing page for an SSO hand-off: `/auth/google/complete#token=…`, and — for
+ * an account with 2FA enrolled here — `#mfa=<challenge>`.
+ *
+ * Both SSO doors used to answer a 2FA-enabled account with a session outright,
+ * skipping in full the factor its owner had enrolled and that `require_mfa`
+ * will not let them remove (R354). They now hand back a challenge, the same one
+ * `POST /auth/login` returns, and the second-factor screen that already knows
+ * how to redeem it lives on `LoginPage` — so this page carries the challenge
+ * there in router state rather than growing a second copy of that form.
+ */
 export function GoogleCompletePage() {
   const { adoptToken } = useAuth();
   const navigate = useNavigate();
@@ -14,7 +24,18 @@ export function GoogleCompletePage() {
   useEffect(() => {
     if (ran.current) return; // StrictMode double-invoke guard
     ran.current = true;
-    const token = new URLSearchParams(window.location.hash.slice(1)).get('token');
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const mfaChallenge = fragment.get('mfa');
+    if (mfaChallenge) {
+      // Out of the URL first, for the reason the token is: a challenge is a
+      // bearer credential for the second step and the address bar is not a
+      // private channel for one. `replace` so the browser Back button does not
+      // return to a fragment that has already been spent.
+      window.history.replaceState(null, '', '/auth/google/complete');
+      navigate('/login', { replace: true, state: { mfaChallenge } });
+      return;
+    }
+    const token = fragment.get('token');
     if (!token) {
       setFailed(true);
       return;
