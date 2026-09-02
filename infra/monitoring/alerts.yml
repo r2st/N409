@@ -830,7 +830,7 @@ groups:
         labels: { severity: ticket }
         annotations:
           summary: 'an integration is being refused for something this platform did ({{ $labels.outcome }})'
-          runbook: 'journalctl -u n409-valuation --grep=api-token for the token_id and partner_id; then un-archive the partner, restore the membership, or have the firm mint a key under a current user'
+          runbook: 'journalctl -u n409-valuation --grep=api-token for the apiTokenId and partnerId; then un-archive the partner, restore the membership, or have the firm mint a key under a current user'
 
   - name: n409-browser
     rules:

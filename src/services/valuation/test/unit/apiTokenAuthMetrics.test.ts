@@ -71,8 +71,10 @@ describe('the API token auth counter', () => {
     expect(fields).toMatchObject({
       source: 'api-token',
       outcome: 'partner_retired',
-      token_id: 'tok_1',
-      partner_id: 'ptr_1',
+      // The correlation mixin's spellings, so one filter for a firm's trouble
+      // finds this line beside every other line about it.
+      apiTokenId: 'tok_1',
+      partnerId: 'ptr_1',
     });
     expect(message).toContain('archived');
   });

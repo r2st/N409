@@ -133,8 +133,22 @@ export function refuseApiToken(
       // what the operator needs: `partner_retired` is remedied by un-archiving
       // one partner row, and there is no way to find out which one from a
       // counter.
-      token_id: token.tokenId,
-      partner_id: token.partnerId,
+      //
+      // The correlation mixin's own spellings (`logger.ts`), not a second pair.
+      // `partnerId` and `apiTokenId` are what every other line in this estate
+      // carries these two facts under, so a filter for one firm's trouble finds
+      // this line too — writing `partner_id` here would have hidden the refusal
+      // from the exact query somebody runs to find it, which is the failure
+      // this whole module exists against, one level down.
+      //
+      // Safe from the duplicate-key shape that note warns about: the mixin
+      // emits these only from a bound actor, `bindActor` runs after the
+      // credential resolves, and a refused request never reaches it. Even if it
+      // did, pino's mixin merge is `Object.assign(mixin, obj)` and the call's
+      // own object wins — the collision case is a *child logger binding*, which
+      // neither of these is.
+      apiTokenId: token.tokenId,
+      partnerId: token.partnerId,
     },
     REFUSAL_LOG[refusal],
   );
