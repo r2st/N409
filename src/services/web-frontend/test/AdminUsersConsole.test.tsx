@@ -128,6 +128,8 @@ function mockApi(
     invitations?: Invitation[];
     roles?: typeof ROLE_DEFS;
     partners?: Partner[];
+    /** What `POST /users/:id/restore` answers with — see the SCIM case below. */
+    restored?: AdminUser;
   } = {},
   opts: {
     writeStatus?: number;
@@ -175,6 +177,12 @@ function mockApi(
       }
       if (opts.invitationsStatus) return jsonResponse({ detail: 'No' }, opts.invitationsStatus);
       return jsonResponse({ invitations: state.invitations ?? [] });
+    }
+    if (method === 'POST' && path.endsWith('/restore')) {
+      if (opts.writeStatus) {
+        return jsonResponse({ status: opts.writeStatus, detail: 'Refused.' }, opts.writeStatus);
+      }
+      return jsonResponse(state.restored ? { user: state.restored } : { ok: true });
     }
     if (method === 'GET' && path.includes('/users?')) {
       if (opts.listStatus) return jsonResponse({ status: opts.listStatus, detail: 'No' }, opts.listStatus);
@@ -679,6 +687,26 @@ describe('AdminUsersPage — the console', () => {
     await screen.findByText('Edit ada@acme.com');
     expect(calls.some((c) => c.path.endsWith('/restore'))).toBe(true);
     expect(screen.getByRole('checkbox', { name: 'Client' })).toBeChecked();
+  });
+
+  it('seeds the restore editor with the roles the account actually kept', async () => {
+    // The console's own deactivation drops `user_roles`, which is why the
+    // editor above opens on `valuation_user`. A directory deprovision does not:
+    // `setUserActive` closes the account and leaves its roles alone, so an
+    // IdP-deprovisioned administrator is restored with everything they had.
+    // The box has to say so — an admin reading `valuation_user` about a `god`
+    // account either believes it and leaves it, or saves and silently strips
+    // roles the restore had kept.
+    const deprovisioned = row({ deleted_at: '2026-07-01T00:00:00Z', roles: ['admin'] });
+    mockApi({ users: [deprovisioned], restored: row({ roles: ['admin'] }) });
+    renderPage('/admin/users?deleted=1');
+
+    const tr = (await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement;
+    await userEvent.click(within(tr).getByRole('button', { name: 'Restore' }));
+
+    await screen.findByText('Edit ada@acme.com');
+    expect(screen.getByRole('checkbox', { name: 'Admin' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Client' })).not.toBeChecked();
   });
 
   it('reports a restore the server refused', async () => {

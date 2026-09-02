@@ -431,20 +431,31 @@ export function AdminUsersPage() {
 
   const restore = async (u: AdminUser) => {
     try {
-      await api(`/users/${u.id}/restore`, { method: 'POST' });
+      const res = await api<{ user: AdminUser | null }>(`/users/${u.id}/restore`, { method: 'POST' });
       load();
-      // Deactivation dropped their roles — take the admin straight to the
-      // editor so the account doesn't come back scoped to nothing.
+      // Take the admin straight to the editor so the account doesn't come back
+      // scoped to nothing — but seeded with the roles it actually has.
+      //
+      // `valuation_user` was hardcoded here on the strength of the console's
+      // own deactivation, which does drop `user_roles`. It is not the only door
+      // onto a closed account: a directory deprovision (`setUserActive`, the
+      // SCIM `active: false` and `DELETE /scim/v2/Users/:id`) closes the account
+      // without touching its roles, so an IdP-deprovisioned administrator comes
+      // back with everything they had — and this box said `valuation_user`
+      // about it. That is the one thing this editor must not get wrong: an
+      // admin reading it either believes the account is scoped to nothing and
+      // leaves it, or saves and silently strips roles the restore had kept.
+      const restored = res.user;
       setEditorError(null);
       setEditor({
         mode: 'edit',
         id: u.id,
-        email: u.email,
+        email: restored?.email ?? u.email,
         password: '',
-        first_name: u.first_name ?? '',
-        last_name: u.last_name ?? '',
-        partner_id: u.partner_id ?? '',
-        roles: new Set(['valuation_user']),
+        first_name: (restored ?? u).first_name ?? '',
+        last_name: (restored ?? u).last_name ?? '',
+        partner_id: (restored ?? u).partner_id ?? '',
+        roles: new Set(restored?.roles?.length ? restored.roles : ['valuation_user']),
         current_password: '',
       });
     } catch (err) {
