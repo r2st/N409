@@ -219,13 +219,31 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const query = DeleteQuery.safeParse(req.query ?? {});
     if (!query.success) throw invalidQuery(query.error);
     const holding = await organizationContents(deps.pool, id);
-    if (!query.data.detach && (holding.entities > 0 || holding.children > 0)) {
+    if (!query.data.detach && (holding.entities > 0 || holding.retiredEntities > 0 || holding.children > 0)) {
+      /*
+       * Retired members are named because they are detached (R388, M3). The
+       * gate used to read live members only, while the statement behind it
+       * rewrites every member the organization holds — so a roll-up of nothing
+       * but withdrawn work called itself empty and went on the first press, and
+       * a mixed one understated what it was about to touch. A retired
+       * engagement is restorable, and what comes back is a standalone with its
+       * membership and its inter-company link gone.
+       */
+      const held = [
+        `${holding.entities} ${holding.entities === 1 ? 'engagement' : 'engagements'}`,
+        ...(holding.retiredEntities > 0
+          ? [
+              `${holding.retiredEntities} retired ${
+                holding.retiredEntities === 1 ? 'engagement' : 'engagements'
+              }`,
+            ]
+          : []),
+        `${holding.children} sub-${holding.children === 1 ? 'organization' : 'organizations'}`,
+      ];
       throw problems.conflict(
-        `This organization still holds ${holding.entities} ${
-          holding.entities === 1 ? 'engagement' : 'engagements'
-        } and ${holding.children} sub-${holding.children === 1 ? 'organization' : 'organizations'}. ` +
-          'Deleting it returns every engagement to standalone and cannot be undone — repeat with ' +
-          '?detach=true to go ahead.',
+        `This organization still holds ${held.slice(0, -1).join(', ')} and ${held[held.length - 1]}. ` +
+          'Deleting it returns every engagement — retired ones included — to standalone and cannot be ' +
+          'undone; repeat with ?detach=true to go ahead.',
       );
     }
     const result = await deleteOrganization(deps.pool, id, actorOf(principal));

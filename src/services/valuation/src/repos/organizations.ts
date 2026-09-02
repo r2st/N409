@@ -205,23 +205,54 @@ async function wouldCycle(
   return rows.length > 0;
 }
 
-/** What a delete would take with it: live members and child organizations. */
+/**
+ * What a delete would take with it.
+ *
+ * THE COUNT AND THE STATEMENT IT DESCRIBES READ DIFFERENT POPULATIONS (R388,
+ * methodology M3). This counted live members only, and `deleteOrganization`'s
+ * detach has no `archived_at` predicate at all — it rewrites `organization_id`,
+ * `entity_type` and `parent_valuation_id` on every member the organization
+ * holds, retired ones included, and records a `portfolio_membership_changed`
+ * for each.
+ *
+ * So the refusal the route exists to raise — "deleting an empty container and
+ * dissolving a holding company are different requests and were the same one" —
+ * was measuring the wrong thing twice over. A roll-up holding nothing but
+ * retired engagements reported itself empty and deleted on the first press,
+ * with no `?detach=true` and no warning; one holding two live and five retired
+ * said "two engagements" and then rewrote seven. Retirement is not a delete —
+ * `restoreValuations` brings an engagement back — so what comes back is a
+ * standalone with its membership and its inter-company link gone, and the
+ * operator was told the container was empty.
+ *
+ * Counted apart rather than summed, because the two are different sentences to
+ * an operator: live members are work in flight, retired ones are a reason to
+ * think about what a restore will find.
+ */
 export interface OrganizationContents {
   /** Live (non-archived) valuations whose `organization_id` is this one. */
   entities: number;
+  /** Retired members. Detached by the same statement, and restorable after it. */
+  retiredEntities: number;
   /** Organizations whose `parent_org_id` is this one. */
   children: number;
 }
 
 export async function organizationContents(pool: pg.Pool, id: string): Promise<OrganizationContents> {
-  const { rows } = await pool.query<{ entities: string; children: string }>(
+  const { rows } = await pool.query<{ entities: string; retired: string; children: string }>(
     `SELECT (SELECT count(*) FROM valuations
               WHERE organization_id = $1 AND archived_at IS NULL) AS entities,
+            (SELECT count(*) FROM valuations
+              WHERE organization_id = $1 AND archived_at IS NOT NULL) AS retired,
             (SELECT count(*) FROM organizations WHERE parent_org_id = $1) AS children`,
     [id],
   );
   const row = rows[0];
-  return { entities: Number(row?.entities ?? 0), children: Number(row?.children ?? 0) };
+  return {
+    entities: Number(row?.entities ?? 0),
+    retiredEntities: Number(row?.retired ?? 0),
+    children: Number(row?.children ?? 0),
+  };
 }
 
 /** Outcome of a delete, so the caller can say what went with the container. */

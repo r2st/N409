@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { retireValuations } from '../../src/repos/valuationPurge.js';
 import { describeEvent } from '../../src/domain/auditTrail.js';
 
 const dbUp = await isDbAvailable();
@@ -620,6 +621,66 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
         headers: authHeader(owner.token),
       });
       expect(still.statusCode).toBe(200);
+    });
+
+    /**
+     * The gate counted live members; the statement rewrites every member
+     * (R388, methodology M3).
+     *
+     * `deleteOrganization`'s detach has no `archived_at` predicate — it returns
+     * every member to `standalone`, clears the inter-company link and records a
+     * `portfolio_membership_changed` for each, retired ones included. So a
+     * roll-up holding nothing but withdrawn work called itself empty and went
+     * on the first press. Retirement is reversible (`restoreValuations`), and
+     * what comes back is a standalone whose membership and parent link are
+     * gone.
+     */
+    it('refuses over members that are only retired, and says which they are', async () => {
+      const orgId = await group('Withdrawn Book Group');
+      const sub = await seedValuation(owner, 'Withdrawn Sub', 1_000_000);
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: sub.id, entity_type: 'subsidiary' },
+      });
+      await retireValuations(ctx.pool, [sub.id]);
+
+      const refused = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      });
+      expect(refused.statusCode).toBe(409);
+      // Named as retired rather than folded into the live count: the two are
+      // different sentences to whoever is deciding.
+      expect(refused.json().detail).toMatch(/0 engagements, 1 retired engagement/);
+      expect(refused.json().detail).toMatch(/retired ones included/);
+    });
+
+    it('detaches the retired member the acknowledgement warned about', async () => {
+      const orgId = await group('Withdrawn Book Dissolved');
+      const sub = await seedValuation(owner, 'Withdrawn Sub Two', 1_000_000);
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: sub.id, entity_type: 'subsidiary' },
+      });
+      await retireValuations(ctx.pool, [sub.id]);
+
+      const deleted = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${orgId}?detach=true`,
+        headers: authHeader(owner.token),
+      });
+      expect(deleted.statusCode).toBe(200);
+      expect(deleted.json().detached_entities).toEqual([sub.id]);
+      const { rows } = await ctx.pool.query<{ organization_id: string | null; entity_type: string }>(
+        'SELECT organization_id, entity_type FROM valuations WHERE id = $1',
+        [sub.id],
+      );
+      expect(rows[0]).toEqual({ organization_id: null, entity_type: 'standalone' });
     });
 
     it('deletes an empty organization without an acknowledgement', async () => {
