@@ -135,9 +135,27 @@ export async function findScenarioById(pool: pg.Pool, id: string): Promise<Scena
   return rows[0] ?? null;
 }
 
+/**
+ * Drop a saved scenario, and say so on the spine once.
+ *
+ * The route reaches this through `findScenarioById`, so it can only ever be
+ * called on a row that existed — but that read is on a different connection one
+ * statement earlier, and two DELETEs off one read is a double-clicked button.
+ * `deleteRound` and `deleteDocument` both ask the question and this did not, so
+ * a second press put a second `scenario_deleted` on an append-only trail for one
+ * deletion: the activity log shows a scenario removed twice, and the row it
+ * names is gone either way, so nothing downstream can reconcile the count.
+ *
+ * Losing the race writes nothing, which is `deleteDocument`'s reading: the
+ * caller asked for a state the row is already in, and its own outcome — a 204
+ * over a scenario that is not there — is unchanged.
+ */
 export async function deleteScenario(pool: pg.Pool, scenario: ScenarioRow, actor: EventActor): Promise<void> {
   await withTransaction(pool, async (client) => {
-    await client.query('DELETE FROM valuation_scenarios WHERE id = $1', [scenario.id]);
+    const { rowCount } = await client.query('DELETE FROM valuation_scenarios WHERE id = $1', [
+      scenario.id,
+    ]);
+    if ((rowCount ?? 0) === 0) return;
     await recordEvent(client, {
       valuationId: scenario.valuation_id,
       type: 'scenario_deleted',

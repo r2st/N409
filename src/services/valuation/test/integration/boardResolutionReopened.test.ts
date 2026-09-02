@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { listEvents } from '../../src/events/record.js';
+import { deleteBoardMember, findSignoffById } from '../../src/repos/boardApprovals.js';
 
 const dbUp = await isDbAvailable();
 
@@ -135,6 +136,24 @@ describe.skipIf(!dbUp)('board resolution reopened', () => {
     const reopened = await spine(valuationId, 'board_resolution_reopened');
     expect(reopened).toHaveLength(1);
     expect(reopened[0]!.payload).toMatchObject({ from: 'rejected' });
+  });
+
+  it('records the removal once when two deletes race off one read', async () => {
+    // The route loads the sign-off, then deletes it, and those are two
+    // statements on two connections — so a double-clicked button reaches the
+    // repo twice with the same row. `board_member_removed` is the one event on
+    // this spine that keeps a director's address, and a second copy of it
+    // describes a removal that happened once (round 356, methodology M3).
+    const { valuationId, memberId } = await newBoard('DoubleRemoveCo');
+    const signoff = await findSignoffById(ctx.pool, memberId);
+    expect(signoff).not.toBeNull();
+    const actor = { actorType: 'human' as const, actorId: ops.id };
+    await deleteBoardMember(ctx.pool, signoff!, actor);
+    await deleteBoardMember(ctx.pool, signoff!, actor);
+
+    const removals = await spine(valuationId, 'board_member_removed');
+    expect(removals).toHaveLength(1);
+    expect(removals[0]!.payload).toMatchObject({ signoff_id: memberId });
   });
 
   it('says nothing when the removal does not move the aggregate', async () => {

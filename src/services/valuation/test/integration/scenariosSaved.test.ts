@@ -6,6 +6,7 @@ import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
 import { MAX_SCENARIOS } from '../../src/routes/scenarios.js';
+import { deleteScenario, findScenarioById } from '../../src/repos/scenarios.js';
 
 const dbUp = await isDbAvailable();
 
@@ -268,6 +269,28 @@ describe.skipIf(!dbUp)('saved scenarios', () => {
       expect(scenarioId.statusCode).toBe(201);
       const res = await remove(scenarioId.json().scenario.id as string, client.token);
       expect(res.statusCode).toBe(403);
+    });
+
+    it('records the removal once when two deletes race off one read', async () => {
+      // The route loads the row, then deletes it, and those are two statements
+      // on two connections — so a double-clicked button reaches the repo twice
+      // with the same row. The DELETE is idempotent; the event beside it was
+      // not, and `scenario_deleted` is on an append-only trail the activity log
+      // reads (round 356, methodology M3).
+      const scenarioId = await saveOne();
+      const scenario = await findScenarioById(pool, scenarioId);
+      expect(scenario).not.toBeNull();
+      const actor = { actorType: 'human' as const, actorId: client.id };
+      await deleteScenario(pool, scenario!, actor);
+      await deleteScenario(pool, scenario!, actor);
+
+      const { rows } = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM valuation_events
+          WHERE valuation_id = $1 AND type = 'scenario_deleted'
+            AND payload->>'scenario_id' = $2`,
+        [valuationId, scenarioId],
+      );
+      expect(rows[0]!.n).toBe('1');
     });
 
     it('404s a scenario id that is malformed or belongs to another engagement', async () => {

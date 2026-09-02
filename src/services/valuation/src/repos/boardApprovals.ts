@@ -421,7 +421,18 @@ export async function deleteBoardMember(
   actor: EventActor,
 ): Promise<void> {
   await withTransaction(pool, async (client) => {
-    await client.query('DELETE FROM board_signoffs WHERE id = $1', [signoff.id]);
+    // Once per removal. The route reaches this through `findSignoffById`, a
+    // statement earlier and on another connection, so two DELETEs off one read
+    // is a double-clicked button — and the event below is the one place on this
+    // spine that keeps a director's address (`piiInventory.test.ts` declares it
+    // as such, because the row it names is deleted in the same transaction). A
+    // second press wrote a second copy of that address for a removal that
+    // happened once, and told the trail the board lost a member it no longer
+    // had. Same reading as `deleteDocument` and `deleteRound`: the loser writes
+    // nothing, including the status refresh below, which the winner has already
+    // done under the same row lock.
+    const { rowCount } = await client.query('DELETE FROM board_signoffs WHERE id = $1', [signoff.id]);
+    if ((rowCount ?? 0) === 0) return;
     await recordEvent(client, {
       valuationId: signoff.valuation_id,
       type: BOARD_EVENT_TYPES.memberRemoved,
