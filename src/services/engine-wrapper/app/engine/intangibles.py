@@ -124,8 +124,36 @@ def _rate(value, name: str) -> float:
 
 
 def _tax(value) -> float:
+    """A tax rate in either spelling, with the same ambiguity band as ``_rate``.
+
+    ``0.21`` and ``21`` are both plausible spellings of 21%, and this module has
+    accepted both for as long as it has existed. What it did not do is stop at
+    the band where the two spellings overlap: anything at or above 1.0 was
+    divided by 100, so ``tax_rate: 1`` — a rate of 100%, and the exact top of
+    the range the IP questionnaire declares for the field (``intakeKinds``'s
+    ``rate`` rule is ``{min: 0, max: 1}``) — was valued at **1%**.
+
+    Nothing downstream could catch it. The coerced figure is the one echoed
+    back under ``assumptions.tax_rate``, so the exhibit printed 0.01 as the rate
+    that was asked for; the after-tax royalty saving, the MEEM excess earnings
+    and the TAB step-up were all struck at a hundredth of the intended rate, and
+    the ``must be below 100%`` refusal that would have named the field was
+    unreachable for every value the coercion could reach it with.
+
+    ``_rate`` — written for the discount rate two functions up, and tested —
+    already settles what to do here: convert what is unambiguously a percentage,
+    and refuse the band where neither reading is credible rather than pick one.
+    A tax rate between 1 and 2 is not a rate under either spelling, so it is
+    refused by name; ``>= 2`` is a percentage and is converted as before; a
+    converted rate at or above 100% keeps its own refusal.
+    """
     out = _num(value, "tax_rate", minimum=0.0)
-    if out >= 1.0:
+    if 1.0 <= out < 2.0:
+        raise EngineInputError(
+            f"tax_rate looks neither like a decimal rate nor a percentage: {out:g} — "
+            "a tax rate is a fraction (0.21), or a percentage of at least 2 (21)"
+        )
+    if out >= 2.0:
         out = out / 100.0
     if out >= 1.0:
         raise EngineInputError("tax_rate must be below 100%")

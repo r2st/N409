@@ -509,3 +509,53 @@ def test_rfr_terminal_growth_of_exactly_minus_one_is_a_zero_tail():
     )
     assert out["pv_terminal"] == 0.0
     assert out["fair_value"] == pytest.approx(out["pv_explicit"])
+
+
+# ── the tax rate's two spellings ─────────────────────────────────────────────
+
+
+def test_rfr_percentage_style_tax_rate_normalized():
+    """21 and 0.21 are the same rate, as they already are for the discount rate."""
+    a = relief_from_royalty(
+        revenues=[100.0], royalty_rate=0.05, tax_rate=0.21, discount_rate=0.10
+    )
+    b = relief_from_royalty(
+        revenues=[100.0], royalty_rate=0.05, tax_rate=21, discount_rate=0.10
+    )
+    assert a["fair_value"] == pytest.approx(b["fair_value"])
+    assert b["assumptions"]["tax_rate"] == pytest.approx(0.21)
+
+
+def test_rfr_ambiguous_tax_rate_rejected():
+    """A rate of 1 is 100%, not 1%, and was silently valued as the latter.
+
+    `{min: 0, max: 1}` is the rule the IP questionnaire puts on this field, so
+    1 is the top of the range a caller is told to use — and the old coercion
+    divided it by 100 and reported the result as the rate it had been given.
+    """
+    with pytest.raises(EngineInputError, match="neither"):
+        relief_from_royalty(
+            revenues=[100.0], royalty_rate=0.05, tax_rate=1, discount_rate=0.10
+        )
+    with pytest.raises(EngineInputError, match="neither"):
+        meem(
+            revenues=[100.0],
+            ebit_margin=0.3,
+            contributory_charges_pct=0.05,
+            tax_rate=1.5,
+            discount_rate=0.15,
+        )
+    with pytest.raises(EngineInputError, match="neither"):
+        with_and_without(
+            cash_flows_with=[100.0],
+            cash_flows_without=[80.0],
+            tax_rate=1.0,
+            discount_rate=0.12,
+        )
+
+
+def test_tax_rate_at_or_above_100_percent_still_refused_by_name():
+    with pytest.raises(EngineInputError, match="below 100%"):
+        relief_from_royalty(
+            revenues=[100.0], royalty_rate=0.05, tax_rate=100, discount_rate=0.10
+        )
