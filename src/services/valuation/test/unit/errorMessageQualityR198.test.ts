@@ -200,6 +200,42 @@ describe('a refused API token says which of the four things happened', () => {
     expect(detail).toMatch(/restoring it brings this token back/i);
   });
 
+  /**
+   * The remedy has to name a screen that mints the *kind* of key that was
+   * refused.
+   *
+   * All four minting sentences named Settings → API tokens, which is `POST
+   * /me/tokens` — personal keys only. `orphaned` can fire on nothing but a
+   * partner key (`owner_in_partner` is trivially true when `partner_id` is
+   * null), so a firm's integration was told to replace its credential with one
+   * that has no authority over the firm; the partner API's 403 would then have
+   * sent the reader back to the same screen. The other three can be about
+   * either kind, and the sentence knew about one.
+   */
+  it('names the partner door on the refusal that can only be a partner key', () => {
+    const detail = API_TOKEN_REFUSAL_DETAIL.orphaned;
+    expect(detail).toMatch(/partner portal/i);
+    // The exact prior wording, so re-attaching "a replacement" to the personal
+    // screen fails here again.
+    expect(detail, 'Settings → API tokens mints personal keys').not.toMatch(/replacement[^.]{0,40}Settings/i);
+  });
+
+  it('names both doors on the refusals that can be either kind of key', () => {
+    for (const kind of ['unknown', 'revoked', 'no_owner'] as const) {
+      const detail = API_TOKEN_REFUSAL_DETAIL[kind];
+      expect(detail, `${kind} does not say where a personal key comes from`).toMatch(/Settings/);
+      expect(detail, `${kind} does not say where a partner key comes from`).toMatch(/partner portal/i);
+    }
+  });
+
+  it('leaves the retired-organization refusal telling nobody to mint anything', () => {
+    // The one partner-only refusal where minting is not the fix, and it says so
+    // — pinned here so the sweep above never "helpfully" adds a door to it.
+    const detail = API_TOKEN_REFUSAL_DETAIL.partner_retired;
+    expect(detail).toMatch(/minting a replacement will not help/i);
+    expect(detail).not.toMatch(/partner portal/i);
+  });
+
   it('stays vague only for the one case where nothing was proved', () => {
     // `unknown` is the presenter having produced no recognised secret. It is
     // the one answer that must not confirm anything about a real token.

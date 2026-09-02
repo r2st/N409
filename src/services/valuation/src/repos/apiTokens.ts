@@ -431,16 +431,27 @@ async function refusalFor(pool: pg.Pool, digest: string): Promise<RefusedApiToke
  * caller today and will not be the only one for long — the docs endpoint
  * describes these statuses too, and two hand-written copies of a message is how
  * they drift.
+ *
+ * Four of them named one screen, Settings → API tokens, and that screen is
+ * `POST /me/tokens` — it mints *personal* keys and nothing else. `orphaned` is
+ * the one where that is unambiguously the wrong door: it can only fire on a
+ * partner key (`owner_in_partner` is trivially true when `partner_id` is null),
+ * so the holder of a firm's integration credential was told to replace it with
+ * a credential that has no authority over the firm, and the partner API's own
+ * 403 would then have sent them back to the same screen. The other three can be
+ * about either kind of key and the sentence only knew about one, so all four
+ * now name both doors. `partner_retired` is left alone — it is also partner-only
+ * and it already says that minting anything is not the fix.
  */
 export const API_TOKEN_REFUSAL_DETAIL: Record<ApiTokenRefusal, string> = {
   unknown:
-    'That API token is not recognised. Check it was copied whole (tokens start `n409_pat_`) and that it belongs to this environment, or mint a new one from Settings → API tokens.',
+    'That API token is not recognised. Check it was copied whole (tokens start `n409_pat_`) and that it belongs to this environment, or mint a new one — Settings → API tokens for a personal key, the API tokens panel on the partner portal for a partner key.',
   revoked:
-    'That API token has been revoked and will not work again. Mint a replacement from Settings → API tokens and update your integration.',
+    'That API token has been revoked and will not work again. Mint a replacement — Settings → API tokens for a personal key, the API tokens panel on the partner portal for a partner key — and update your integration.',
   no_owner:
-    'The user account this API token was created under no longer exists, so the token has no authority to act with. Mint a replacement under a current user from Settings → API tokens.',
+    'The user account this API token was created under no longer exists, so the token has no authority to act with. Mint a replacement under a current user: Settings → API tokens for a personal key, the API tokens panel on the partner portal for a partner key.',
   orphaned:
-    'The user who created this API token is no longer a member of the organization the token acts for, so it has been refused rather than revoked. Mint a replacement under a current member from Settings → API tokens; if the change of membership was a mistake, restoring it brings this token back.',
+    'The user who created this API token is no longer a member of the organization the token acts for, so it has been refused rather than revoked. Mint a replacement from the API tokens panel on the partner portal, under someone still with the organization — Settings → API tokens mints personal keys, which carry no authority over that organization. If the change of membership was a mistake, restoring it brings this token back.',
   partner_retired:
     'The organization this API token acts for has been archived on this platform, so every key belonging to it is refused rather than revoked, and minting a replacement will not help. Ask your administrator to restore the organization — doing so brings this token back on its own.',
 };
