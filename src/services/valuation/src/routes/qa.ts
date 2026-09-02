@@ -107,7 +107,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      * block exists until it is built — the first from this very array, the
      * second from the rows on file.
      */
-    const [{ exhibits }, signatories] = await Promise.all([
+    const [{ exhibits, issues }, signatories] = await Promise.all([
       summaryFor(deps.pool, valuation, req.log),
       listSignatures(deps.pool, valuation.id),
     ]);
@@ -185,6 +185,53 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       detail: coherence.detail,
     });
     deterministic.status = worstStatus([deterministic.status, coherence.status]);
+
+    /*
+     * A schedule that failed to build, told to the one person who can do
+     * anything about it (R345, methodology M11).
+     *
+     * R344 gave that failure a reader after it had none: `buildExhibits`
+     * returns the sections it built and keeps no record of what it did not, so
+     * a schedule that threw was indistinguishable from one that never applied,
+     * and the deliverable shipped an appendix short with the render reporting
+     * success. The reader it got is `req.log`, which is right for the three
+     * render call sites — a render is a machine finishing a document and
+     * nobody is standing over it.
+     *
+     * This route is the fourth caller and it is not that. It exists to hand a
+     * reviewer everything wrong with this deliverable before it leaves, its own
+     * docstring says "one place says whether this valuation may go out, and a
+     * reviewer reads one list" — and it was building the exhibits, being told
+     * which of them failed, and putting that in a channel the reviewer does not
+     * read. The one failure that can happen here is a stored
+     * `required_return_table` that will not parse, whose remedy is a row in
+     * this firm's own params that somebody has to fix; the log line goes to an
+     * operator who does not know it is missing from anything.
+     *
+     * `warn`, not `fail`, matching the level R344 argued for the log line and
+     * for the same reason: the report is delivered and correct in everything it
+     * prints. What it is missing is an appendix, and whether that is worth
+     * holding publication for is the reviewer's call — which is the whole point
+     * of putting it in front of them.
+     *
+     * Not folded into `report_coherence`. That check grades the body against
+     * the schedules that exist, and it would find this one only if a chapter
+     * happened to point at the missing appendix. A schedule nothing points at
+     * fails just as completely and would stay invisible.
+     */
+    const scheduleStatus: QaStatus = issues.length > 0 ? 'warn' : 'pass';
+    deterministic.checks.push({
+      key: 'report_schedules',
+      label: 'Every applicable schedule was built',
+      status: scheduleStatus,
+      detail:
+        issues.length > 0
+          ? `${issues.length === 1 ? 'A schedule' : `${issues.length} schedules`} could not be built and ${issues.length === 1 ? 'is' : 'are'} missing from the deliverable: ${issues
+              .map((i) => `${i.schedule} (${i.reason})`)
+              .join('; ')}`
+          : 'No schedule failed to build.',
+    });
+    deterministic.status = worstStatus([deterministic.status, scheduleStatus]);
 
     let aiFindings: Record<string, unknown> | null = null;
     let aiModel: string | null = null;

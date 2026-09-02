@@ -372,6 +372,18 @@ async function historyFor(
 export type ReportIssueLog = { warn: (obj: object, msg: string) => void };
 
 /**
+ * A schedule that failed to build, as `ExhibitContext.onIssue` reports it.
+ *
+ * `schedule` is the identifier the exhibit index and the body's pointers use,
+ * so a reviewer reading this in a QA list is reading the same name the report
+ * would have used for it.
+ */
+export interface ScheduleIssue {
+  schedule: string;
+  reason: string;
+}
+
+/**
  * Executive summary for this valuation, from its latest successful engine run.
  * A report drafted before the engine has produced a value renders without one.
  */
@@ -396,6 +408,22 @@ export async function summaryFor(
    * domain/reportFigures.ts for why that is the right failure.
    */
   figures: ReportFigures;
+  /**
+   * The schedules that could not be built, for a caller that has a reader other
+   * than the journal (R345, methodology M11).
+   *
+   * R344 gave the failure a log line, which is the right channel for the three
+   * render call sites: a render is a machine finishing a document, and the
+   * person who has to fix the stored row is not standing over it. The QA route
+   * is the fourth caller and it is not that — it exists to hand a reviewer the
+   * list of everything wrong with this deliverable before it leaves, and it was
+   * building the exhibits, seeing the failure and putting it in a channel the
+   * reviewer does not read. So the issues come back as well as being logged.
+   *
+   * Empty for the overwhelmingly common case, which is every report whose
+   * schedules all built or did not apply.
+   */
+  issues: ScheduleIssue[];
 }> {
   /*
    * Every loader below reads a different table keyed on the same valuation, and
@@ -493,6 +521,9 @@ export async function summaryFor(
     figures_source: row.figures_source,
     figures_as_of: row.figures_as_of,
   }));
+  // Collected as well as logged. See the `issues` field on this function's
+  // return: the QA route is a caller with a reader the journal is not.
+  const issues: ScheduleIssue[] = [];
   const context = {
     currency: valuation.currency,
     companyName: valuation.company_name,
@@ -510,11 +541,13 @@ export async function summaryFor(
     // `error`: the report is rendered, delivered and correct in everything it
     // does print — what it is missing is an appendix, and the remedy is a
     // stored row somebody has to fix.
-    onIssue: ({ schedule, reason }: { schedule: string; reason: string }) =>
+    onIssue: (issue: ScheduleIssue) => {
+      issues.push(issue);
       log?.warn(
-        { valuationId: valuation.id, schedule, reason },
+        { valuationId: valuation.id, schedule: issue.schedule, reason: issue.reason },
         'a report schedule could not be built and was left out of the deliverable',
-      ),
+      );
+    },
   };
   return {
     summary: buildReportSummary(calculation, { ...context, history }) ?? undefined,
@@ -532,6 +565,9 @@ export async function summaryFor(
     ],
     valuationDate,
     figures: reportFigures(calculation, valuation.currency),
+    // The same array `onIssue` pushes into, so ordering inside this literal
+    // cannot matter — every builder above has run by the time a caller reads it.
+    issues,
   };
 }
 

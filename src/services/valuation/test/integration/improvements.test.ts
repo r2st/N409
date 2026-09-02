@@ -210,6 +210,81 @@ describe.skipIf(!dbUp)('improvements phase 1', () => {
       expect(review.status).toBe('warn');
     });
 
+    /**
+     * A schedule that could not be built, on the list the reviewer reads
+     * (R345, methodology M11).
+     *
+     * R344 gave that failure a reader after it had none — `buildExhibits`
+     * returns what it built and keeps no record of what it did not, so an
+     * appendix that threw was indistinguishable from one that never applied and
+     * the deliverable shipped short with the render reporting success. The
+     * reader it got was `req.log`, which is right for a render and wrong for
+     * this route: QA exists to hand a reviewer everything wrong with the
+     * document before it leaves, and it was building the exhibits, being told
+     * which had failed, and writing that to a channel the reviewer does not
+     * read.
+     *
+     * The stored ladder is written straight to the row on purpose. The params
+     * route refuses this shape at save time, which is exactly why the only way
+     * to reach the failure is a row that predates that validation or was
+     * written around it — the case `requiredReturnExhibit`'s catch exists for.
+     */
+    it('puts a schedule that failed to build on the review, not only in the log', async () => {
+      const id = await createValuation('BadLadderCo');
+      await runCalculation(id);
+      /*
+       * Both columns written with SQL, after the run.
+       *
+       * Appendix III is only applicable once a stage is concluded — without one
+       * the exhibit is absent as a *fact*, which is the case the second test
+       * below covers. And `low` above `high` is a band that cannot be read,
+       * which is what `requiredReturnRows` throws on. The params route refuses
+       * that shape at save time, which is precisely why the only row that can
+       * reach the catch is one written around it.
+       */
+      await pool.query(
+        `UPDATE valuation_params
+            SET development_stage = 1, required_return_table = $2
+          WHERE valuation_id = $1`,
+        [id, JSON.stringify([{ stage: 1, category: 'Seed', low: 0.9, high: 0.5 }])],
+      );
+
+      const qa = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/qa`,
+        headers: authHeader(ops.token),
+      });
+      expect(qa.statusCode).toBe(201);
+      const review = qa.json().review;
+      const check = review.checks.find((c: { key: string }) => c.key === 'report_schedules');
+      expect(check).toBeDefined();
+      expect(check.status).toBe('warn');
+      // Named by the identifier the exhibit index and the body's pointers use,
+      // so the reviewer is reading the same name the report would have used.
+      expect(check.detail).toContain('III');
+      expect(check.detail).toContain('required_return_table[0].low');
+      // A warning, not a block: the report is correct in everything it prints
+      // and whether to hold publication for a missing appendix is the
+      // reviewer's call.
+      expect(review.status).toBe('warn');
+    });
+
+    it('reports no schedule failure for a report whose schedules all built', async () => {
+      // The discriminator. Without it the case above passes for a check that
+      // warns on every review, which is the shape that trains people to ignore
+      // a list.
+      const id = await createValuation('GoodLadderCo');
+      await runCalculation(id);
+      const qa = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/qa`,
+        headers: authHeader(ops.token),
+      });
+      expect(qa.statusCode).toBe(201);
+      const check = qa.json().review.checks.find((c: { key: string }) => c.key === 'report_schedules');
+      expect(check.status).toBe('pass');
+    });
+
     it('blocks publish until a QA review exists, then allows it', async () => {
       const id = await createValuation('GateCo');
       await runCalculation(id);
@@ -281,10 +356,27 @@ describe.skipIf(!dbUp)('improvements phase 1', () => {
 
     it('deterministic checks fail an indefensible calculation', async () => {
       const id = await createValuation('BadMathCo');
-      await runCalculation(id, {
-        ...BASE_INPUTS,
-        income: { discount_rate: 0.02, terminal_growth: 0.05, free_cash_flows: [100_000] },
-      });
+      /*
+       * The stored run is edited rather than requested.
+       *
+       * This test asked the calculations route for a run with the discount rate
+       * below terminal growth, and `f31bfd2e` later taught that route to refuse
+       * exactly that pair — so the request has been answering 422 and the case
+       * has been red ever since, grading nothing (R345). The check itself is
+       * still live and still right: `discount_vs_growth` reads the *stored*
+       * inputs, and the rows it exists for are the ones that predate the route
+       * validation. That is what this now builds, which is also the only way
+       * the check is reachable at all.
+       */
+      await runCalculation(id);
+      await pool.query(
+        `UPDATE calculations
+            SET inputs = jsonb_set(
+                  jsonb_set(inputs, '{inputs,income,discount_rate}', '0.02'),
+                  '{inputs,income,terminal_growth}', '0.05')
+          WHERE valuation_id = $1`,
+        [id],
+      );
       const res = await app.inject({
         method: 'POST',
         url: `/api/v1/valuations/${id}/qa`,
