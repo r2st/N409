@@ -13,6 +13,11 @@ import {
   insertProjection,
   markProjectionApplied,
 } from '../../src/repos/projections.js';
+import {
+  findAppliedRollforwardRun,
+  insertRollforwardRun,
+  markRollforwardRunApplied,
+} from '../../src/repos/rollforwardRuns.js';
 import { createValuation, clearValuationCache } from '../../src/repos/valuations.js';
 import { createUser } from '../../src/repos/users.js';
 import { hashPassword } from '../../src/auth/password.js';
@@ -192,4 +197,114 @@ describe.skipIf(!dbUp)('the adopted run a report describes', () => {
     expect(current?.id).toBe(conservative.id);
     expect(current?.free_cash_flows).toEqual([100, 110, 120]);
   });
+  /**
+   * Going back to a run that was already adopted once (R388, M3).
+   *
+   * The R304 cases above each adopt a *fresh* row second, which is the only
+   * shape in which "keep the first adoption's timestamp" and "the run that
+   * counts is the one adopted last" agree. Add one more click — the analyst
+   * returns to the run they started on — and they do not: `markApplied`'s
+   * `WHERE applied_at IS NULL` made that call a no-op, so the override and
+   * `engine_inputs` moved back to the first run while its timestamp stayed
+   * behind the run it had just superseded. The lookup then names the run the
+   * calculation is not carrying, which is the state R304 exists to prevent.
+   */
+  it('follows the analyst back to an estimate adopted once already', async () => {
+    const valuationId = await newValuation('Sigma Round Trip Ltd');
+    const wide = await newEstimate(valuationId, 0.71);
+    const narrow = await newEstimate(valuationId, 0.64);
+
+    await markVolatilityEstimateApplied(pool, valuationId, wide.id, userId);
+    await tick();
+    await markVolatilityEstimateApplied(pool, valuationId, narrow.id, userId);
+    await tick();
+    // Thinks better of the narrow window and returns to the one they started
+    // on. `engine_inputs.volatility` is 0.71 again.
+    await markVolatilityEstimateApplied(pool, valuationId, wide.id, userId);
+
+    const current = await findCurrentVolatilityEstimate(pool, valuationId);
+    expect(current?.id).toBe(wide.id);
+    expect(current?.recommended).toBe(0.71);
+  });
+
+  it('follows the analyst back to a forecast adopted once already', async () => {
+    const valuationId = await newValuation('Forecast Round Trip Ltd');
+    const conservative = await newForecast(valuationId, [100, 110, 120]);
+    const aggressive = await newForecast(valuationId, [200, 260, 340]);
+
+    await markProjectionApplied(pool, valuationId, conservative.id, userId);
+    await tick();
+    await markProjectionApplied(pool, valuationId, aggressive.id, userId);
+    await tick();
+    await markProjectionApplied(pool, valuationId, conservative.id, userId);
+
+    const current = await findCurrentProjection(pool, valuationId);
+    expect(current?.id).toBe(conservative.id);
+    expect(current?.free_cash_flows).toEqual([100, 110, 120]);
+  });
+
+  /**
+   * The third member of the family. It has always ordered by adoption and
+   * filtered on it, so R304 left it alone — and it carried the same no-op,
+   * which is what makes this the round-trip case rather than the ordering one.
+   * Exhibit B-2 prints the run this returns.
+   */
+  it('follows the analyst back to a bridge adopted once already', async () => {
+    const priorId = await newValuation('Anchor Round Trip Ltd (prior)');
+    const valuationId = await newValuation('Anchor Round Trip Ltd');
+    const first = await newBridge(valuationId, priorId, 12_000_000);
+    const second = await newBridge(valuationId, priorId, 15_000_000);
+
+    await markRollforwardRunApplied(pool, valuationId, first.id, userId);
+    await tick();
+    await markRollforwardRunApplied(pool, valuationId, second.id, userId);
+    await tick();
+    await markRollforwardRunApplied(pool, valuationId, first.id, userId);
+
+    const current = await findAppliedRollforwardRun(pool, valuationId);
+    expect(current?.id).toBe(first.id);
+    expect(current?.rolled_equity_value).toBe(12_000_000);
+  });
+
+  /**
+   * The idempotence the old `WHERE` clause was there for. A double-clicked
+   * Adopt is two adoptions of the same run and no other run is in play, so the
+   * timestamp moving costs nothing — but the row must still come back adopted,
+   * and still be the one that counts.
+   */
+  it('is still idempotent when the same run is adopted twice running', async () => {
+    const valuationId = await newValuation('Double Click Ltd');
+    const only = await newEstimate(valuationId, 0.55);
+
+    const first = await markVolatilityEstimateApplied(pool, valuationId, only.id, userId);
+    await tick();
+    const second = await markVolatilityEstimateApplied(pool, valuationId, only.id, userId);
+
+    expect(first?.applied_at).not.toBeNull();
+    expect(second?.applied_at).not.toBeNull();
+    expect(second?.applied_by).toBe(userId);
+    const current = await findCurrentVolatilityEstimate(pool, valuationId);
+    expect(current?.id).toBe(only.id);
+  });
+
+  async function newBridge(valuationId: string, priorValuationId: string, rolled: number) {
+    return insertRollforwardRun(pool, {
+      valuationId,
+      priorValuationId,
+      priorCalculationId: null,
+      priorValuationNumber: 'V-1',
+      priorValuationDate: '2023-06-30',
+      newValuationDate: '2024-06-30',
+      yearsElapsed: 1,
+      priorEquityValue: 10_000_000,
+      rolledEquityValue: rolled,
+      annualAccretion: 0.2,
+      newRoundPostMoney: null,
+      calibrationSteps: [{ step: 'prior_equity_value', value: 10_000_000 }],
+      materialChanges: [],
+      requiresFullRevaluation: false,
+      prePopulatedInputs: {},
+      createdBy: userId,
+    });
+  }
 });

@@ -229,10 +229,25 @@ export async function insertRollforwardRun(
 /**
  * Record that this run's rolled value is the engagement's backsolve anchor.
  *
- * Idempotent by design — re-applying the same run keeps the first adoption's
- * timestamp, because that is when the anchor the calculation ran on was
- * chosen. `WHERE applied_at IS NULL` makes the second call a no-op rather than
- * a rewrite, and the row comes back either way.
+ * `applied_at` IS WHEN THIS RUN WAS LAST ADOPTED, NOT WHEN IT WAS FIRST
+ * (R388, M3). It used to be the first: `WHERE applied_at IS NULL` made a
+ * second adoption of the same run a no-op, on the reasoning that the first is
+ * when the anchor the calculation ran on was chosen.
+ *
+ * That reading and R304's ordering rule cannot both hold.
+ * `findAppliedRollforwardRun` answers "which run is the calculation carrying"
+ * by taking the newest `applied_at`, and adopting is a POST on any run of the
+ * history by id — so going back to a run already adopted once is an ordinary
+ * step, and it left
+ * the override, `engine_inputs` and the timestamp disagreeing: adopt A, adopt
+ * B, go back to A, and the calculation carries A while the lookup still named
+ * B. That is the superseded row R304 stopped the exhibits from describing,
+ * reachable again in one more click. Every adoption writes now, so the
+ * ordering follows the engagement.
+ *
+ * No adoption is lost by it — each one records its own `…_applied` admin event
+ * with its own timestamp and actor, which is where the history of the choice
+ * lives.
  */
 export async function markRollforwardRunApplied(
   pool: pg.Pool,
@@ -243,7 +258,7 @@ export async function markRollforwardRunApplied(
   await pool.query(
     `UPDATE rollforward_runs
         SET applied_at = now(), applied_by = $3
-      WHERE valuation_id = $1 AND id = $2 AND applied_at IS NULL`,
+      WHERE valuation_id = $1 AND id = $2`,
     [valuationId, id, appliedBy],
   );
   return findRollforwardRun(pool, valuationId, id);
