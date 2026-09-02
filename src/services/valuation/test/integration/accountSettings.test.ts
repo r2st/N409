@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Self-service account settings (profile, sessions, personal API tokens,
@@ -800,7 +800,7 @@ describe.skipIf(!dbUp)('system settings', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: authHeader(admin.token),
-        payload: {
+        payload: { current_password: SEEDED_PASSWORD,
           email: 'shortpw-admin@test.example.com',
           password: 'twelve-chars1',
           roles: ['valuation_user'],
@@ -831,7 +831,7 @@ describe.skipIf(!dbUp)('system settings', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: authHeader(admin.token),
-      payload: {
+      payload: { current_password: SEEDED_PASSWORD,
         email: 'nodigits-admin@test.example.com',
         password: 'abcdefghij',
         roles: ['valuation_user'],
@@ -844,7 +844,7 @@ describe.skipIf(!dbUp)('system settings', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: authHeader(admin.token),
-      payload: {
+      payload: { current_password: SEEDED_PASSWORD,
         email: 'nolettrs-admin@test.example.com',
         password: '1234567890',
         roles: ['valuation_user'],
@@ -858,7 +858,7 @@ describe.skipIf(!dbUp)('system settings', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: authHeader(admin.token),
-      payload: { email: 'goodpw-admin@test.example.com', password: 'abcdefghij1', roles: ['valuation_user'] },
+      payload: { current_password: SEEDED_PASSWORD, email: 'goodpw-admin@test.example.com', password: 'abcdefghij1', roles: ['valuation_user'] },
     });
     expect(ok.statusCode).toBe(201);
   });

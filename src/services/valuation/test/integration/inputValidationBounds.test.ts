@@ -114,7 +114,7 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: admins(),
-        payload: {
+        payload: { current_password: SEEDED_PASSWORD,
           email: overLongEmail,
           password: REGISTRABLE_PASSWORD,
           roles: ['valuation_user'],
@@ -128,7 +128,7 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: admins(),
-        payload: { email: overLongEmail, roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: overLongEmail, roles: ['valuation_user'] },
       });
       expect(res.statusCode).toBe(422);
     });
@@ -138,7 +138,7 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: admins(),
-        payload: {
+        payload: { current_password: SEEDED_PASSWORD,
           email: 'roles@corp.com',
           password: REGISTRABLE_PASSWORD,
           roles: Array.from({ length: 60_000 }, () => 'admin'),

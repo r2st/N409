@@ -53,6 +53,8 @@ const CREDENTIAL_ROUTES: Record<string, string> = {
   'POST /api/v1/partners/:partnerId/tokens': "a firm key, reading that firm's whole book",
   'POST /api/v1/admin/sso/scim-tokens': 'a SCIM bearer that creates and deactivates users',
   'PUT /api/v1/admin/sso/saml': 'the identity provider every future sign-in is delegated to',
+  'POST /api/v1/users': 'an account on any role, with a password the caller chooses',
+  'POST /api/v1/users/invite': 'a seven-day link that creates an account on any role',
 };
 
 /**
@@ -61,17 +63,62 @@ const CREDENTIAL_ROUTES: Record<string, string> = {
  * `createApiToken` and `createScimToken` return a secret; `upsertSamlConfig`
  * writes the row that decides who may assert an identity here. A route that
  * makes one of these calls is issuing a way in, whatever its URL looks like.
+ *
+ * `createUser` and `createInvitation` joined in R362, and their absence is what
+ * this list being hand-written costs. The three above are the calls that *look*
+ * like a mint — they return a secret or name an identity provider — and the
+ * two that create the account itself were audited by nobody, though they are
+ * the strongest grant of the six: an account with its own password, on any
+ * role including `god`, that neither `bumpSessionEpoch` nor a password change
+ * nor an API-key revocation nor the caller's own deactivation touches. The
+ * invitation is the same grant posted rather than created, redeemable for seven
+ * days by whoever holds the link at an address the caller chose.
  */
-const CREDENTIAL_WRITES = ['createApiToken', 'createScimToken', 'upsertSamlConfig'];
+const CREDENTIAL_WRITES = [
+  'createApiToken',
+  'createScimToken',
+  'upsertSamlConfig',
+  'createUser',
+  'createInvitation',
+];
 
 const routes = scanRoutes(ROUTES);
 const key = (r: { method: string; url: string }) => `${r.method} ${r.url}`;
 
+/**
+ * Only the doors an already-authenticated caller opens.
+ *
+ * `createUser` has three other callers and every one of them is correct
+ * without a prompt, because none of them is a signed-in session issuing a
+ * credential to somebody else: `POST /auth/register` is a stranger creating
+ * their own account, `POST /auth/accept-invite` redeems the link this file is
+ * about, and the SSO paths provision on an assertion an identity provider
+ * signed. What they have in common is the thing to test on — no
+ * `app.authenticate` — rather than a second hand-written list of exemptions,
+ * which would go stale in exactly the way `CREDENTIAL_WRITES` just did.
+ */
+const authenticated = (r: { body: string }) => r.body.includes('app.authenticate');
+
 describe('credential-issuing routes', () => {
-  it('names every route that writes a credential — no more, no less', () => {
-    const writing = routes.filter((r) => CREDENTIAL_WRITES.some((fn) => r.body.includes(`${fn}(`)));
+  it('names every authenticated route that writes a credential — no more, no less', () => {
+    const writing = routes
+      .filter(authenticated)
+      .filter((r) => CREDENTIAL_WRITES.some((fn) => r.body.includes(`${fn}(`)));
     expect(writing.length).toBeGreaterThan(0);
     expect([...new Set(writing.map(key))].sort()).toEqual(Object.keys(CREDENTIAL_ROUTES).sort());
+  });
+
+  /**
+   * The unauthenticated writers are a real set, and it is a short one. Pinned
+   * so that a *new* public route calling `createUser` — a second JIT
+   * provisioning path, an "accept invitation" variant — is a failure here
+   * rather than a silent exemption from the sweep above.
+   */
+  it('pins the public routes that create an account without a session', () => {
+    const writing = routes
+      .filter((r) => !authenticated(r))
+      .filter((r) => CREDENTIAL_WRITES.some((fn) => r.body.includes(`${fn}(`)));
+    expect([...new Set(writing.map(key))].sort()).toEqual(['POST /api/v1/auth/register']);
   });
 
   it.each(Object.entries(CREDENTIAL_ROUTES))('%s re-authenticates the caller', (k, issues) => {

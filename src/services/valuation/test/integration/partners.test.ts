@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, forceState, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -218,7 +218,7 @@ describe.skipIf(!dbUp)('partner management API', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: authHeader(admin.token),
-        payload: {
+        payload: { current_password: SEEDED_PASSWORD,
           email: 'scopeless@test.example.com',
           password: 'long-enough-password',
           roles: ['partner'],
@@ -232,7 +232,7 @@ describe.skipIf(!dbUp)('partner management API', () => {
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: authHeader(admin.token),
-        payload: { email: 'scopeless-invite@test.example.com', roles: ['member'] },
+        payload: { current_password: SEEDED_PASSWORD, email: 'scopeless-invite@test.example.com', roles: ['member'] },
       });
       expect(res.statusCode).toBe(422);
     });
@@ -250,7 +250,7 @@ describe.skipIf(!dbUp)('partner management API', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: authHeader(admin.token),
-        payload: {
+        payload: { current_password: SEEDED_PASSWORD,
           email: 'late-joiner@test.example.com',
           password: 'long-enough-password',
           roles: ['member'],

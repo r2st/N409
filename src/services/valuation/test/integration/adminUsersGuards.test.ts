@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -42,7 +42,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: auth(),
-      payload: { email: email(), password: 'correct-horse-battery-9', roles: ['valuation_user'], ...over },
+      payload: { current_password: SEEDED_PASSWORD, email: email(), password: 'correct-horse-battery-9', roles: ['valuation_user'], ...over },
     });
     expect(res.statusCode, res.body).toBe(201);
     return res.json().user as { id: string; email: string; roles: string[] };
@@ -136,7 +136,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
           method: 'POST',
           url: '/api/v1/users',
           headers: auth(),
-          payload: { email: email(), password: 'correct-horse-battery-9', roles: [role] },
+          payload: { current_password: SEEDED_PASSWORD, email: email(), password: 'correct-horse-battery-9', roles: [role] },
         });
         expect(created.statusCode, role).toBe(422);
         expect(created.json().detail).toMatch(/require a partner organisation/i);
@@ -145,7 +145,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
           method: 'POST',
           url: '/api/v1/users/invite',
           headers: auth(),
-          payload: { email: email(), roles: [role] },
+          payload: { current_password: SEEDED_PASSWORD, email: email(), roles: [role] },
         });
         expect(invited.statusCode, role).toBe(422);
       }
@@ -180,7 +180,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
           method: 'POST',
           url: '/api/v1/users',
           headers: auth(),
-          payload: {
+          payload: { current_password: SEEDED_PASSWORD,
             email: email(),
             password: 'correct-horse-battery-9',
             roles: ['partner'],
@@ -195,7 +195,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
           method: 'POST',
           url: '/api/v1/users/invite',
           headers: auth(),
-          payload: { email: email(), roles: ['partner'], partner_id: id },
+          payload: { current_password: SEEDED_PASSWORD, email: email(), roles: ['partner'], partner_id: id },
         });
         expect(invited.statusCode, `invite ${label}`).toBe(422);
       }
@@ -351,7 +351,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: auth(),
-        payload: { email: user.email, roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: user.email, roles: ['valuation_user'] },
       });
       expect(dup.statusCode).toBe(409);
       expect(dup.json().detail).toMatch(/already exists/i);
@@ -361,14 +361,14 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: auth(),
-        payload: { email: fresh, roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: fresh, roles: ['valuation_user'] },
       });
       expect(first.statusCode).toBe(201);
       const second = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: auth(),
-        payload: { email: fresh, roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: fresh, roles: ['valuation_user'] },
       });
       expect(second.statusCode).toBe(409);
       expect(second.json().detail).toMatch(/already pending/i);
@@ -394,7 +394,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: auth(),
-        payload: { email: email(), roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: email(), roles: ['valuation_user'] },
       });
       const invitationId = created.json().invitation.id as string;
 
@@ -429,7 +429,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: auth(),
-        payload: { email: 'not-an-email', roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: 'not-an-email', roles: ['valuation_user'] },
       });
       expect(res.statusCode).toBe(422);
     });
@@ -498,7 +498,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: auth(),
-        payload: { email: user.email, roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: user.email, roles: ['valuation_user'] },
       });
       expect(reinvite.statusCode).toBe(409);
       expect(reinvite.json().detail).toMatch(/closed account/i);
@@ -628,7 +628,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
           method: 'POST',
           url: '/api/v1/users',
           headers: auth(),
-          payload,
+          payload: { ...payload, current_password: SEEDED_PASSWORD },
         });
         expect(res.statusCode, JSON.stringify(payload)).toBe(422);
       }
@@ -642,7 +642,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: auth(),
-        payload: { email: a.email, password: 'correct-horse-battery-9', roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email: a.email, password: 'correct-horse-battery-9', roles: ['valuation_user'] },
       });
       expect(dup.statusCode).toBe(409);
 
@@ -704,5 +704,115 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
       });
       expect(res.statusCode, `${method} ${url}`).toBe(403);
     }
+  });
+
+  /**
+   * The two doors in this console that hand out a way in (R362, methodology M6).
+   *
+   * `credentialIssuingRoutes.test.ts` enumerated the routes that issue a
+   * credential from the repo calls that write one, and its list was the three
+   * that *look* like a mint — an API key, a SCIM bearer, the SAML row. Creating
+   * the account itself was in neither: `POST /api/v1/users` writes an account
+   * with any role and a password the caller types, and `POST /users/invite`
+   * posts the same grant to an address the caller chose, redeemable for seven
+   * days by whoever holds the link.
+   *
+   * That is the strongest of the six and the only one nothing revoked. A
+   * password change, `bumpSessionEpoch`, an API-key revocation, even the
+   * caller's own deactivation all leave the new account signed in — so a
+   * borrowed administrator session was one request from permanent access, and
+   * the two guards every other credential route carries were the ones missing.
+   */
+  describe('creating an account is a credential-level action', () => {
+    it('422s a create with no password, naming the field', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/users',
+        headers: auth(),
+        payload: { email: email(), password: 'correct-horse-battery-9', roles: ['valuation_user'] },
+      });
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json().errors?.[0]?.path).toEqual(['current_password']);
+    });
+
+    it('400s a create whose password is wrong', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/users',
+        headers: auth(),
+        payload: {
+          email: email(),
+          password: 'correct-horse-battery-9',
+          roles: ['valuation_user'],
+          current_password: `${SEEDED_PASSWORD}-wrong`,
+        },
+      });
+      expect(res.statusCode, res.body).toBe(400);
+    });
+
+    it('422s an invitation with no password, naming the field', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/users/invite',
+        headers: auth(),
+        payload: { email: email(), roles: ['valuation_user'] },
+      });
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json().errors?.[0]?.path).toEqual(['current_password']);
+    });
+
+    it('400s an invitation whose password is wrong', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/users/invite',
+        headers: auth(),
+        payload: {
+          email: email(),
+          roles: ['valuation_user'],
+          current_password: `${SEEDED_PASSWORD}-wrong`,
+        },
+      });
+      expect(res.statusCode, res.body).toBe(400);
+    });
+
+    /**
+     * No key creates its successor. The refusal is what makes revoking a leaked
+     * key the end of it: a key that can create an administrator account has
+     * arranged its own way back in before it is withdrawn, and that account is
+     * outside everything `DELETE /me/tokens/:id` reaches.
+     */
+    it('refuses both doors to a caller holding an API key', async () => {
+      const minted = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/me/tokens',
+        headers: auth(),
+        payload: { current_password: SEEDED_PASSWORD, name: 'console key' },
+      });
+      expect(minted.statusCode, minted.body).toBe(201);
+      const secret = minted.json().secret as string;
+
+      // The key is a working administrator credential — otherwise the two
+      // refusals below would prove nothing about the guard.
+      const readable = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/users',
+        headers: authHeader(secret),
+      });
+      expect(readable.statusCode, readable.body).toBe(200);
+
+      for (const [url, payload] of [
+        ['/api/v1/users', { email: email(), password: 'correct-horse-battery-9', roles: ['valuation_user'] }],
+        ['/api/v1/users/invite', { email: email(), roles: ['valuation_user'] }],
+      ] as const) {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url,
+          headers: authHeader(secret),
+          payload: { ...payload, current_password: SEEDED_PASSWORD },
+        });
+        expect(res.statusCode, `${url}: ${res.body}`).toBe(403);
+        expect(res.json().detail).toContain('admin console');
+      }
+    });
   });
 });

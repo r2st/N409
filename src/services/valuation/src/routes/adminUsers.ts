@@ -16,6 +16,7 @@ import { VALUATION_STATES } from '../domain/valuation.js';
 import { toCsv } from '../domain/csv.js';
 import { MAX_EXPORT_ROWS, sendExport, truncationOf } from './exports.js';
 import { hashPassword } from '../auth/password.js';
+import { verifyReauthPassword } from '../auth/reauth.js';
 import { PASSWORD_MIN_LENGTH, passwordPolicyError } from '../domain/passwordPolicy.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import {
@@ -102,6 +103,8 @@ const CreateBody = z.object({
   partner_id: ulidField().nullable().optional(),
   verified: z.boolean().optional(),
   roles: RoleSet.min(1),
+  /** The *caller's* own password — see REAUTH_PROMPT. Not the new account's. */
+  current_password: z.string().optional(),
 });
 
 const PatchBody = z
@@ -168,7 +171,48 @@ const InviteBody = z.object({
   email: EmailAddress,
   roles: RoleSet.min(1),
   partner_id: ulidField().nullable().optional(),
+  /** The caller's own password — see REAUTH_PROMPT. */
+  current_password: z.string().optional(),
 });
+
+/**
+ * The two doors in this file that hand out a way in, and the prompt in front of
+ * them.
+ *
+ * `credentialIssuingRoutes.test.ts` enumerates the routes that issue a
+ * credential and drives its own membership off the repo calls that write one —
+ * `createApiToken`, `createScimToken`, `upsertSamlConfig`. That list was the
+ * three things that *look* like a mint, and it missed the two that create the
+ * account itself:
+ *
+ *   * `POST /api/v1/users` — an account with any role, on a password the caller
+ *     types. Not a way back into the caller's own session: a separate account,
+ *     with its own credential, which nothing that ends the caller's access
+ *     touches. `bumpSessionEpoch`, a password change, an API-key revocation and
+ *     a deactivation all leave it signed in.
+ *   * `POST /api/v1/users/invite` — the same thing posted rather than created,
+ *     redeemable for seven days by whoever holds the link at an address the
+ *     caller chose. `revokeInvitationsFrom` retires the outstanding ones when
+ *     the *inviter* is deactivated, which is R-era offboarding and is the wrong
+ *     end of this: an attacker holding a borrowed session is not going to be
+ *     deactivated, because nobody knows they were ever there.
+ *
+ * Both roles lists accept `god`, so either door is one request from a permanent
+ * administrator account that outlives everything done on noticing the breach —
+ * which is the exact sentence `auth/reauth.ts` and `adminSso.ts` give for the
+ * prompts they already carry. The same two guards, for the same two reasons:
+ *
+ *   * *Re-authentication*, because on an already signed-in session the password
+ *     is the only thing still in the way of a session that is not the owner's.
+ *     Skipped when the account has no digest, as every other prompt skips it.
+ *   * *No key mints its successor*: an API token acting as a user administrator
+ *     could create the account that replaces it, so revoking the leaked key
+ *     would end nothing.
+ */
+const REAUTH_PROMPT = {
+  create: 'Your current password is required to create an account',
+  invite: 'Your current password is required to invite someone',
+} as const;
 
 function toInvitation(i: InvitationRow | InvitationListRow) {
   const listRow = i as InvitationListRow;
@@ -264,9 +308,23 @@ export function registerAdminUserRoutes(
 
   app.post('/api/v1/users/invite', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireUserAdmin(req);
+    // See REAUTH_PROMPT: an invitation is a way in, so it asks the two
+    // questions every other credential-issuing route on this platform asks.
+    if (req.apiToken)
+      throw problems.forbidden(
+        'An API token cannot invite a user — send the invitation from the admin console while signed in',
+      );
     const parsed = InviteBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid invitation', parsed.error);
     const { email, roles, partner_id } = parsed.data;
+    const self = await findUserById(deps.pool, principal.id);
+    if (!self) throw problems.unauthorized();
+    if (self.password_digest) {
+      if (!parsed.data.current_password)
+        throw problems.unprocessable(REAUTH_PROMPT.invite, { errors: [{ path: ['current_password'] }] });
+      if (!(await verifyReauthPassword(self.id, parsed.data.current_password, self.password_digest)))
+        throw problems.badRequest('Current password is incorrect');
+    }
     assertPartnerScopeConsistent(roles, partner_id ?? null);
     if (partner_id) await assertAssignablePartner(partner_id);
 
@@ -298,7 +356,6 @@ export function registerAdminUserRoutes(
     if (await hasPendingInvitation(deps.pool, email))
       throw problems.conflict('An invitation for this email is already pending');
 
-    const inviter = await findUserById(deps.pool, principal.id);
     // The check above is a reading, not a reservation: the partial unique index
     // is what actually holds the address, and two admins inviting it at once
     // both pass the check before either inserts. Catching the loser's collision
@@ -314,7 +371,7 @@ export function registerAdminUserRoutes(
         throw problems.conflict('An invitation for this email is already pending');
       throw err;
     });
-    await sendInviteEmail(req, invitation, secret, inviter?.email ?? 'An administrator');
+    await sendInviteEmail(req, invitation, secret, self.email);
     await audit(principal.id, 'user_invited', 'invitation', invitation.id, email, { roles });
     return reply.status(201).send({ invitation: toInvitation(invitation) });
   });
@@ -467,9 +524,24 @@ export function registerAdminUserRoutes(
 
   app.post('/api/v1/users', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireUserAdmin(req);
+    // See REAUTH_PROMPT. The account this creates has its own password and
+    // outlives everything that ends the caller's access, so the caller proves
+    // it is them first — and a key cannot mint the account that replaces it.
+    if (req.apiToken)
+      throw problems.forbidden(
+        'An API token cannot create an account — do it from the admin console while signed in',
+      );
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid user', parsed.error);
     const body = parsed.data;
+    const self = await findUserById(deps.pool, principal.id);
+    if (!self) throw problems.unauthorized();
+    if (self.password_digest) {
+      if (!body.current_password)
+        throw problems.unprocessable(REAUTH_PROMPT.create, { errors: [{ path: ['current_password'] }] });
+      if (!(await verifyReauthPassword(self.id, body.current_password, self.password_digest)))
+        throw problems.badRequest('Current password is incorrect');
+    }
     assertPartnerScopeConsistent(body.roles, body.partner_id ?? null);
     if (body.partner_id) await assertAssignablePartner(body.partner_id);
 

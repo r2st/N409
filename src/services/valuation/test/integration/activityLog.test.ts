@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Activity audit log viewer (P2 #12): admin console actions are evented into
@@ -95,7 +95,7 @@ describe.skipIf(!dbUp)('activity audit log', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: authHeader(admin.token),
-      payload: {
+      payload: { current_password: SEEDED_PASSWORD,
         email: 'audited.user@test.example.com',
         password: 'audited-password-1',
         roles: ['valuation_user'],

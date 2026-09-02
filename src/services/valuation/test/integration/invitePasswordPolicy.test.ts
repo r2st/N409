@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * The password policy has to hold on every route that sets a password.
@@ -61,7 +61,7 @@ describe.skipIf(!dbUp)('accept-invite enforces the password policy', () => {
       method: 'POST',
       url: '/api/v1/users/invite',
       headers: authHeader(admin.token),
-      payload: { email, roles: ['valuation_user'] },
+      payload: { current_password: SEEDED_PASSWORD, email, roles: ['valuation_user'] },
     });
     expect(created.statusCode).toBe(201);
     return { email, token: tokenFrom(await waitForOutbox(ctx, email)) };

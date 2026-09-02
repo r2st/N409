@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { DEAD_LINK_DETAIL } from '../../src/domain/linkRefusal.js';
 
 const dbUp = await isDbAvailable();
@@ -62,7 +62,7 @@ describe.skipIf(!dbUp)('invitations into a firm that is then archived', () => {
       method: 'POST',
       url: '/api/v1/users/invite',
       headers: authHeader(admin.token),
-      payload: { email, roles: ['partner'], partner_id: partnerId },
+      payload: { current_password: SEEDED_PASSWORD, email, roles: ['partner'], partner_id: partnerId },
     });
     expect(res.statusCode).toBe(201);
     const { rows } = await ctx.pool.query<{ body: string }>(
@@ -147,7 +147,7 @@ describe.skipIf(!dbUp)('invitations into a firm that is then archived', () => {
       method: 'POST',
       url: '/api/v1/users/invite',
       headers: authHeader(admin.token),
-      payload: { email, roles: ['reviewer'] },
+      payload: { current_password: SEEDED_PASSWORD, email, roles: ['reviewer'] },
     });
     expect(res.statusCode).toBe(201);
     const { rows } = await ctx.pool.query<{ body: string }>(

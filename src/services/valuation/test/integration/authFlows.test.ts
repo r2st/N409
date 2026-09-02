@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
 import type { GoogleOidc } from '../../src/auth/google.js';
 import { createProvisionedUser, createUser } from '../../src/repos/users.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -341,7 +341,7 @@ describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () =
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: authHeader(token),
-        payload,
+        payload: { ...payload, current_password: SEEDED_PASSWORD },
       });
 
     it('requires a user admin', async () => {

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { DEAD_LINK_DETAIL } from '../../src/domain/linkRefusal.js';
 
 const dbUp = await isDbAvailable();
@@ -51,7 +51,7 @@ describe.skipIf(!dbUp)('invitations issued by an account that is then deactivate
       method: 'POST',
       url: '/api/v1/users/invite',
       headers: authHeader(leaving.token),
-      payload: { email: invitee, roles: ['god'] },
+      payload: { current_password: SEEDED_PASSWORD, email: invitee, roles: ['god'] },
     });
     expect(invited.statusCode).toBe(201);
     const token = await tokenFor(invitee);
@@ -89,7 +89,7 @@ describe.skipIf(!dbUp)('invitations issued by an account that is then deactivate
       method: 'POST',
       url: '/api/v1/users/invite',
       headers: authHeader(root.token),
-      payload: { email: mine, roles: ['valuation_user'] },
+      payload: { current_password: SEEDED_PASSWORD, email: mine, roles: ['valuation_user'] },
     });
     const token = await tokenFor(mine);
 

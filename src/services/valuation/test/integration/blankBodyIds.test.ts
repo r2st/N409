@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 const actor = { actorType: 'engine' as const, actorId: 'test', source: 'test' };
@@ -160,7 +160,7 @@ describe.skipIf(!dbUp)('a blank id in a body is refused, not stored', () => {
       method: 'POST',
       url: '/api/v1/users',
       headers: authHeader(ops.token),
-      payload: {
+      payload: { current_password: SEEDED_PASSWORD,
         email: 'blank-partner@example.com',
         password: 'correct-horse-9-battery',
         roles: ['valuation_user'],
@@ -176,7 +176,7 @@ describe.skipIf(!dbUp)('a blank id in a body is refused, not stored', () => {
       method: 'POST',
       url: '/api/v1/users/invite',
       headers: authHeader(ops.token),
-      payload: { email: 'blank-partner-invite@example.com', roles: ['valuation_user'], partner_id: '' },
+      payload: { current_password: SEEDED_PASSWORD, email: 'blank-partner-invite@example.com', roles: ['valuation_user'], partner_id: '' },
     });
     expect(res.statusCode).toBe(422);
     expect(JSON.stringify(res.json())).toContain('partner_id');

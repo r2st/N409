@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
 import { upsertSamlConfig } from '../../src/repos/ssoConfig.js';
 import { totp } from '../../src/auth/totp.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -232,7 +232,7 @@ describe.skipIf(!dbUp)('auth refusals that depend on how the deployment is set u
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: authHeader(admin.token),
-        payload: { email, roles: ['valuation_user'] },
+        payload: { current_password: SEEDED_PASSWORD, email, roles: ['valuation_user'] },
       });
       expect(invited.statusCode, invited.body).toBe(201);
 

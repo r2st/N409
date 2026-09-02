@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, SEEDED_PASSWORD, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -42,7 +42,7 @@ describe.skipIf(!dbUp)('inviting an address whose account was closed', () => {
       method: 'POST',
       url: '/api/v1/users/invite',
       headers: auth(),
-      payload: { email, roles: ['valuation_user'] },
+      payload: { current_password: SEEDED_PASSWORD, email, roles: ['valuation_user'] },
     });
 
   it('refuses at the invite rather than at the acceptance', async () => {
