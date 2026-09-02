@@ -225,6 +225,15 @@ describe.skipIf(!dbUp)('feature 10 — valuation monitoring', () => {
     expect(res.json().valuation.state).toBe('pending');
   });
 
+  const disabledEvents = async (): Promise<number> => {
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'monitoring_disabled'`,
+      [valuationId],
+    );
+    return Number(rows[0]!.n);
+  };
+
   it('disables monitoring', async () => {
     const res = await app.inject({
       method: 'DELETE',
@@ -238,6 +247,31 @@ describe.skipIf(!dbUp)('feature 10 — valuation monitoring', () => {
       headers: authHeader(ops.token),
     });
     expect(after.json().monitor).toBeNull();
+  });
+
+  it('records the stop once however many times it is pressed', async () => {
+    // `findMonitor` is the route's whole existence check and returns the row
+    // whether the watch is on or off, so a second DELETE answered 204 and put
+    // another `monitoring_disabled` on the engagement's trail for a watch that had
+    // already stopped (round 356, methodology M3). The answer stays 204 — the
+    // caller asked for a state the monitor is already in.
+    const enable = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/monitor`,
+      headers: authHeader(ops.token),
+    });
+    expect(enable.statusCode).toBe(201);
+    const before = await disabledEvents();
+
+    for (const _ of [1, 2]) {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/valuations/${valuationId}/monitor`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(204);
+    }
+    expect((await disabledEvents()) - before).toBe(1);
   });
 
   it('is operations-only', async () => {

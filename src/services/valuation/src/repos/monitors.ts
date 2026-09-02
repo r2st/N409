@@ -48,11 +48,30 @@ export async function enableMonitor(
   });
 }
 
+/**
+ * Turn the watch off, and say so on the spine once.
+ *
+ * `enabled = true` in the predicate, and the event only when the row moved.
+ * `findMonitor` — which is the whole of the route's existence check — returns
+ * the row whether the watch is on or off, so `DELETE /monitor` on a monitor
+ * that was already disabled answered 204 and wrote another `monitoring_disabled`
+ * against the engagement. That is not even a race: it is a repeat of an
+ * ordinary request, and the trail then reports a watch stopped as many times as
+ * anybody pressed the control.
+ *
+ * The route still answers 204 either way, on `deleteDocument`'s reading: the
+ * caller asked for a state the monitor is already in. The enable door is
+ * deliberately not guarded the same way — re-enabling takes a fresh baseline
+ * and clears the dedupe rows, so it is a re-arming an operator asked for rather
+ * than a no-op.
+ */
 export async function disableMonitor(pool: pg.Pool, monitor: MonitorRow, actor: EventActor): Promise<void> {
   await withTransaction(pool, async (client) => {
-    await client.query('UPDATE valuation_monitors SET enabled = false, updated_at = now() WHERE id = $1', [
-      monitor.id,
-    ]);
+    const { rowCount } = await client.query(
+      'UPDATE valuation_monitors SET enabled = false, updated_at = now() WHERE id = $1 AND enabled = true',
+      [monitor.id],
+    );
+    if ((rowCount ?? 0) === 0) return;
     await recordEvent(client, {
       valuationId: monitor.valuation_id,
       type: MONITOR_EVENT_TYPES.disabled,
