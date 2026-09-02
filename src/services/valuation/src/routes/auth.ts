@@ -5,6 +5,7 @@ import { logFailure, logUnretried, problems } from '@n409/shared';
 import { randomBytes } from 'node:crypto';
 import { hashPassword, verifyPasswordOrDecoy } from '../auth/password.js';
 import { verifyReauthPassword } from '../auth/reauth.js';
+import { toPublicUser } from '../domain/publicUser.js';
 import {
   signMfaChallenge,
   signOidcState,
@@ -155,24 +156,6 @@ const REGISTER_PER_IP = 10;
 const REGISTER_PER_EMAIL = 3;
 /** Token-redeeming and mail-triggering routes: per-IP ceiling per hour. */
 const TOKEN_REDEEM_PER_IP = 20;
-
-function toPublicUser(u: UserWithRoles) {
-  return {
-    id: u.id,
-    email: u.email,
-    first_name: u.first_name,
-    last_name: u.last_name,
-    phone: u.phone,
-    job_title: u.job_title,
-    company_name: u.company_name,
-    timezone: u.timezone,
-    verified: u.verified,
-    sso_provider: u.sso_provider,
-    partner_id: u.partner_id,
-    roles: u.roles,
-    totp_enabled: u.totp_enabled,
-  };
-}
 
 export function registerAuthRoutes(
   app: FastifyInstance,

@@ -5,6 +5,7 @@ import { isUlid, logUnretried, problems } from '@n409/shared';
 import { signSession, type JwtConfig } from '../auth/jwt.js';
 import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { verifyReauthPassword } from '../auth/reauth.js';
+import { toPublicUser } from '../domain/publicUser.js';
 import { USER_ADMIN_ROLES } from '../domain/roles.js';
 import {
   bumpSessionEpoch,
@@ -88,23 +89,6 @@ function isKnownTimezone(tz: string | null): boolean {
   } catch {
     return false;
   }
-}
-
-function toPublicUser(u: UserWithRoles) {
-  return {
-    id: u.id,
-    email: u.email,
-    first_name: u.first_name,
-    last_name: u.last_name,
-    phone: u.phone,
-    job_title: u.job_title,
-    company_name: u.company_name,
-    timezone: u.timezone,
-    verified: u.verified,
-    sso_provider: u.sso_provider,
-    partner_id: u.partner_id,
-    roles: u.roles,
-  };
 }
 
 export function registerAccountRoutes(

@@ -33,6 +33,62 @@ describe.skipIf(!dbUp)('account settings', () => {
   // ── Profile ────────────────────────────────────────────────────────────────
 
   describe('profile', () => {
+    /**
+     * The client cannot infer this one (round 359, methodology M4).
+     *
+     * Five controls on the settings page ask "is there a password to confirm?"
+     * and asked it as `sso_provider !== 'google'`. `sso_provider` is only ever
+     * `'google'` or null, and migration 0082 allows a third account: SAML- or
+     * SCIM-provisioned, with neither. Those were shown password forms they
+     * could never submit, so the answer is stated here instead.
+     */
+    it('says whether the account has a password, which sso_provider cannot', async () => {
+      const passworded = await seedUser(ctx, { roles: ['valuation_user'] });
+      expect((await me(passworded.token)).json().user).toMatchObject({
+        sso_provider: null,
+        has_password: true,
+      });
+
+      const provisioned = await seedUser(ctx, { roles: ['valuation_user'] });
+      // What SCIM/SAML provisioning leaves behind: no digest, no sso_provider.
+      await ctx.pool.query(`UPDATE users SET password_digest = NULL, provisioned_by = 'scim' WHERE id = $1`, [
+        provisioned.id,
+      ]);
+      expect((await me(provisioned.token)).json().user).toMatchObject({
+        sso_provider: null,
+        has_password: false,
+      });
+    });
+
+    /**
+     * One projection, not two (round 359, methodology M4).
+     *
+     * `routes/auth.ts` and `routes/account.ts` each built the public user by
+     * hand, and the lists had drifted: `totp_enabled` was added to the sign-in
+     * copy when MFA shipped and never to `/me`, which is the bootstrap read —
+     * so a reloaded tab held an account object the sign-in response would not
+     * have recognised. Both now come from `domain/publicUser.ts`, and this
+     * compares the key sets rather than any one field, because the next field
+     * to be added to one and not the other is the point.
+     */
+    it('serves the same account shape from sign-in and from /me', async () => {
+      const password = SEED_PASSWORD;
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const login = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: user.email, password },
+      });
+      expect(login.statusCode, login.body).toBe(200);
+      const fromLogin = Object.keys(login.json().user as Record<string, unknown>).sort();
+      const fromMe = Object.keys((await me(user.token)).json().user as Record<string, unknown>).sort();
+      expect(fromMe).toEqual(fromLogin);
+      expect(fromMe).toContain('totp_enabled');
+      expect(fromMe).toContain('has_password');
+      // And the digest is in neither.
+      expect(fromMe).not.toContain('password_digest');
+    });
+
     it('returns the caller’s own profile', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });
       const res = await me(user.token);
