@@ -795,6 +795,28 @@ class TestWikipedia:
             with pytest.raises(SearchError, match="wikipedia refused: unspecified"):
                 search("q", client=stub(lambda r, b=body: httpx.Response(200, json=b)))
 
+    def test_a_refusal_code_is_bounded_and_defanged_before_it_is_repeated(self):
+        """The code is a remote party's bytes and the sentence carrying it is
+        shown to an analyst.
+
+        `research.py` wraps a `SearchError` as `search failed: {exc}`, the
+        service answers a 503 with it as the `detail`, and the valuation
+        service reads a non-opaque upstream `detail` as the upstream's own
+        sentence — writing it to `network_items.error` and drawing it. The five
+        arms beside this one already cut a provider's words at 200; this one
+        was added without the cut, and none of the six touched the controls.
+        """
+        body = {"error": {"code": "z" * 900, "info": "…"}}
+        with pytest.raises(SearchError) as caught:
+            search("q", client=stub(lambda r: httpx.Response(200, json=body)))
+        said = str(caught.value)
+        assert len(said) < 250
+        assert said.endswith("…")
+
+        body = {"error": {"code": "read\u202eonly\x07", "info": "…"}}
+        with pytest.raises(SearchError, match="wikipedia refused: readonly\\?"):
+            search("q", client=stub(lambda r: httpx.Response(200, json=body)))
+
     def test_a_non_object_error_key_is_not_a_refusal(self):
         """Every level of this body is publisher-controlled; only the documented
         shape may end a search."""

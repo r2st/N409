@@ -639,7 +639,7 @@ def _search_searxng(
         timeout=deadline.attempt_timeout(),
     )
     if resp.status_code != 200:
-        raise SearchError(f"searxng HTTP {resp.status_code}: {resp.text[:200]}")
+        raise SearchError(f"searxng HTTP {resp.status_code}: {_provider_words(resp.text)}")
     data = _json_object(resp, "searxng")
     return _hits_from(
         data.get("results"), url_key="url", title_key="title", snippet_key="content", limit=limit
@@ -677,7 +677,7 @@ def _search_brave(
         timeout=deadline.attempt_timeout(),
     )
     if resp.status_code != 200:
-        raise SearchError(f"brave HTTP {resp.status_code}: {resp.text[:200]}")
+        raise SearchError(f"brave HTTP {resp.status_code}: {_provider_words(resp.text)}")
     data = _json_object(resp, "brave")
     web = data.get("web")
     rows = web.get("results") if isinstance(web, dict) else None
@@ -708,7 +708,7 @@ def _search_serper(
         timeout=deadline.attempt_timeout(),
     )
     if resp.status_code != 200:
-        raise SearchError(f"serper HTTP {resp.status_code}: {resp.text[:200]}")
+        raise SearchError(f"serper HTTP {resp.status_code}: {_provider_words(resp.text)}")
     data = _json_object(resp, "serper")
     return _hits_from(
         data.get("organic"), url_key="link", title_key="title", snippet_key="snippet", limit=limit
@@ -747,7 +747,7 @@ def _search_tavily(
         timeout=deadline.attempt_timeout(),
     )
     if resp.status_code != 200:
-        raise SearchError(f"tavily HTTP {resp.status_code}: {resp.text[:200]}")
+        raise SearchError(f"tavily HTTP {resp.status_code}: {_provider_words(resp.text)}")
     data = _json_object(resp, "tavily")
     return _hits_from(
         data.get("results"), url_key="url", title_key="title", snippet_key="content", limit=limit
@@ -803,7 +803,7 @@ def _raise_mediawiki_error(body: dict) -> None:
     code = code.strip() if isinstance(code, str) and code.strip() else "unspecified"
     # `info` is MediaWiki's prose and can carry the query back; the code is the
     # part that names what went wrong and is safe to put in a log line.
-    raise SearchError(f"wikipedia refused: {code}")
+    raise SearchError(f"wikipedia refused: {_provider_words(code)}")
 
 
 def _search_wikipedia(
@@ -869,6 +869,53 @@ def _search_wikipedia(
         if len(hits) >= limit:
             break
     return hits
+
+
+# The bidirectional formatting controls: zero-width, and their whole effect is
+# on the order the characters beside them are drawn in. Dropped rather than
+# replaced, for the reason the engine tier's `display_text` states at length —
+# a substitution puts visible junk into legitimate Arabic or Hebrew text.
+_BIDI_CONTROLS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+# How much of a provider's own words a refusal repeats.
+#
+# Five arms already cut at 200 and the sixth had no bound at all — see
+# `_provider_words`.
+MAX_PROVIDER_WORDS = 200
+
+
+def _provider_words(raw: object, limit: int = MAX_PROVIDER_WORDS) -> str:
+    """A string that came off a provider, prepared for the sentence quoting it.
+
+    A `SearchError` is not an operator-only line. `research.py` wraps it as
+    `search failed: {exc}`, the AI service answers `/ai/v1/research` with it as
+    a 503 `detail`, and the valuation service reads a non-opaque upstream
+    `detail` as the upstream's own sentence — writing it to
+    `network_items.error` and drawing it to the analyst. So the bytes in it are
+    a remote party's and belong to nobody here.
+
+    Two halves, matching what the arms of this module already half-did. The cut
+    at 200: five arms had it (`resp.text[:200]`) and the MediaWiki arm added in
+    R382 had none, so an `error.code` was repeated at whatever length it
+    arrived. And the controls: none of the six touched them, and a C0 or a
+    U+202E in an error body is acted on or reordered by the terminal, the log
+    viewer and the SPA that end up printing it.
+
+    Deliberately not a redaction — `app/observability.redact` runs over the log
+    line and `errors._scrubbed` over the response body, and this is neither of
+    those jobs. It bounds and it de-fangs; what a credential in a provider's
+    error body costs is already answered elsewhere.
+    """
+    text = raw if isinstance(raw, str) else str(raw)
+    cleaned = "".join(
+        "?" if (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ord(ch) in (0x2028, 0x2029))
+        else ("" if ch in _BIDI_CONTROLS else ch)
+        for ch in text
+    )
+    cleaned = cleaned.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit] + "…"
 
 
 def _json_object(resp: httpx.Response, provider: str) -> dict:
