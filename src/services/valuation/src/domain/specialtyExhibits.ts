@@ -31,10 +31,42 @@ function list(value: unknown): unknown[] {
 
 const passFail = (passed: unknown): string => (passed === true ? 'Pass' : 'Fail');
 
-/** Humanize a snake_case key for a table cell. */
+/**
+ * Humanize a snake_case key for a table cell.
+ *
+ * Raw markup: the result is a cell, and every caller has to escape it. Four of
+ * them did not, and they were the four whose key came out of the stored result
+ * blob rather than out of a literal list — see `mapped` below, which is the
+ * spelling the rest of this module already used.
+ */
 function label(key: string): string {
   const words = key.replace(/_/g, ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * A label map consulted with a key read out of `calculations.result`, as an
+ * escaped cell.
+ *
+ * Two things the idiom this replaces — `esc(MAP[key] ?? label(key))` — got
+ * wrong about a key it did not write itself.
+ *
+ * A bare lookup consults `Object.prototype`, so `constructor`, `toString`,
+ * `valueOf` and `hasOwnProperty` never miss: `MAP['toString']` is a *function*,
+ * `??` does not reach the fallback, and `esc` throws `replace is not a
+ * function` — which is the whole report render, not one cell, for as long as
+ * the row is stored. Nothing can put such a key there today (the engine bounds
+ * every one of these vocabularies at its own door and echoes back the
+ * normalised value), and that is exactly the shape this estate has been bitten
+ * by before: the guarantee lives one tier away, in another language, and this
+ * side reads a `Record<string, unknown>` that TypeScript can say nothing about.
+ *
+ * The second is the escape. `label()` emits raw markup and the fallback arm is
+ * where an unrecognised key — the only arm a key from outside can reach — was
+ * printed.
+ */
+function mapped(map: Record<string, string>, key: string): string {
+  return esc(Object.hasOwn(map, key) ? map[key]! : label(key));
 }
 
 function money(value: unknown, ctx: ExhibitContext, digits = 0): string | null {
@@ -139,7 +171,7 @@ function qsbsExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
   if (!tests) return null;
   const rows = Object.entries(tests).map(([key, value]) => {
     const t = record(value) ?? {};
-    return [label(key), passFail(t.passed), esc(String(t.detail ?? ''))];
+    return [esc(label(key)), passFail(t.passed), esc(String(t.detail ?? ''))];
   });
   const holding = record(specialty.holding_period);
   const capParts = record(specialty.cap_components);
@@ -278,7 +310,7 @@ function ppaExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
               str(i.name),
               // `esc(String(i.method))` printed the engine's own dispatch key —
               // "relief_from_royalty" and "meem" reached the page as written.
-              method === null ? '—' : esc(IP_METHOD_LABELS[method] ?? label(method)),
+              method === null ? '—' : mapped(IP_METHOD_LABELS, method),
               ...(rateColumn ? [pct(record(i.assumptions)?.discount_rate) ?? '—'] : []),
               ...(tabColumns
                 ? [money(i.value_before_tab, ctx) ?? '—', tab === null ? '—' : esc(tab.toFixed(4))]
@@ -580,10 +612,10 @@ function smbExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
             ['Pre-tax income', money(normalization.pretax_income, ctx) ?? '—'],
             ...Object.entries(addbacks)
               .filter(([, v]) => (num(v) ?? 0) !== 0)
-              .map(([k, v]) => [`Add back: ${label(k)}`, money(v, ctx) ?? '—']),
+              .map(([k, v]) => [`Add back: ${esc(label(k))}`, money(v, ctx) ?? '—']),
             ...Object.entries(deductions)
               .filter(([, v]) => (num(v) ?? 0) !== 0)
-              .map(([k, v]) => [`Less: ${label(k)}`, money(v, ctx) ?? '—']),
+              .map(([k, v]) => [`Less: ${esc(label(k))}`, money(v, ctx) ?? '—']),
           ],
           foot: ["Seller's discretionary earnings", money(normalization.sde, ctx) ?? '—'],
         })
@@ -593,7 +625,7 @@ function smbExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
       rows: Object.entries(methods).map(([key, value]) => {
         const m = record(value) ?? {};
         return [
-          esc(SMB_METHOD_LABELS[key] ?? label(key)),
+          mapped(SMB_METHOD_LABELS, key),
           smbBasis(key, m, ctx),
           money(m.equity_value, ctx) ?? '—',
           pct(weights[key], 0) ?? '—',
@@ -677,11 +709,7 @@ function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext)
           head: [`${scheme === 'csop' ? 'Schedule 4' : 'Schedule 5'} check`, 'Result', 'Basis'],
           rows: Object.entries(checks).map(([key, value]) => {
             const c = record(value) ?? {};
-            return [
-              esc(SCHEME_CHECK_LABELS[key] ?? label(key)),
-              passFail(c.passed),
-              esc(String(c.detail ?? '')),
-            ];
+            return [mapped(SCHEME_CHECK_LABELS, key), passFail(c.passed), esc(String(c.detail ?? ''))];
           }),
         })
       : null,
@@ -975,7 +1003,7 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
     assumptionRows.length > 0 ? table({ head: ['Assumption', 'Rate'], rows: assumptionRows }) : null;
 
   return section('Exhibit — Intangible Asset Valuation', [
-    method === null ? null : P(`Method: <strong>${esc(IP_METHOD_LABELS[method] ?? label(method))}</strong>.`),
+    method === null ? null : P(`Method: <strong>${mapped(IP_METHOD_LABELS, method)}</strong>.`),
     assumptionTable,
     scheduleTable,
     scheduleTable2,
@@ -1099,7 +1127,7 @@ function fairValue820Exhibit(
           'realized_gains_losses',
           'unrealized_gains_losses',
         ]
-          .map((key) => [label(key), money(roll[key], ctx)])
+          .map((key) => [esc(label(key)), money(roll[key], ctx)])
           .filter((row): row is string[] => row[1] !== null),
         foot: ['Ending balance', money(byLevel.level_3, ctx) ?? '—'],
       }) +
@@ -1218,7 +1246,7 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
     transferType === null
       ? null
       : P(
-          `Transfer: <strong>${esc(TRANSFER_LABELS[transferType] ?? label(transferType))}</strong>` +
+          `Transfer: <strong>${mapped(TRANSFER_LABELS, transferType)}</strong>` +
             (transferDate === null
               ? '.'
               : ` on <strong>${esc(transferDate)}</strong>, the date the interest is valued at.`),
@@ -1344,7 +1372,7 @@ const IFRS2_TERMS: Record<string, string> = {
 /** One of IFRS 2's terms, or the humanized key for anything unfamiliar. */
 function term(value: unknown): string {
   const key = typeof value === 'string' ? value : null;
-  return key === null ? '—' : esc(IFRS2_TERMS[key] ?? label(key));
+  return key === null ? '—' : mapped(IFRS2_TERMS, key);
 }
 
 function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {

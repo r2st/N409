@@ -73,6 +73,28 @@ function label(key: string): string {
 }
 
 /**
+ * A label map consulted with a key read out of a stored jsonb blob, as an
+ * escaped cell. The reasoning is `specialtyExhibits.mapped`'s, and the two
+ * copies exist for the same reason `esc` is shared and `label` is not: one is
+ * a correctness boundary, the other is presentation.
+ */
+function mapped(map: Record<string, string>, key: string): string {
+  return esc(Object.hasOwn(map, key) ? map[key]! : label(key));
+}
+
+/**
+ * The instrument type as a noun, lower-cased into the middle of a sentence.
+ *
+ * `Object.hasOwn` for `mapped`'s reason: a bare lookup finds
+ * `Object.prototype`, and the `.toLowerCase()` here is on the *result*, so a
+ * type spelled `constructor` would call it on a function and take the whole
+ * exhibit down rather than print a strange word.
+ */
+function instrumentNoun(type: string): string {
+  return (Object.hasOwn(INSTRUMENT_LABELS, type) ? INSTRUMENT_LABELS[type]! : type).toLowerCase();
+}
+
+/**
  * `YYYY-MM-DD` from a `date` column, which node-postgres hands back as a JS
  * Date rather than the string the column holds. Both forms are accepted
  * because a caller assembling this data in memory passes a string; taking only
@@ -216,7 +238,7 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
     esc(label(p.securityType)),
     quantity(p.quantity),
     moneyCell(p.costBasis, ctx),
-    esc(MARK_METHOD_LABELS[p.method] ?? label(p.method)),
+    mapped(MARK_METHOD_LABELS, p.method),
     `Level ${p.level}`,
     // The date the figure beside it speaks for. An unmarked holding is carried
     // at cost and has no measurement date of its own to state.
@@ -437,7 +459,7 @@ function instrumentExhibit(data: DebtReportData, ctx: ExhibitContext): ReportPdf
   return section('Exhibit — Instrument Terms', [
     P(
       `The contractual terms of <strong>${esc(data.instrument.name)}</strong>, a ${esc(
-        (INSTRUMENT_LABELS[data.instrument.instrument_type] ?? data.instrument.instrument_type).toLowerCase(),
+        instrumentNoun(data.instrument.instrument_type),
       )}, as priced at the measurement date.`,
     ),
     table({ head: ['Term', 'Value'], rows }),
@@ -454,7 +476,7 @@ function creditExhibit(data: DebtReportData): ReportPdfSection | null {
 
   if (terms) {
     push('Credit rating', terms.rating ? esc(terms.rating) : null);
-    push('Seniority', esc(SENIORITY_LABELS[terms.seniority] ?? label(terms.seniority)));
+    push('Seniority', mapped(SENIORITY_LABELS, terms.seniority));
     push('Secured', terms.secured ? 'Yes' : 'No');
   }
   // The yield build-up as the engine reported it, which is the authority: a

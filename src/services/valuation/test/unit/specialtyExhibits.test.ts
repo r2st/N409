@@ -644,3 +644,87 @@ describe('buildSpecialtyExhibits', () => {
     expect(buildSpecialtyExhibits(null, ctx)).toEqual([]);
   });
 });
+
+/**
+ * A key the schedule did not write itself.
+ *
+ * These maps are read out of `calculations.result`, which this module types as
+ * `Record<string, unknown>` — every vocabulary in it is bounded by the engine,
+ * one tier and one language away, and TypeScript is told nothing about that.
+ * So the two questions a cell built from such a key has to answer are asked
+ * here rather than assumed: does the lookup reach `Object.prototype`, and is
+ * the fallback escaped.
+ */
+describe('a schedule key that names something every object already has', () => {
+  const PROTO_KEYS = ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'toLocaleString'];
+
+  it('does not resolve a §1202 test named after a prototype member', () => {
+    for (const key of PROTO_KEYS) {
+      const sections = buildSpecialtyExhibits(
+        calc('qsbs', { tests: { [key]: { passed: false, detail: 'x' } } }),
+        ctx,
+      );
+      const html = sections.map((s) => s.html).join('');
+      expect(html, key).not.toMatch(/native code/);
+      expect(html, key).toContain(key.charAt(0).toUpperCase() + key.slice(1));
+    }
+  });
+
+  it('does not resolve an SMB method named after a prototype member', () => {
+    for (const key of PROTO_KEYS) {
+      const sections = buildSpecialtyExhibits(
+        calc('fmv', { methods: { [key]: { equity_value: 1000 } }, weights: { [key]: 1 } }),
+        ctx,
+      );
+      const html = sections.map((s) => s.html).join('');
+      expect(html, key).not.toMatch(/native code|\[object /);
+    }
+  });
+
+  it('does not resolve a gift transfer type named after a prototype member', () => {
+    for (const key of PROTO_KEYS) {
+      const sections = buildSpecialtyExhibits(
+        calc('gifts', { transfer_type: key, concluded_value: 800, pro_rata_value: 1000 }),
+        ctx,
+      );
+      const html = sections.map((s) => s.html).join('');
+      // The exhibit rendered — otherwise the assertion below is vacuous.
+      expect(html, key).toContain('Transfer:');
+      expect(html, key).not.toMatch(/native code|\[object /);
+    }
+  });
+
+  /**
+   * The other half: the fallback arm is raw markup, and it is the arm an
+   * unrecognised key reaches.
+   */
+  it('escapes a key it does not recognise', () => {
+    const sections = buildSpecialtyExhibits(
+      calc('qsbs', { tests: { '<img src=x onerror=alert(1)>': { passed: true, detail: 'd' } } }),
+      ctx,
+    );
+    const html = sections.map((s) => s.html).join('');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  });
+
+  it('escapes an SDE normalization line item it does not recognise', () => {
+    const sections = buildSpecialtyExhibits(
+      calc('fmv', {
+        methods: { sde_multiple: { equity_value: 1000 } },
+        weights: { sde_multiple: 1 },
+        sde_normalization: {
+          pretax_income: 100,
+          addbacks: { '<b>owner</b>': 50 },
+          deductions: { '<i>wage</i>': 25 },
+          sde: 125,
+        },
+      }),
+      ctx,
+    );
+    const html = sections.map((s) => s.html).join('');
+    expect(html).not.toContain('<b>owner</b>');
+    expect(html).toContain('&lt;b&gt;owner&lt;/b&gt;');
+    expect(html).not.toContain('<i>wage</i>');
+  });
+});
