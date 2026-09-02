@@ -213,6 +213,16 @@ wait_for_build() {
 
 # Wait for readiness, which legitimately lags liveness: /ready probes upstreams,
 # so it can answer 503 for a while after the service itself is serving.
+#
+# `curl -sf` treats the 200 that a `degraded` body carries as a pass, which is
+# the intended reading (round 361): since then only the units a service cannot
+# serve without gate the status code, and the AI and engine units — which
+# `index.ts` refuses to require at boot for exactly this reason — are reported
+# rather than gating. A lapsed OPENROUTER_API_KEY used to end this deploy on
+# "/ready is not passing after the restart" with every page of the product
+# serving fine. The degraded state is still visible: `status` says the word and
+# `checks` names the unit, and `n409-ai` / `n409-engine` are scrape targets of
+# their own now, so `up` is what alerts on it.
 wait_for_ready() {
   local label="$1" base="$2" i
   if [[ "$VERIFY" -eq 0 ]]; then return 0; fi

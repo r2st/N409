@@ -88,9 +88,12 @@ export async function withTimeout<T>(
 
 /** One computed readiness run. `detail` is the operator view; never public. */
 interface ReadinessSnapshot {
+  /** False only when a *gating* check failed — see `optional` on the options. */
   healthy: boolean;
   /** name -> 'ok', or the scrubbed reason the check threw. */
   detail: Record<string, string>;
+  /** Optional checks that failed. Never affects `healthy`; always reported. */
+  degraded: string[];
 }
 
 /** The same snapshot with every failure flattened to `failed`. */
@@ -165,6 +168,30 @@ export function registerHealth(
     service: string;
     version?: string;
     checks?: Record<string, ReadinessCheck>;
+    /**
+     * Dependencies this service is designed to serve without.
+     *
+     * Run and reported exactly like {@link checks}, and deliberately excluded
+     * from the status code. A 503 from `/ready` is a claim — *this instance
+     * cannot serve the request and another one can* — and a load balancer acts
+     * on it by taking the instance out. Making that claim over a dependency the
+     * service has already decided is optional is a readiness check that
+     * manufactures the outage it is reporting: the valuation service's own boot
+     * gate refuses to require the AI and engine units precisely because
+     * "refusing to boot would convert a degraded feature into a total outage",
+     * and its `/ready` then required both anyway — so an expired provider key
+     * on :3002 answered the public origin with 503 and failed the deploy.
+     *
+     * The AI service already had this distinction internally: `_VERDICT_CHECKS`
+     * are reported, and exactly one of them, `_GATING_CHECK`, decides the code.
+     * This is the same split, one tier up.
+     *
+     * Not silent: a failing optional check is named in the body, is `failed` in
+     * the public form, moves `status` to `degraded`, and logs — and since R361
+     * the two Python units are scrape targets in their own right, so `up` is the
+     * direct signal an operator alerts on rather than this cascade.
+     */
+    optional?: Record<string, ReadinessCheck>;
     /** Set false when the service serves its own / (e.g. the web SPA). */
     rootRoute?: boolean;
     /** Coalescing window; 0 disables it. Defaults to {@link READY_CACHE_MS}. */
@@ -222,7 +249,10 @@ export function registerHealth(
    * a 500, which is not what "not ready" means to a load balancer.
    */
   const runChecks = async (log: HealthLogger): Promise<ReadinessSnapshot> => {
-    const entries = Object.entries(opts.checks ?? {});
+    const required = Object.entries(opts.checks ?? {});
+    const optional = Object.entries(opts.optional ?? {});
+    const entries = [...required, ...optional];
+    const gating = new Set(required.map(([name]) => name));
     // Checks are independent and mostly network-bound, so run them concurrently:
     // in series, /ready cost the sum of every upstream's timeout.
     const settled = await Promise.all(
@@ -243,13 +273,25 @@ export function registerHealth(
       }),
     );
     const detail = Object.fromEntries(settled) as Record<string, string>;
-    const healthy = settled.every(([, status]) => status === CHECK_OK);
-    if (!healthy) {
+    const failed = settled.filter(([, status]) => status !== CHECK_OK).map(([name]) => name);
+    const healthy = failed.every((name) => !gating.has(name));
+    const degraded = failed.filter((name) => !gating.has(name));
+    if (failed.length > 0) {
       // Logged here rather than per request, so a flood of probes against a
       // sick estate does not also flood the log: this runs once per fan-out.
-      log.warn({ service: opts.service, checks: detail }, 'readiness check failed — reporting unavailable');
+      //
+      // Two messages, because they are two different facts and only one of them
+      // is this instance saying it cannot serve. A degraded optional dependency
+      // that logged 'reporting unavailable' would be read as the outage it is
+      // explicitly not.
+      log.warn(
+        { service: opts.service, checks: detail, degraded },
+        healthy
+          ? 'optional dependency unavailable — still serving, the features that need it will not'
+          : 'readiness check failed — reporting unavailable',
+      );
     }
-    return { healthy, detail };
+    return { healthy, detail, degraded };
   };
 
   app.get('/ready', async (req, reply) => {
@@ -257,7 +299,12 @@ export function registerHealth(
       cacheMs > 0 ? await cache.getOrLoad('ready', () => runChecks(req.log)) : await runChecks(req.log);
     void reply.header('cache-control', 'no-store');
     return reply.status(snapshot.healthy ? 200 : 503).send({
-      status: snapshot.healthy ? 'ready' : 'unavailable',
+      // Three words for two status codes on purpose. `degraded` is a 200 — this
+      // instance can serve, and a load balancer must keep it — but it is not
+      // `ready`, and reporting it as such is how an optional dependency that has
+      // been down for a week goes unnoticed. The failing check is already named
+      // in `checks`; this is the summary a person reads first.
+      status: !snapshot.healthy ? 'unavailable' : snapshot.degraded.length > 0 ? 'degraded' : 'ready',
       checks: isInternalCaller(req) ? snapshot.detail : publicChecks(snapshot.detail),
       build_sha: build.sha,
     });

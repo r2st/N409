@@ -78,18 +78,52 @@ describe('web /ready', () => {
     await a.close();
   });
 
-  it('is unavailable when only one upstream is down', async () => {
-    // The common real case: the AI service loses its OpenRouter key. Web must
-    // not report ready while a whole class of request 502s.
+  it('stays serving, and says degraded, when only an optional upstream is down', async () => {
+    /*
+     * This reverses a decision, so the argument is here rather than in a commit
+     * message (round 361, methodology M11). The rule used to be "web must not
+     * report ready while a whole class of request 502s", and the common real
+     * case it named — the AI service losing its OpenRouter key — is exactly the
+     * one that shows why it is the wrong rule.
+     *
+     * This is the origin Caddy proxies every public path to, so a 503 here is
+     * the entire product reporting itself unavailable: no sign-in, no
+     * engagement list, no report download, no invoice paid. None of those need
+     * a model. The valuation tier's boot gate refuses to require the AI and
+     * engine units for precisely that reason and says so in as many words, and
+     * `/ready` required them anyway — the same mistake its own comment warns
+     * against for the report unit, "a readiness check that manufactures the
+     * outage it is reporting". `deploy.sh` ends on `/ready is not passing`,
+     * so a lapsed provider key also failed the deploy.
+     *
+     * Degraded is not hidden: the check names itself, `status` says the word,
+     * the fan-out logs it, and since R361 :3002 is a scrape target whose `up`
+     * is the signal an operator actually alerts on.
+     */
     const perHost = (async (url: string | URL | Request) =>
       String(url).includes(':3002')
         ? new Response('', { status: 503 })
         : new Response('{}', { status: 200 })) as unknown as typeof fetch;
     const a = app({ readinessFetch: perHost });
     const res = await a.inject({ method: 'GET', url: '/ready' });
-    expect(res.statusCode).toBe(503);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('degraded');
     expect(res.json().checks).toMatchObject({ postgres: 'ok', valuation: 'ok', engine: 'ok' });
     expect(res.json().checks.ai).toBe('failed');
+    await a.close();
+  });
+
+  it('is unavailable when the gating upstream is down, whatever the optional ones say', async () => {
+    // The other half of the same rule: `valuation` is the tier this one exists
+    // to front, and there is no page it can serve without it.
+    const perHost = (async (url: string | URL | Request) =>
+      String(url).includes(':3001')
+        ? new Response('', { status: 503 })
+        : new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const a = app({ readinessFetch: perHost });
+    const res = await a.inject({ method: 'GET', url: '/ready' });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().status).toBe('unavailable');
     await a.close();
   });
 

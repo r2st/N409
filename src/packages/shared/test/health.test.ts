@@ -290,3 +290,79 @@ describe('/ready coalescing', () => {
     await app.close();
   });
 });
+
+
+/**
+ * A dependency the service was designed to serve without (round 361, M11).
+ *
+ * A 503 from `/ready` is a claim — *this instance cannot serve the request and
+ * another one can* — and a consumer acts on it by taking the instance out. The
+ * valuation tier's boot gate had already decided the AI and engine units are
+ * not that, refusing to require either because "refusing to boot would convert
+ * a degraded feature into a total outage", and `/ready` on both the valuation
+ * and web tiers required them anyway. The web tier is the origin Caddy proxies
+ * every public path to, so an AI unit answering 503 over a lapsed provider key
+ * answered the internet with `unavailable`.
+ *
+ * The split has to be *reported* rather than merely ignored, which is the whole
+ * of what these assert: the check is still run, still named, still `failed` in
+ * the public form, and the summary word moves to `degraded` so a green probe
+ * cannot be mistaken for a whole estate.
+ */
+describe('optional readiness checks', () => {
+  const app = (checks: Record<string, () => Promise<void>>, optional: Record<string, () => Promise<void>>) => {
+    const instance = Fastify({ logger: false });
+    registerHealth(instance, { service: 'test', checks, optional, readyCacheMs: 0 });
+    return instance;
+  };
+  const ok = async () => {};
+  const fails = async () => {
+    throw new Error('nope');
+  };
+
+  it('stays 200 and says degraded when only an optional check fails', async () => {
+    const a = app({ postgres: ok }, { ai: fails });
+    const res = await a.inject({ method: 'GET', url: '/ready' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('degraded');
+    // Named, not hidden: the point of not gating is not to stop reporting.
+    expect(res.json().checks).toMatchObject({ postgres: 'ok', ai: 'failed' });
+    await a.close();
+  });
+
+  it('is 503 when a gating check fails, whatever the optional ones say', async () => {
+    const a = app({ postgres: fails }, { ai: ok });
+    const res = await a.inject({ method: 'GET', url: '/ready' });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().status).toBe('unavailable');
+    await a.close();
+  });
+
+  it('says ready only when nothing at all failed', async () => {
+    const a = app({ postgres: ok }, { ai: ok });
+    const res = await a.inject({ method: 'GET', url: '/ready' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('ready');
+    await a.close();
+  });
+
+  it('logs a degraded fan-out without calling it unavailable', async () => {
+    const warn = vi.fn();
+    const instance = Fastify({ logger: false });
+    registerHealth(instance, { service: 'test', checks: { postgres: ok }, optional: { ai: fails }, readyCacheMs: 0 });
+    instance.addHook('onRequest', (req, _reply, done) => {
+      (req as unknown as { log: unknown }).log = { warn, error: warn, info: warn, debug: warn };
+      done();
+    });
+    await instance.inject({ method: 'GET', url: '/ready' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [context, message] = warn.mock.calls[0]!;
+    // The discriminating half: *this service* is not the thing reporting
+    // unavailable, and a line that said so would be read as the outage the
+    // split exists to avoid declaring.
+    expect(message).not.toContain('reporting unavailable');
+    expect(message).toContain('still serving');
+    expect((context as { degraded: string[] }).degraded).toEqual(['ai']);
+    await instance.close();
+  });
+});

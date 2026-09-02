@@ -321,15 +321,31 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
       });
     });
 
-    it('is not ready when a downstream service is not ready', async () => {
-      // A valuation cannot be calculated without the engine and no pipeline runs
-      // without the AI service, so `SELECT 1` alone reported ready while every
-      // calculation route was 502-ing.
+    it('reports degraded — not unavailable — when the optional units are down', async () => {
+      /*
+       * This reverses a decision (round 361, methodology M11). The rule was "a
+       * valuation cannot be calculated without the engine and no pipeline runs
+       * without the AI service", which is true and is not what a 503 from
+       * `/ready` claims. It claims *this instance cannot serve the request and
+       * another one can*, and a consumer acts on it by taking the instance out.
+       *
+       * `index.ts` already decided these two are not that: it refuses to boot
+       * without Postgres and deliberately not without these, because "refusing
+       * to boot would convert a degraded feature into a total outage". Gating
+       * `/ready` on them made the same conversion one step later and with more
+       * reach — the web tier probes this one, and that is the origin Caddy
+       * proxies every public path to, so an AI unit answering 503 over a lapsed
+       * `OPENROUTER_API_KEY` answered the internet with `unavailable` and ended
+       * `deploy.sh` on "/ready is not passing after the restart".
+       *
+       * Reported, not removed: both are still probed, still named, still
+       * `failed` in the public body, and the summary word is `degraded`.
+       */
       const down = await setupTestApp({}, { readinessFetch: stubReadinessFetch(503) });
       try {
         const ready = await down.app.inject({ method: 'GET', url: '/ready' });
-        expect(ready.statusCode).toBe(503);
-        expect(ready.json().status).toBe('unavailable');
+        expect(ready.statusCode).toBe(200);
+        expect(ready.json().status).toBe('degraded');
         expect(ready.json().checks.postgres).toBe('ok');
         // Which check failed, not why: the reason names the upstream's address
         // and this body is served unauthenticated (see @n409/shared health.ts).
@@ -340,14 +356,17 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
       }
     });
 
-    it('is not ready when a downstream service is unreachable', async () => {
+    it('still withholds the reason when an optional unit is unreachable', async () => {
+      // The disclosure property is independent of the status code: `failed`
+      // rather than the `ECONNREFUSED` that names the upstream's address.
       const unreachable = (async () => {
         throw new Error('connect ECONNREFUSED');
       }) as typeof fetch;
       const down = await setupTestApp({}, { readinessFetch: unreachable });
       try {
         const ready = await down.app.inject({ method: 'GET', url: '/ready' });
-        expect(ready.statusCode).toBe(503);
+        expect(ready.statusCode).toBe(200);
+        expect(ready.json().status).toBe('degraded');
         expect(ready.json().checks.ai).toBe('failed');
         expect(ready.payload).not.toContain('ECONNREFUSED');
       } finally {

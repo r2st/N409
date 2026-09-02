@@ -518,6 +518,25 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
       },
       // Named for what a failure means to a visitor, not for the hostname.
       valuation: () => probeReady('valuation', valuationUrl, { fetchFn: opts.readinessFetch }),
+    },
+    /*
+     * The two that must not take the public origin down with them (round 361,
+     * methodology M11).
+     *
+     * This is the origin Caddy proxies every public path to, so a 503 here is
+     * the whole product reporting itself unavailable. The AI service answers
+     * 503 from its own `/ready` whenever `OPENROUTER_API_KEY` fails to verify —
+     * an expired key, an exhausted free-tier quota, a provider outage — and
+     * none of those stop a visitor signing in, opening an engagement, reading a
+     * report or paying an invoice. The valuation tier's boot gate says so in as
+     * many words and refuses to require either unit; its `/ready` required both
+     * anyway, and so did this one, so one lapsed provider key answered the
+     * internet with `unavailable` and failed the deploy on top.
+     *
+     * Still probed and still reported: a failing entry is named in the body,
+     * reads `failed` in the public form and moves `status` to `degraded`.
+     */
+    optional: {
       ai: () => probeReady('ai', aiUrl, { fetchFn: opts.readinessFetch }),
       engine: () => probeReady('engine', engineUrl, { fetchFn: opts.readinessFetch }),
     },

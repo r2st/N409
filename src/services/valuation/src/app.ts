@@ -561,8 +561,6 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       postgres: async () => {
         await pool.query('SELECT 1');
       },
-      ai: () => probeReady('ai', config.AI_URL, { fetchFn: deps.readinessFetch }),
-      engine: () => probeReady('engine', config.ENGINE_URL, { fetchFn: deps.readinessFetch }),
       // The 409A PDF is rendered on the report unit when `REPORT_URL` is set,
       // and in this process whenever that hop fails — so the font assets are
       // still this service's dependency, checked here for the same reason the
@@ -570,14 +568,43 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       // misses the deliverable.
       //
       // Note what is deliberately *not* here: a probe of the report service.
-      // Every other internal dependency in this list is one this service cannot
-      // do without, which is what makes an unready upstream worth refusing
-      // traffic over. The report unit is not: `clients/reportRender.ts` falls
-      // back to rendering here, so a report unit that is down costs latency and
-      // nothing else. Probing it would take a service that is merely slower out
-      // of the load balancer entirely — a readiness check that manufactures the
-      // outage it is reporting.
+      // Every gating dependency in this list is one this service cannot do
+      // without, which is what makes an unready upstream worth refusing traffic
+      // over. The report unit is not: `clients/reportRender.ts` falls back to
+      // rendering here, so a report unit that is down costs latency and nothing
+      // else. Probing it would take a service that is merely slower out of the
+      // load balancer entirely — a readiness check that manufactures the outage
+      // it is reporting.
       fonts: async () => verifyFontAssets(),
+    },
+    /*
+     * The two this service was already designed to serve without (round 361,
+     * methodology M11).
+     *
+     * `index.ts` refuses to boot without Postgres and deliberately does not
+     * refuse without these two: "With either down this service still lists
+     * valuations, renders reports, takes payments and serves every page that
+     * never needed a model — refusing to boot would convert a degraded feature
+     * into a total outage, which is the exact failure this round is against."
+     *
+     * They then gated `/ready`, which makes exactly that conversion one step
+     * later and with more reach. The AI service returns 503 from its own
+     * `/ready` whenever `OPENROUTER_API_KEY` fails to verify — an expired key,
+     * an exhausted free-tier quota, a provider outage — and that 503 became
+     * this service's 503, and then the web tier's, which is the origin Caddy
+     * proxies every public path to. It also fails the deploy: `deploy.sh`
+     * ends on `/ready is not passing after the restart`.
+     *
+     * So the argument written three lines up for not probing the report unit
+     * applied to these two the whole time, and they were the ones probed.
+     * Reported rather than removed — a failing entry names itself in the body,
+     * reads `failed` in the public form, moves `status` to `degraded` and logs
+     * — and since R361 both units are scrape targets of their own, so `up` is
+     * the direct signal rather than this cascade.
+     */
+    optional: {
+      ai: () => probeReady('ai', config.AI_URL, { fetchFn: deps.readinessFetch }),
+      engine: () => probeReady('engine', config.ENGINE_URL, { fetchFn: deps.readinessFetch }),
     },
   });
   // Runtime-editable system settings (registration switch, maintenance mode,
