@@ -8090,3 +8090,97 @@
 #            and to `qa.ts`, neither of which reads it — R322's open item, a
 #            twentieth of the bytes `results` costs and a third column list to
 #            keep in step.
+#
+# R352 — Silent failure detection (M5). Five findings, no migration, 17 new
+#            tests, and two of the five were found by a census that could not
+#            see its own second spelling. The lens that produced four of them is
+#            the level contract in `shared/failure.ts`: `warn` promises a retry.
+#            Ask of every contained catch *who comes back for this*, and the
+#            answer is written on the wrong line in more places than a grep for
+#            `catch` will show, because the containment is almost always right.
+#
+#            **A census that read one of two spellings.**
+#            `swallowedFailureCensus` has been green since R120 over a
+#            population defined as `.catch(() => …)`. The block form —
+#            `try { await api(…) } catch { … }` around the identical discard —
+#            was never in it. `ScenariosTab` answered a failed read of the saved
+#            bull/base/bear cases with `setSaved(null)`, and the comparison
+#            section renders on `saved && saved.scenarios.length > 0`: a 403 or
+#            a 503 took the only surface those cases appear on off the page,
+#            beside a form still inviting one to be saved. The refresh path is
+#            the worse half — `loadSaved` runs after a save that landed, so a
+#            save followed by a failed reload made the case the user had just
+#            stored vanish, which reads as the save having done nothing. The
+#            block half is scoped to the guarded block rather than to everything
+#            before the catch: a `JSON.parse(localStorage.getItem(…))` guard is
+#            a `catch { return null }` too and is not a swallowed *request*
+#            failure, and requiring the `try` to contain the call also keeps
+#            every key distinct, so no entry hides behind another's `(none)`.
+#
+#            **A diagnostic that answered a question it did not get to ask.**
+#            `migrationLockHolders` returned `[]` from its catch, correctly
+#            refusing to fail a boot over a diagnostic. But an empty holder list
+#            is not neutral: `MigrationLockTimeoutError` reads it as a *finding*
+#            and writes the explanation out — the lock "was released and
+#            re-taken repeatedly while this runner waited (several replicas
+#            booting at once)". A `pg_locks` read that was refused, timed out,
+#            or ran on a dead connection therefore made a failed deploy assert a
+#            cause nothing had checked, at the moment somebody is reading it,
+#            and the one fact that ends the incident was never named. `[]` still
+#            means asked-and-nobody; `null` is the third answer.
+#
+#            **Three levels, one argument.** A one-click unsubscribe that could
+#            not be applied; four `recordAdminEvent` writes on the money
+#            surface; the two busiest `recordSendFailure` callers. Every one is
+#            contained for a good reason — a non-2xx makes Gmail stop offering
+#            the button, a throw 5xxs a webhook whose work is committed, a
+#            bookkeeping rejection would strand a claim of five hundred
+#            messages — and every one then logged at `warn`. Nothing retries any
+#            of them: the provider issues the POST once, the compare-and-set
+#            upstream has already claimed the delivery so the redelivery a 5xx
+#            would earn is declined, and no sweep revisits a row that was never
+#            written. What follows is a spam report against the sending domain,
+#            a refund with no trace on the spine a reviewer reads, and a
+#            hard-rejected address still being mailed.
+#
+#            **Two censuses, and the alias pass earned its place.**
+#            `announcementLossCensus` grows a spine half over the same
+#            try/catch population; `bounceBookkeepingCensus` derives every
+#            `recordSendFailure(…).catch(…)` and holds the message to naming the
+#            consequence rather than the failed statement. The spine half
+#            resolves one-hop local wrappers, because billing's site calls a
+#            local `audit(args)` helper and the first scan written for this
+#            round did not see it — and the fourth site, the retention sweep's
+#            failure record, was found by that pass rather than by hand.
+#
+#            gap: `readJsonArray` still answers an HTML gateway page, a
+#            truncated body and an oversized one with the same `[]` Xero's
+#            consent screen returns when nothing was ticked, and the sole caller
+#            turns that into "reconnect and choose the organisation to share" —
+#            an instruction that cannot help for three of the four causes.
+#            R289's test argues the conflation deliberately ("reconnecting is
+#            the move either way"), which is true of the consent case and
+#            weakest exactly where the body was endless. Left as argued rather
+#            than re-litigated in a round the author of that argument is not in.
+#            gap: `isPublicHttpUrl` fails closed on a resolver error, which is
+#            right, and `fetchPartnerLogo` then reports it as
+#            `blocked_destination` — the slug whose documented meaning is "the
+#            SSRF guard doing its job on a URL somebody should be asked about".
+#            A resolver outage makes every partner logo on the estate accuse its
+#            own URL. Wants a `resolver_error` slug, which is a `LogoFailure`
+#            widening and a matching branch in the four readers of it.
+#            gap: the four `recordImportError(…).catch(…)` sites in
+#            `routes/accounting.ts` lose the connector's `last_error` and
+#            `status='error'` write, so the card reads healthy — but
+#            `logConnectorSyncFailure` fires immediately after with the subject
+#            and the right level, and the next attempt rewrites the row, so the
+#            loss is a stale card rather than a silence. Left at `warn`
+#            deliberately; noted because it is the nearest neighbour to the four
+#            that moved.
+#            gap: the block half of `swallowedFailureCensus` is web-frontend
+#            only. `silentCatchCensus` in valuation has the same blind spot by
+#            construction — it reads `.catch(` — and the block-form discards
+#            there were swept by hand this round and found clean (every one
+#            carries its own note). A derived guard would need the
+#            request-scoping idea the frontend half uses, and valuation's
+#            equivalent of "a request" is not one function.
