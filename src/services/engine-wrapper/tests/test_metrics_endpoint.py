@@ -27,6 +27,7 @@ from app.main import app
 from app.metrics import (
     MAX_SERIES_PER_METRIC,
     MetricsRegistry,
+    escape_label_value,
     format_value,
     metrics_caller_authorized,
     metrics_token,
@@ -229,3 +230,38 @@ def test_the_module_header_states_the_series_census_it_does_not_have():
     body = MetricsRegistry().render()
     assert "n409_metric_series" not in body
     assert "seriesCensus" in __import__("app.metrics", fromlist=["x"]).__doc__
+
+
+def test_a_control_byte_in_the_path_cannot_reach_the_exposition_body(_token):
+    """R370, methodology M6. Uvicorn percent-decodes the request target.
+
+    The TypeScript registry this module is a port of is safe here for a reason
+    that does not travel: Fastify hands a handler the *raw* target, so `%00` in
+    a URL stays three printable characters. Uvicorn decodes it before the ASGI
+    scope exists, so `GET /z%00q` reached `route_label` as a real NUL and went
+    into the scrape body as one — a byte the exposition format gives no
+    representation for, chosen from the network by anyone who can reach the
+    port.
+
+    Asserted through the live endpoint rather than on the escaper alone,
+    because the claim is about what a scrape of this unit publishes.
+    """
+    # Percent-encoded, which is the only way one travels: httpx (like any
+    # conforming client) refuses a raw control byte in a URL, and uvicorn
+    # decodes this into `scope["path"]` before the app sees it.
+    client.get("/z%00q%1bR")
+    body = _scrape({"x-internal-token": TOKEN}).text
+    assert "\x00" not in body
+    assert "\x1b" not in body
+    assert 'route="/z\ufffdq\ufffdR"' in body
+
+
+def test_the_escaper_keeps_the_three_the_format_defines_and_replaces_the_rest():
+    # Newline has an escape, so it keeps it rather than being replaced.
+    assert escape_label_value('a\nb') == 'a\\nb'
+    assert escape_label_value('a"b\\c') == 'a\\"b\\\\c'
+    # Everything else in C0, DEL and C1 has none.
+    assert escape_label_value("a\x00\rb\x7f\x9f") == "a\ufffd\ufffdb\ufffd\ufffd"
+    # A replacement character the caller sent themselves is left alone, and an
+    # ordinary path is untouched.
+    assert escape_label_value("/api/v1/\ufffd") == "/api/v1/\ufffd"

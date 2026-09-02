@@ -136,9 +136,43 @@ def status_class(code: int) -> str:
     return f"{bucket}xx" if 1 <= bucket <= 5 else "unknown"
 
 
+#: Control characters the exposition format cannot represent inside a label
+#: value. ``\n`` is excluded because the format defines an escape for it; every
+#: other C0 code point, DEL, and the C1 block have none.
+_UNREPRESENTABLE = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
+
+
 def escape_label_value(value: str) -> str:
-    """Backslash, double quote and newline, per the exposition format."""
-    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    """Backslash, double quote and newline, per the exposition format.
+
+    Plus the half the format has no spelling for. The three escapes above are
+    the whole of what Prometheus text defines, and on the TypeScript registry
+    this file is the port of, that is enough: every label value there is either
+    a constant, an operator-configured string, or ``routeLabel(req.url)`` — and
+    Fastify hands a handler the *raw* request target, so a caller writing
+    ``%00`` in a path gets the three literal characters ``%``, ``0``, ``0``.
+
+    Here it is not enough, and the difference is one line of ASGI. Uvicorn
+    percent-decodes the request target before it reaches ``scope["path"]``, so
+    ``GET /z%00q`` arrives at ``route_label`` as a real NUL between two letters
+    and went into the body as one — a byte the exposition format gives no
+    representation for, in a label value chosen from the network by anyone who
+    can reach the port. What a scrape parser does with it is the parser's
+    choice, and this estate has five units feeding one scrape.
+
+    Replaced rather than dropped: a label value is what an operator reads to
+    find the request that produced it, and silently deleting the byte makes
+    ``/z\x00q`` and ``/zq`` the same series. ``\ufffd`` is the standard
+    "there was a character here and this is not it", it is what
+    ``decode_text`` already substitutes on the document path, and it survives
+    the escapes above unchanged.
+    """
+    return (
+        _UNREPRESENTABLE.sub("\ufffd", value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+    )
 
 
 def escape_help(help_text: str) -> str:
