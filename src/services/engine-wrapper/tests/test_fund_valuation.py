@@ -195,8 +195,65 @@ def test_waterfall_clawback_when_gp_overdistributed():
         carry_pct=0.20,
         gp_distributions_to_date=50,  # GP already took far more than entitled
     )
-    # Total profit = 20, GP entitled = 4; GP already has 50+ → clawback owed.
-    assert w["clawback_owed"] > 0
+    # Total profit = 20, GP entitled = 4; GP already holds 50 → 46 owed back.
+    assert w["gp_carry_entitled"] == pytest.approx(4.0)
+    assert w["gp_carry_paid_to_date"] == pytest.approx(50.0)
+    assert w["clawback_owed"] == pytest.approx(46.0)
+
+
+def test_waterfall_clawback_does_not_double_count_the_run_it_is_measuring():
+    """A fund paid exactly its entitlement owes nothing back.
+
+    This is a whole-fund European waterfall: `distributable` is the fund's
+    proceeds, so the `gp_distribution` computed here is the GP's full-life
+    entitlement — with a catch-up it *is* `carry × total_profit`. The clawback
+    used to add it to what the GP had already been paid before comparing
+    against that same entitlement, so the difference was the prior payments
+    themselves: every correctly-run fund reported a clawback equal to every
+    dollar of carry it had ever paid.
+    """
+    common = dict(
+        committed_capital=100,
+        contributed_capital=100,
+        distributable=200,
+        preferred_return_rate=0.08,
+        years=1.0,
+        carry_pct=0.20,
+        gp_catch_up=True,
+    )
+    full = lp_waterfall(**common)
+    assert full["gp_distribution"] == pytest.approx(full["gp_carry_entitled"])
+    assert full["clawback_owed"] == 0.0
+
+    # The GP has already been paid exactly what it is entitled to. Still zero.
+    paid = lp_waterfall(**common, gp_distributions_to_date=full["gp_carry_entitled"])
+    assert paid["clawback_owed"] == 0.0
+    # And the split itself is unchanged — the clawback is a true-up beside it,
+    # not a deduction from it.
+    assert paid["gp_distribution"] == pytest.approx(full["gp_distribution"])
+    assert paid["lp_distribution"] == pytest.approx(full["lp_distribution"])
+
+    # A dollar over, and exactly a dollar is owed back.
+    over = lp_waterfall(**common, gp_distributions_to_date=full["gp_carry_entitled"] + 1)
+    assert over["clawback_owed"] == pytest.approx(1.0)
+
+
+def test_waterfall_clawback_measures_a_no_catch_up_gp_against_the_same_ceiling():
+    """Without a catch-up the GP takes less than the ceiling, so it owes less."""
+    w = lp_waterfall(
+        committed_capital=100,
+        contributed_capital=100,
+        distributable=200,
+        preferred_return_rate=0.08,
+        years=1.0,
+        carry_pct=0.20,
+        gp_catch_up=False,
+        gp_distributions_to_date=25,
+    )
+    # Profit is 100, so the ceiling is 20 whatever the tiering did; the GP
+    # holds 25 and owes 5 back.
+    assert w["gp_distribution"] < w["gp_carry_entitled"]
+    assert w["clawback_owed"] == pytest.approx(5.0)
 
 
 def test_waterfall_rejects_full_carry():

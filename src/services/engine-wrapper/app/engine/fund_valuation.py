@@ -314,8 +314,10 @@ def lp_waterfall(
          the profit distributed above return of capital (if ``gp_catch_up``).
       4. **Carried interest** — the residual splits ``carry_pct`` GP / rest LP.
 
-    Also runs an end-of-life **clawback** test: if the GP's cumulative carry
-    exceeds ``carry_pct`` of total profit, the excess is owed back to the LPs.
+    Also runs an end-of-life **clawback** test: if the carry the GP has already
+    received (``gp_distributions_to_date``) exceeds ``carry_pct`` of total
+    profit, the excess is owed back to the LPs. The split above is the GP's
+    full-life entitlement, not a further payment on top of what it holds.
     """
     committed = _num(committed_capital, "committed_capital", minimum=0.0)
     contributed = _num(contributed_capital, "contributed_capital", minimum=0.0)
@@ -371,11 +373,23 @@ def lp_waterfall(
     # and funded `fees`, and both come back before a dollar of profit exists.
     paid_in = roc_target
     total_profit = max(available - roc_target, 0.0)
-    gp_total = gp + _num(gp_distributions_to_date, "gp_distributions_to_date", minimum=0.0)
+    gp_paid = _num(gp_distributions_to_date, "gp_distributions_to_date", minimum=0.0)
     entitled = carry * total_profit
-    # Clawback: the GP owes back any cumulative carry above its entitled share
-    # of total profit (the end-of-life true-up LPACs require).
-    clawback = round(max(gp_total - entitled, 0.0), 4)
+    # Clawback: the GP owes back any carry it has *already been paid* above its
+    # entitled share of total profit (the end-of-life true-up LPACs require).
+    #
+    # Against `gp_paid` alone, not `gp + gp_paid`. This is a whole-fund
+    # (European) waterfall: `distributable` is the fund's proceeds and
+    # `contributed_capital` its paid-in, so the `gp` computed above is the GP's
+    # *full-life* entitlement, and with a catch-up it is `carry × total_profit`
+    # exactly — `entitled`, by construction. Adding it to what the GP has
+    # already received therefore compared the entitlement plus the prior
+    # payments against the entitlement, and the difference is the prior
+    # payments: every correctly-run fund reported a clawback equal to every
+    # dollar of carry it had ever paid, which is the one number on this
+    # schedule an LPAC acts on. The figure the true-up asks for is what the GP
+    # holds against what it is owed, and what it holds is `gp_paid`.
+    clawback = round(max(gp_paid - entitled, 0.0), 4)
 
     return {
         "distributable": round(available, 4),
@@ -390,6 +404,10 @@ def lp_waterfall(
         },
         "total_profit": round(total_profit, 4),
         "gp_carry_entitled": round(entitled, 4),
+        # Echoed so the clawback line shows its own arithmetic: a reader can see
+        # `gp_carry_paid_to_date − gp_carry_entitled` rather than having to take
+        # the residual on trust.
+        "gp_carry_paid_to_date": round(gp_paid, 4),
         "clawback_owed": clawback,
         # Distributions to *paid-in*, and the denominator is the paid-in figure
         # tier 1 returns — `contributed + fees` — not `contributed` alone. On
