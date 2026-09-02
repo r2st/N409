@@ -53,10 +53,13 @@ from .market_data import _COMPANIES as SNAPSHOT  # noqa: PLC2701 — same packag
 from .market_feed import NO_PROVIDER_REASON, UNSET, MarketFeedClient
 
 __all__ = [
+    "MARKET_FEED_PROVIDER_STATES",
     "UniverseResolution",
     "default_client",
     "live_enabled",
+    "market_feed_provider_state",
     "refresh_company",
+    "register_market_feed_metrics",
     "reset_cache",
     "resolve_universe",
     "set_client",
@@ -165,6 +168,106 @@ def default_client() -> MarketFeedClient:
         if _client is None:
             _client = MarketFeedClient()
         return _client
+
+
+#: Every value `market_feed_provider_state` can report. Exactly one series of
+#: `market_feed_provider` is 1 at any moment; the rest are 0, which is what makes
+#: `{state="misbuilt"} == 1` an expression somebody can read.
+MARKET_FEED_PROVIDER_STATES: tuple[str, ...] = (
+    "available",
+    "misbuilt",
+    "unconfigured",
+    "unresolved",
+)
+
+
+def market_feed_provider_state() -> str:
+    """Whether this process can reach market data at all, without finding out.
+
+    WHY THIS IS A GAUGE (R369, methodology M11). R368 made a misbuilt image say
+    so: `resolve_default_provider` quotes the exception the import raised and
+    logs it once, at construction, "instead of only on the first valuation that
+    happens to want market data". That line goes to the journal, and the journal
+    is a place somebody looks after they already suspect something.
+
+    The one rule that would catch the condition is `MarketFeedFallingBack`, and
+    it cannot catch it early. It is a *ratio* — `market_feed_answers_total`,
+    recorded in the valuation tier from the caller's side — held over an hour,
+    so it needs an hour of sustained valuation traffic before it says anything,
+    and on a quiet night the denominator is zero and the expression is NaN. A
+    deployment that has just been rebuilt without a working yfinance therefore
+    produces correct-looking valuations on substituted figures for as long as it
+    takes somebody to run enough of them, which is exactly the failure mode the
+    market-feed instruments were written against — the engine turns every
+    market-data failure into a 200.
+
+    The fact is already computed and already stable for the life of the process,
+    so a gauge costs nothing to publish and fires in minutes rather than hours.
+
+    A state-set and not an encoded number, the idiom `upstream_circuit_state`
+    and `job_queue_alert_rule` already use here: `{state="misbuilt"} == 1` reads
+    as itself where a gauge holding 2 needs the legend to be somewhere else.
+    Four states, because three of them are conditions nobody should be paged
+    about and only telling them apart makes the fourth alertable:
+
+      * `unresolved` — no client built yet. `default_client` is lazy on purpose
+        ("constructing it imports yfinance, and an import that reaches out to
+        the network belongs on a request, not on module load"), so a freshly
+        started unit that has not been asked for market data reports this. It
+        must never alert, and this gauge must never *cause* a construction: a
+        scrape that imported yfinance would be a collect callback doing network
+        work inside the scrape, against `Gauge`'s "cheap and synchronous".
+      * `unconfigured` — a client built with an explicit `provider=None`. That
+        is the deliberate opt-out `MarketFeedClient` documents and the whole
+        test tree runs on; told apart from the one below by
+        `NO_PROVIDER_REASON` being the reason verbatim, which is the constant
+        that exists precisely because an opt-out "has no failure behind it to
+        quote".
+      * `misbuilt` — a client built with no provider and a reason that quotes an
+        exception. `requirements.txt` declares yfinance, so every way to reach
+        this is a deployment that is wrong.
+      * `available` — a live provider.
+    """
+    with _client_lock:
+        client = _client
+    if client is None:
+        return "unresolved"
+    if client.provider is not None:
+        return "available"
+    return "unconfigured" if client.no_provider_reason == NO_PROVIDER_REASON else "misbuilt"
+
+
+def _collect_market_feed_provider():
+    """One reading of the state per scrape, not one per series.
+
+    Sampled once and compared, rather than re-asked inside the comprehension: a
+    client built between the `available` row and the `misbuilt` row would
+    otherwise render a set with two ones in it, or none, and an alert reading
+    `== 1` would see whichever it happened to catch.
+    """
+    active = market_feed_provider_state()
+    return tuple(
+        (1.0 if state == active else 0.0, {"state": state})
+        for state in MARKET_FEED_PROVIDER_STATES
+    )
+
+
+def register_market_feed_metrics(registry) -> None:
+    """Publish the state above on this unit's own `/metrics`.
+
+    On the engine unit rather than the caller, which is the point: the caller's
+    `market_feed_answers_total` answers "did an analyst get substituted figures"
+    and is the right series for that, and this answers "can this process reach
+    market data at all" — a question with an answer before anybody asks for a
+    valuation. `alerts.yml`'s scrape note makes the same distinction about the
+    `upstream_*` families, and neither view replaces the other.
+    """
+    registry.gauge(
+        "market_feed_provider",
+        'Market-data provider state for this engine process; 1 on the active state. state="misbuilt" means yfinance is declared in requirements.txt and this image cannot import it, so every valuation runs on substituted figures.',
+        _collect_market_feed_provider,
+        ("state",),
+    )
 
 
 def set_client(client: MarketFeedClient | None) -> MarketFeedClient | None:

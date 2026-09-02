@@ -38,6 +38,80 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
+ * And every `.py`, which this census used to be blind to.
+ *
+ * The blind spot was written down rather than fixed: this file's own header in
+ * `alerts.yml` said "it reads the **TypeScript** registrations only … a rule
+ * that only the Python units would fire is therefore not covered by the census
+ * — keep the two names identical". That held while every Python instrument was
+ * a second copy of a TypeScript one, so the TS registration stood in for both.
+ * R369 broke that assumption twice: `cgroup_memory.py` is still a twin, but
+ * `market_feed_provider` is registered by the engine unit and nowhere else, so
+ * `MarketFeedProviderMisbuilt` names a metric no `.ts` file has ever heard of —
+ * which is indistinguishable, to the old census, from a rule watching nothing.
+ *
+ * Excludes `.venv` (a few thousand vendored files, none of them ours) and the
+ * per-service `tests` directories, matching what `sourceFiles` excludes.
+ */
+function pythonSourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (entry === '.venv' || entry === '__pycache__' || entry === 'tests' || entry === 'node_modules') {
+      continue;
+    }
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) pythonSourceFiles(full, out);
+    else if (full.endsWith('.py')) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * One registration found in source: which file, and the text of the whole call.
+ *
+ * Paren-balanced to the end of the call, for the same reason the webhook census
+ * brace-matches its scopes: a `gauge(` whose `collect` runs for twenty lines
+ * would otherwise be read to the wrong closing bracket.
+ *
+ * The two languages differ in exactly two ways that matter here — the quote a
+ * string literal uses, and whether a label list is `['a']` or `('a',)` — so
+ * they share this walk and differ in the patterns handed to it.
+ */
+interface Registration {
+  name: string;
+  call: string;
+  python: boolean;
+}
+
+function registrations(): Registration[] {
+  const found: Registration[] = [];
+  const scan = (files: string[], pattern: RegExp, python: boolean) => {
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      for (const m of src.matchAll(pattern)) {
+        const open = src.indexOf('(', m.index!);
+        let depth = 0;
+        let end = src.length;
+        for (let i = open; i < src.length; i++) {
+          if (src[i] === '(') depth++;
+          else if (src[i] === ')' && --depth === 0) {
+            end = i;
+            break;
+          }
+        }
+        found.push({ name: m[1]!, call: src.slice(open, end), python });
+      }
+    }
+  };
+  scan(sourceFiles(path.join(REPO, 'src')), /\.(?:counter|histogram|gauge)\(\s*'([a-z_][a-z0-9_]*)'/g, false);
+  scan(
+    pythonSourceFiles(path.join(REPO, 'src/services')),
+    /\.(?:counter|histogram|gauge)\(\s*"([a-z_][a-z0-9_]*)"/g,
+    true,
+  );
+  return found;
+}
+
+/**
  * The metric names this estate registers.
  *
  * Read off the `counter(`/`histogram(`/`gauge(` calls rather than from a list,
@@ -46,14 +120,7 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
  * that matters.
  */
 function registeredMetrics(): Set<string> {
-  const names = new Set<string>();
-  for (const file of sourceFiles(path.join(REPO, 'src'))) {
-    const src = readFileSync(file, 'utf8');
-    for (const m of src.matchAll(/\.(?:counter|histogram|gauge)\(\s*'([a-z_][a-z0-9_]*)'/g)) {
-      names.add(m[1]!);
-    }
-  }
-  return names;
+  return new Set(registrations().map((r) => r.name));
 }
 
 /**
@@ -104,26 +171,16 @@ function metricTokens(): string[] {
  */
 function registeredLabels(): Map<string, string[]> {
   const labels = new Map<string, string[]>();
-  for (const file of sourceFiles(path.join(REPO, 'src'))) {
-    const src = readFileSync(file, 'utf8');
-    for (const m of src.matchAll(/\.(?:counter|histogram|gauge)\(\s*'([a-z_][a-z0-9_]*)'/g)) {
-      // Paren-balanced to the end of the call, for the same reason the webhook
-      // census brace-matches its scopes: a `gauge(` whose `collect` runs for
-      // twenty lines would otherwise be read to the wrong closing bracket.
-      const open = src.indexOf('(', m.index!);
-      let depth = 0;
-      let end = src.length;
-      for (let i = open; i < src.length; i++) {
-        if (src[i] === '(') depth++;
-        else if (src[i] === ')' && --depth === 0) {
-          end = i;
-          break;
-        }
-      }
-      const arrays = [...src.slice(open, end).matchAll(/\[\s*(?:'[^']*'\s*,\s*)*'[^']*'\s*,?\s*\]/g)];
-      const last = arrays.at(-1);
-      labels.set(m[1]!, last ? [...last[0].matchAll(/'([^']*)'/g)].map((q) => q[1]!) : []);
-    }
+  for (const { name, call, python } of registrations()) {
+    // A tuple in Python, an array in TypeScript, and each language's own
+    // quote — otherwise the same rule, including "last one wins" so a
+    // histogram's numeric bucket list does not shadow its labels.
+    const lists = python
+      ? [...call.matchAll(/\(\s*(?:"[^"]*"\s*,\s*)*"[^"]*"\s*,?\s*\)/g)]
+      : [...call.matchAll(/\[\s*(?:'[^']*'\s*,\s*)*'[^']*'\s*,?\s*\]/g)];
+    const last = lists.at(-1);
+    const quoted = python ? /"([^"]*)"/g : /'([^']*)'/g;
+    labels.set(name, last ? [...last[0].matchAll(quoted)].map((q) => q[1]!) : []);
   }
   return labels;
 }
@@ -137,13 +194,11 @@ function registeredLabels(): Map<string, string[]> {
  */
 function registeredHelp(): Map<string, string> {
   const help = new Map<string, string>();
-  for (const file of sourceFiles(path.join(REPO, 'src'))) {
-    const src = readFileSync(file, 'utf8');
-    for (const m of src.matchAll(
-      /\.(?:counter|histogram|gauge)\(\s*'([a-z_][a-z0-9_]*)'\s*,\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g,
-    )) {
-      help.set(m[1]!, m[2] ?? m[3] ?? '');
-    }
+  for (const { name, call } of registrations()) {
+    const first = /^\(\s*(?:'[a-z_][a-z0-9_]*'|"[a-z_][a-z0-9_]*")\s*,\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/.exec(
+      call,
+    );
+    if (first) help.set(name, first[1] ?? first[2] ?? '');
   }
   return help;
 }
@@ -337,6 +392,31 @@ describe('alert rules', () => {
       }
     }
     expect(offenders, 'rules referring to labels their own metrics do not carry').toEqual([]);
+  });
+
+  it('reads the Python tiers registrations, not only the TypeScript ones', () => {
+    // The vacuity guard on the scan above. `pythonSourceFiles` walking the
+    // wrong directory, or the double-quote pattern failing to match, would make
+    // every assertion in this file pass by having nothing left to ask — and the
+    // symptom would be a Python-only rule silently readmitted as "watching
+    // nothing", which is the exact failure this census exists against.
+    //
+    // Named metrics rather than a count, because a population that shrinks to
+    // one still satisfies a count. `market_feed_provider` is registered by the
+    // engine unit and by nothing in TypeScript; `n409_cgroup_memory_events` is
+    // registered on both sides and must resolve on this one too, since the twin
+    // is hand-kept and a rename in `cgroup_memory.py` alone is exactly the
+    // drift the comment in `cgroupMemory.ts` warns about.
+    const python = registrations().filter((r) => r.python);
+    const names = new Set(python.map((r) => r.name));
+    expect(names.has('market_feed_provider')).toBe(true);
+    expect(names.has('n409_cgroup_memory_events')).toBe(true);
+    expect(names.has('http_requests_total')).toBe(true);
+
+    // And the labels, which the tuple pattern reads and the array pattern
+    // cannot: `MarketFeedProviderMisbuilt` selects `{state="misbuilt"}`.
+    expect(registeredLabels().get('market_feed_provider')).toEqual(['state']);
+    expect(registeredLabels().get('n409_cgroup_memory_events')).toEqual(['event']);
   });
 
   it('reads the label arrays off the registrations rather than a list', () => {

@@ -869,6 +869,39 @@ groups:
         annotations:
           summary: 'over half of market-feed answers are substituted figures rather than observed ones'
 
+      # And the cause of that ratio that the ratio cannot report in time
+      # (R369, methodology M11). The rule above is measured in the *caller*, is
+      # a ratio, and is held for an hour: it needs an hour of sustained
+      # valuation traffic before it says anything, and on a quiet night the
+      # denominator is zero and the whole expression is NaN. So a box rebuilt
+      # without a working yfinance keeps producing correct-looking valuations
+      # on substituted figures until somebody happens to run enough of them.
+      #
+      # R368 made the engine say so — `resolve_default_provider` quotes the
+      # exception the import raised and logs it once, at construction — and the
+      # journal is where somebody looks after they already suspect something.
+      # This is the same fact on the scrape. It is reported by the engine unit
+      # about itself, which is the distinction the `upstream_*` note above
+      # draws: the caller's series answers "did an analyst get substituted
+      # figures", and this answers "can this process reach market data at all",
+      # which has an answer before anybody asks for a valuation.
+      #
+      # `misbuilt` alone of the four states. `unresolved` is a unit that has not
+      # been asked for market data yet — `default_client` is lazy on purpose —
+      # and `unconfigured` is the deliberate `provider=None` opt-out; neither is
+      # a fault, and telling them apart is what makes this one alertable.
+      # `requirements.txt` declares yfinance, so every way to reach `misbuilt`
+      # is a deployment that is wrong.
+      #
+      # `for: 15m` spans a deploy rather than the hour the ratio needs.
+      - alert: MarketFeedProviderMisbuilt
+        expr: market_feed_provider{state="misbuilt"} == 1
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} cannot import its market-data provider, so every valuation on this box runs on substituted figures'
+          runbook: 'journalctl -u n409-engine-wrapper --grep=market_feed_provider_unavailable — the line quotes the import exception, which separates a missing package from an unimportable one'
+
   - name: n409-inbound-webhooks
     rules:
       # A webhook's whole authority is a signature, and the secret behind it is

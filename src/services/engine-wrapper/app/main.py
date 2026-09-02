@@ -28,7 +28,11 @@ from .security_headers import make_security_headers_middleware
 from .engine.market_data import MAX_TICKERS
 from .engine.market_data import lookup as market_lookup
 from .engine.market_data import universe as market_universe
-from .engine.market_universe import default_client, resolve_universe
+from .engine.market_universe import (
+    default_client,
+    register_market_feed_metrics,
+    resolve_universe,
+)
 from .engine.fund_valuation import (
     calibrate_implied_volatility,
     fund_valuation,
@@ -111,6 +115,11 @@ app.middleware("http")(make_security_headers_middleware())
 install_error_handlers(app, SERVICE)
 enforce_token_configured()
 install_metrics(app, _metrics, SERVICE, _started)
+# Engine-only, so it is registered here rather than in the twin `metrics.py`:
+# whether this process can reach market data at all is a fact about this unit,
+# and the caller's `market_feed_answers_total` needs an hour of valuation
+# traffic before it can notice. See `market_feed_provider_state`.
+register_market_feed_metrics(_metrics)
 
 
 class ComputeRequest(BaseModel):
