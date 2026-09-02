@@ -949,6 +949,52 @@ groups:
           summary: '{{ $labels.job }} cannot import its market-data provider, so every valuation on this box runs on substituted figures'
           runbook: 'journalctl -u n409-engine-wrapper --grep=market_feed_provider_unavailable — the line quotes the import exception, which separates a missing package from an unimportable one'
 
+      # What the Python tier degrades to, said on the scrape (R376, M11).
+      #
+      # R346 wrote this gap down and named the reason: "the AI and engine tiers
+      # still expose no /metrics, so this round's neighbours in that tier —
+      # llm_prose_fallback, xlsx_sheets_unreadable, documents_unreadable — are
+      # structurally unalertable however well they are written". R369 made both
+      # units scrape targets, which removed the reason and left the instruments
+      # unbuilt: what those two publish is the RED trio, the process facts and
+      # the cgroup, so a scraper can see that the AI service is *up* and nothing
+      # at all about what it is quietly falling back to.
+      #
+      # `log_degraded_events_total` is that vocabulary, counted at the formatter
+      # every warning-or-worse line goes through. Most of its values are not
+      # rules and must not be: an unreadable scanned PDF or a corpus cut to its
+      # budget is a Tuesday, and a rule per routine degrade is how a channel
+      # gets muted. The two below are the events that are never routine.
+      #
+      # The provider half. `openrouter_key` at error is the boot check saying
+      # the key is expired, rejected or out of quota — every AI feature on the
+      # platform is then reporting itself unavailable — and `llm_prose_fallback`
+      # is a model that has stopped honouring the response contract, which the
+      # pipelines degrade around rather than fail on. Neither has any other
+      # symptom on this box: /ready covers the first only while the process is
+      # booting, and the second is a 200 with less in it.
+      - alert: AiProviderDegraded
+        expr: increase(log_degraded_events_total{event=~"openrouter_key|llm_prose_fallback|search_unknown_provider"}[30m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} is degrading on its model or research provider ({{ $labels.event }})'
+          runbook: 'journalctl -u n409-ai --since -1h | grep {{ $labels.event }} — the `detail` field carries the provider''s own words. openrouter_key is answered by OPENROUTER_API_KEY; llm_prose_fallback by the model id in `model`'
+
+      # The configuration half, and the reason it is a rule at all: every one of
+      # these is a value that *failed to parse and fell back to a default*, so
+      # the deployment is running on numbers nobody chose while looking exactly
+      # like one that was configured on purpose. `config drift` is this estate's
+      # recurring bug class and this is its Python tier: a typo in a unit file
+      # is a warning at boot, once, into a journal.
+      - alert: PythonTierMisconfigured
+        expr: increase(log_degraded_events_total{event=~"config_invalid|limits_config|ratelimit_config|market_feed_config"}[6h]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} could not parse a configured value and is running on the default ({{ $labels.event }})'
+          runbook: 'journalctl -u n409-ai -u n409-engine-wrapper --since -1d | grep {{ $labels.event }} — `detail` carries the value as it was typed; the unit files are in infra/systemd'
+
   - name: n409-inbound-webhooks
     rules:
       # A webhook's whole authority is a signature, and the secret behind it is

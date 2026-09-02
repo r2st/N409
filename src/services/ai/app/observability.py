@@ -17,6 +17,7 @@ import os
 import re
 import time
 import uuid
+from typing import Callable
 
 from fastapi import Request
 
@@ -275,6 +276,58 @@ def _level_for(status: int) -> int:
     return logging.INFO
 
 
+# ── The degrade vocabulary, counted where the alerting happens ───────────────
+#
+# R376, methodology M11. This tier says what it is degrading to in a vocabulary
+# of its own: ``documents_unreadable``, ``corpus_truncated``,
+# ``llm_prose_fallback``, ``market_feed_fallback``, ``openrouter_key``, the four
+# ``*_config`` lines a mistyped unit file falls back through. Every one of them
+# is a feature quietly working less well than it says it does, and every one was
+# a line in the journal and nothing else.
+#
+# R346 wrote that down and named the reason: "the AI and engine tiers still
+# expose no ``/metrics``, so this round's neighbours in that tier —
+# ``llm_prose_fallback``, ``xlsx_sheets_unreadable``, ``documents_unreadable`` —
+# are structurally unalertable however well they are written". R369 made both
+# units scrape targets, which removed the reason and left the instruments
+# unbuilt: what they publish is the RED trio, the process facts and the cgroup,
+# so a scraper can see that this service is *up* and nothing about what it is
+# quietly falling back to.
+#
+# Counted here rather than at the sixty call sites, for the same reason
+# ``logger.ts`` counts ``alert: true`` at the logger on the TS side: the
+# vocabulary is the contract. An event added next round is counted by
+# construction, and one whose level drops below WARNING stops being counted,
+# which is the same event.
+#
+# ``format`` runs once per record the handler actually writes, after the level
+# filter, so this counts lines written rather than lines attempted.
+_degraded_sink: Callable[[str, str], None] | None = None
+
+
+def set_degraded_event_sink(sink: Callable[[str, str], None] | None) -> None:
+    """Install the counter warning-or-worse ``event`` lines are tallied into.
+
+    Called by ``register_process_metrics``. Null clears it, which is what a test
+    does between cases; a process with no sink installed logs exactly as before.
+    """
+    global _degraded_sink
+    _degraded_sink = sink
+
+
+def _count_degraded(record: logging.LogRecord) -> None:
+    """Tally one line if it is a degrade this tier named. Never raises."""
+    if _degraded_sink is None or record.levelno < logging.WARNING:
+        return
+    event = getattr(record, "event", None)
+    if not isinstance(event, str) or not event:
+        return
+    try:
+        _degraded_sink(event, record.levelname.lower())
+    except Exception:  # noqa: BLE001 - a broken counter must not cost a log line
+        pass
+
+
 class JsonLogFormatter(logging.Formatter):
     """One JSON object per line, with the active request id attached."""
 
@@ -301,6 +354,7 @@ class JsonLogFormatter(logging.Formatter):
             value = getattr(record, key, None)
             if value is not None:
                 payload[key] = redact(value) if isinstance(value, str) else value
+        _count_degraded(record)
         if record.exc_info:
             # The traceback carries the exception's own message, which in this
             # tier can quote the input that caused it.

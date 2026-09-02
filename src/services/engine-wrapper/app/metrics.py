@@ -78,6 +78,7 @@ from fastapi.responses import PlainTextResponse, Response
 
 from .build_info import build_info
 from .cgroup_memory import register_cgroup_memory_metrics
+from .observability import set_degraded_event_sink
 
 #: The exposition format this module writes. Prometheus text, version 0.0.4.
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
@@ -585,6 +586,23 @@ def register_process_metrics(
         "Seconds since this process started",
         lambda: time.monotonic() - started_monotonic,
     )
+
+    # The degrade vocabulary this tier logs, at the endpoint that alerts
+    # (R376, methodology M11). See `set_degraded_event_sink` in
+    # observability.py for why it is counted at the formatter and what R346
+    # left open here.
+    #
+    # `event` is a literal at every call site — a closed vocabulary of about
+    # forty words — and `level` is one of three, so the pair is inside
+    # MAX_SERIES_PER_METRIC by a wide margin. No series is minted: unlike a
+    # gauge, an absent counter series here means "this has never happened",
+    # which is exactly what it says.
+    degraded = registry.counter(
+        "log_degraded_events_total",
+        "Warning-or-worse log lines carrying an event name, by event and level. This tier reports most of its degrades — an unreadable document, a truncated corpus, a model answering prose, a market feed falling back, a mistyped limit — in the log and nowhere else.",
+        ("event", "level"),
+    )
+    set_degraded_event_sink(lambda event, level: degraded.inc({"event": event, "level": level}))
 
 
 def install_metrics(
