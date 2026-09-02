@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 /**
  * What an identity provider actually puts on the wire (round 201, M6).
@@ -32,7 +39,7 @@ describe.skipIf(!dbUp)('SCIM adversarial payloads', () => {
       method: 'POST',
       url: '/api/v1/admin/sso/scim-tokens',
       headers: authHeader(admin.token),
-      payload: { label: 'Okta' },
+      payload: { label: 'Okta', current_password: SEEDED_PASSWORD },
     });
     bearer = { authorization: `Bearer ${created.json().secret}` };
   });

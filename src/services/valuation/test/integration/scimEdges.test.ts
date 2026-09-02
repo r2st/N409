@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 /**
  * SCIM's refusals, and the shapes an IdP actually sends.
@@ -35,7 +42,7 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
       method: 'POST',
       url: '/api/v1/admin/sso/scim-tokens',
       headers: authHeader(admin.token),
-      payload: { label: 'Okta' },
+      payload: { label: 'Okta', current_password: SEEDED_PASSWORD },
     });
     bearer = { authorization: `Bearer ${created.json().secret}` };
   });

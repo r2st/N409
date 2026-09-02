@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { httpsUrl } from '../domain/externalUrl.js';
 import { problems } from '@n409/shared';
 import { canManageUsers } from '../auth/rbac.js';
+import { verifyReauthPassword } from '../auth/reauth.js';
+import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { ROLE_KEYS } from '../domain/roles.js';
@@ -53,7 +55,13 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  * it and take the whole request to a 500 (domain/textSlice.ts). Refusing at
  * `max(200)` means the cut never happens.
  */
-const ScimTokenBody = z.object({ label: z.string().trim().min(1).max(200).nullish() }).strict();
+const ScimTokenBody = z
+  .object({
+    label: z.string().trim().min(1).max(200).nullish(),
+    /** The re-authentication prompt — see the mint route for why it is here. */
+    current_password: z.string().min(1).optional(),
+  })
+  .strict();
 
 const SamlBody = z.object({
   enabled: z.boolean(),
@@ -124,10 +132,48 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
     return { tokens, truncated, page_limit: SCIM_TOKEN_PAGE_LIMIT };
   });
 
+  /**
+   * Mint a SCIM bearer token.
+   *
+   * Behind the same two guards every other credential mint on this platform
+   * carries, and it had neither — while `POST /me/tokens`, which issues a
+   * credential that can do strictly less than this one, has carried both since
+   * R262. The docstring at the top of this file already said why they belong
+   * here: a SCIM token "is a standing bearer grant to create and deactivate
+   * users", and it has no session and no principal, so none of the route
+   * sweeps that scope this estate apply to what it does with that grant.
+   *
+   * *No key mints its successor.* An API token acting as an administrator could
+   * issue a SCIM bearer, and revoking the leaked key would then end nothing:
+   * SCIM tokens have their own revocation and are unaffected by anything that
+   * ends a session or withdraws an API key.
+   *
+   * *Re-authenticated*, for the reason `auth/reauth.ts` states — the session
+   * may not be the owner's, and a borrowed administrator cookie should not be
+   * able to leave behind a credential that outlives the password change made
+   * on noticing. Skipped when the account has no digest, exactly as the other
+   * mints skip it; for those the `req.apiToken` refusal above is the guard.
+   */
   app.post('/api/v1/admin/sso/scim-tokens', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireAdmin(req);
+    if (req.apiToken)
+      throw problems.forbidden(
+        'An API token cannot mint a SCIM token — create it from the SSO settings page while signed in',
+      );
     const parsed = ScimTokenBody.safeParse(req.body ?? {});
     if (!parsed.success) throw invalidBody('Invalid SCIM token', parsed.error);
+
+    const self = await findUserById(deps.pool, principal.id);
+    if (!self) throw problems.unauthorized();
+    if (self.password_digest) {
+      if (!parsed.data.current_password)
+        throw problems.unprocessable('Your current password is required to create a SCIM token', {
+          errors: [{ path: ['current_password'] }],
+        });
+      if (!(await verifyReauthPassword(self.id, parsed.data.current_password, self.password_digest)))
+        throw problems.badRequest('Current password is incorrect');
+    }
+
     const { row, token } = await createScimToken(deps.pool, {
       label: parsed.data.label ?? null,
       createdBy: principal.id,

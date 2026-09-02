@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -28,11 +35,63 @@ describe.skipIf(!dbUp)('enterprise SSO — SCIM + admin config (feature 9)', () 
       method: 'POST',
       url: '/api/v1/admin/sso/scim-tokens',
       headers: authHeader(admin.token),
-      payload: { label: 'Okta' },
+      payload: { label: 'Okta', current_password: SEEDED_PASSWORD },
     });
     expect(created.statusCode).toBe(201);
     scimToken = created.json().secret;
     expect(scimToken).toMatch(/^scim_/);
+  });
+
+  /**
+   * The two guards every other credential mint carries (round 359, M4).
+   *
+   * The docstring on `routes/adminSso.ts` already called a SCIM token "a
+   * standing bearer grant to create and deactivate users" and this route had
+   * neither guard, while `POST /me/tokens` — a credential that can do strictly
+   * less — has had both since R262.
+   */
+  describe('minting a SCIM token', () => {
+    const mint = (token: string, payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/sso/scim-tokens',
+        headers: authHeader(token),
+        payload,
+      });
+
+    it('refuses without the current password, and names the field', async () => {
+      const res = await mint(admin.token, { label: 'No password' });
+      expect(res.statusCode, res.body).toBe(422);
+      const body = res.json() as { detail: string; errors?: Array<{ path: string[] }> };
+      expect(body.detail).toContain('current password');
+      expect(body.errors?.[0]?.path).toEqual(['current_password']);
+    });
+
+    it('refuses a wrong password', async () => {
+      const res = await mint(admin.token, {
+        label: 'Guessed',
+        current_password: `${SEEDED_PASSWORD}-wrong`,
+      });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json().detail).toContain('Current password is incorrect');
+    });
+
+    it('refuses an API key minting one, whatever password it carries', async () => {
+      // No key mints its successor: SCIM tokens have their own revocation, so
+      // one issued by a leaked API key would survive that key being withdrawn.
+      const key = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/me/tokens',
+        headers: authHeader(admin.token),
+        payload: { name: 'admin key', current_password: SEEDED_PASSWORD },
+      });
+      expect(key.statusCode, key.body).toBe(201);
+      const secret = key.json().secret as string;
+
+      const res = await mint(secret, { label: 'Successor', current_password: SEEDED_PASSWORD });
+      expect(res.statusCode, res.body).toBe(403);
+      expect(res.json().detail).toContain('cannot mint a SCIM token');
+    });
   });
 
   it('rejects SCIM calls without a valid bearer token', async () => {

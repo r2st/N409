@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -52,7 +59,7 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
       method: 'POST',
       url: '/api/v1/admin/sso/scim-tokens',
       headers: authHeader(admin.token),
-      payload: { label: 'Okta' },
+      payload: { label: 'Okta', current_password: SEEDED_PASSWORD },
     });
     scimBearer = { authorization: `Bearer ${token.json().secret}` };
   });
@@ -368,12 +375,15 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
      * unknown field was silently ignored where the rest of this file's bodies
      * are `.strict()`.
      */
-    const mint = (payload: unknown) =>
+    // The mint re-authenticates since R359, so every body here carries the
+    // password — the point of these cases is the *label*, and a 422 about a
+    // missing password would pass three of them for the wrong reason.
+    const mint = (payload: Record<string, unknown>) =>
       ctx.app.inject({
         method: 'POST',
         url: '/api/v1/admin/sso/scim-tokens',
         headers: authHeader(admin.token),
-        payload: payload as Record<string, unknown>,
+        payload: { current_password: SEEDED_PASSWORD, ...payload },
       });
 
     it('refuses an over-long label instead of storing a shortened one', async () => {

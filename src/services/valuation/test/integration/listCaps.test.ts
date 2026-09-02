@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { upsertSubscription, SUBSCRIPTION_PAGE_LIMIT } from '../../src/repos/billing.js';
 import { SAVED_VIEW_PAGE_LIMIT } from '../../src/repos/savedViews.js';
@@ -129,7 +136,7 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
         method: 'POST',
         url: '/api/v1/admin/sso/scim-tokens',
         headers: authHeader(ops.token),
-        payload: { label: `Caps token ${i}` },
+        payload: { label: `Caps token ${i}`, current_password: SEEDED_PASSWORD },
       });
       expect(res.statusCode).toBe(201);
     }

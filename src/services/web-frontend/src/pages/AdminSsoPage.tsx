@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, describeActionFailure } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { hasPassword } from '../lib/rbac';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import {
@@ -51,6 +53,15 @@ export function AdminSsoPage() {
   const [tokens, setTokens] = useState<ScimToken[]>([]);
   const [tokensTruncated, setTokensTruncated] = useState(false);
   const [minted, setMinted] = useState<string | null>(null);
+  /*
+   * A SCIM token is a standing bearer grant to create and deactivate users, so
+   * the server re-authenticates the mint — the same prompt every other
+   * credential mint on this platform carries. Skipped for an account with no
+   * password, which has none to confirm.
+   */
+  const { user } = useAuth();
+  const needsPassword = hasPassword(user);
+  const [scimPassword, setScimPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const { token, retryProps } = useRetry(() => setError(null));
   const [saved, setSaved] = useState(false);
@@ -108,11 +119,21 @@ export function AdminSsoPage() {
     }
   };
 
-  const mintToken = async () => {
+  const mintToken = async (e: FormEvent) => {
+    e.preventDefault();
+    if (needsPassword && !scimPassword) {
+      setError('Your current password is required to create a SCIM token.');
+      return;
+    }
     setError(null);
     try {
-      const r = await api<{ secret: string }>('/admin/sso/scim-tokens', { method: 'POST', body: {} });
+      const r = await api<{ secret: string }>('/admin/sso/scim-tokens', {
+        method: 'POST',
+        body: { current_password: scimPassword },
+      });
       setMinted(r.secret);
+      // Never leave a password sitting in a form that stays on screen.
+      setScimPassword('');
       await load();
     } catch (err) {
       setError(describeActionFailure(err, 'Could not create a SCIM token.'));
@@ -205,12 +226,25 @@ export function AdminSsoPage() {
       </form>
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-        <div className="flex items-center justify-between">
+        <form onSubmit={mintToken} className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="overline text-ink-400">SCIM provisioning tokens</h2>
-          <Button variant="secondary" onClick={mintToken}>
-            New token
-          </Button>
-        </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {needsPassword && (
+              <TextInput
+                aria-label="Your current password"
+                type="password"
+                autoComplete="current-password"
+                placeholder="Your current password"
+                value={scimPassword}
+                onChange={(e) => setScimPassword(e.target.value)}
+                className="!w-56"
+              />
+            )}
+            <Button type="submit" variant="secondary" disabled={needsPassword && !scimPassword}>
+              New token
+            </Button>
+          </div>
+        </form>
         {minted && (
           <div className="mt-3 rounded-md border border-bond-200 bg-bond-50 p-4">
             <p className="text-sm font-semibold text-bond-800">

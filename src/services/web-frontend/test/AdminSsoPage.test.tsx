@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { AuthProvider } from '../src/lib/auth';
 import { AdminSsoPage } from '../src/pages/AdminSsoPage';
 
 const CONFIG = {
@@ -62,9 +63,13 @@ function mockApi(
 
 const renderPage = () =>
   render(
-    <MemoryRouter>
-      <AdminSsoPage />
-    </MemoryRouter>,
+    // The SCIM mint asks the signed-in account whether it has a password to
+    // confirm (round 359), so the page needs the auth context.
+    <AuthProvider>
+      <MemoryRouter>
+        <AdminSsoPage />
+      </MemoryRouter>
+    </AuthProvider>,
   );
 
 const loaded = () => screen.findByRole('button', { name: /Save SAML config/i });
@@ -147,10 +152,36 @@ describe('AdminSsoPage', () => {
     renderPage();
     await loaded();
 
+    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /New token/i }));
     await screen.findByText('scim_live_9f2c');
     expect(screen.getByText(/won't be shown again/i)).toBeInTheDocument();
     expect(screen.getByText('/scim/v2')).toBeInTheDocument();
+  });
+
+  /**
+   * The password in front of the SCIM bearer (round 359, methodology M4).
+   *
+   * This page's own docstring calls a SCIM token a standing grant to create and
+   * deactivate users, and the mint had no prompt of any kind — while the
+   * personal API key on the settings page, which can do strictly less, has had
+   * one since R262.
+   */
+  it('will not mint a SCIM token until the current password is given', async () => {
+    const fetchSpy = mockApi({ onWrite: () => jsonResponse({ secret: 'scim_live_9f2c' }, 201) });
+    renderPage();
+    await loaded();
+
+    expect(screen.getByRole('button', { name: /New token/i })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2');
+    await userEvent.click(screen.getByRole('button', { name: /New token/i }));
+
+    await screen.findByText('scim_live_9f2c');
+    // The prompt has to reach the wire, not merely appear.
+    const post = fetchSpy.mock.calls.find(
+      ([url, init]) => String(url).includes('scim-tokens') && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ current_password: 'hunter2' });
   });
 
   it('reports a refused mint instead of leaving the button apparently inert', async () => {
@@ -158,6 +189,7 @@ describe('AdminSsoPage', () => {
     renderPage();
     await loaded();
 
+    await userEvent.type(screen.getByLabelText('Your current password'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: /New token/i }));
     await screen.findByText('SSO is not licensed for this tenant');
   });
