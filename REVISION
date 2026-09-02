@@ -8595,3 +8595,113 @@
 #            `API_TOKEN_REFUSAL_DETAIL`) that a census could enumerate — but the
 #            other side of the check is the frontend's nav labels and panel
 #            headings, in a different package with no import path between them.
+# R358 — Performance optimization (M8), thirteenth round. Three fixes, no
+#            migration, no index, no SQL, 15 new tests, at
+#            `5362db5a..c2e6dee2`.
+#
+#            R314 said the Node SQL surface was exhausted and R322 and R351
+#            each found their round outside it; this one did not open a query
+#            plan at all. All three findings came from wall-clock measurement
+#            of a tier nobody had timed — the AI gateway, and the report
+#            renderer's own CPU profile rather than the queries feeding it.
+#
+#            **The redactor walked every document once per known entity.**
+#            `_redact_entities` ran `subn` once per candidate, so a request
+#            redacting against the declared ceiling walked every string a
+#            thousand times: 500 known companies plus their suffix-less short
+#            forms, and 500 known people. **512 ms for one 26 kB document** —
+#            and a request carries three of those plus its filenames and its
+#            interpolated prompt fields. `re` holds the GIL, so that is not one
+#            slow request among forty; it is every request on the process
+#            waiting, which is the exact failure `MAX_KNOWN_ENTITIES` was
+#            written to bound and does not, because the bound is on the list
+#            and the cost is the product. One alternation now, ordered
+#            longest-first for the reason the loop was — within a starting
+#            position `re` tries alternatives in written order, so "Acme
+#            Robotics Inc" still strikes before "Acme", and across positions
+#            the leftmost wins as before. Verified as *output identity*
+#            against the sequential form over 800 randomised entity/text pairs
+#            plus ten crafted overlaps, because the risk here is a client name
+#            going to an external model in the clear, not a slow request.
+#            Deriving the candidates is memoised beside the pattern; the
+#            bounds stay on the raw list ahead of both caches, so
+#            deduplication cannot bring an over-size list under the ceiling.
+#            512 -> 28 ms per document, 0.97 -> 0.02 ms per short field,
+#            **1590 -> 86 ms for a three-document request**.
+#
+#            **pdfkit re-read and re-parsed all four faces per document.**
+#            `registerFont` takes a path, a buffer, or an already-open fontkit
+#            font, and it was handed the path — so every render did four
+#            synchronous `readFileSync` calls on the event loop of the service
+#            whose entire job is rendering, and then parsed four TrueType files
+#            **this process had already parsed and was holding open**, in
+#            `openFaces`, to answer its own glyph-coverage question. The
+#            comment above `openFaces` had stated the waste in passing since it
+#            was written ("pdfkit loads and parses these itself for every
+#            document it renders") without anybody reading it as a defect. It
+#            is visible in a CPU profile as the `Struct._setup` /
+#            `LazyArray.get` / `Number.decode` table decoding under every
+#            render. Sample 409A report: **110.7 -> 84.5 ms**, byte-identical
+#            — checked against the previous build for the document alone,
+#            rendered twice, and rendered concurrently beside a second document
+#            drawing a different subset of the same faces.
+#
+#            **Two panels awaited two independent reads in turn.**
+#            `ParamsPanel` read `/params` and then `/engine-inputs`; `ReportTab`
+#            read the report body and then, for ops, its version history — and
+#            `ops` is a prop, known before either request leaves. Neither
+#            second request is derived from the first one's answer, so each
+#            panel spent two round trips filling one screen. Both now issue the
+#            pair up front and await them in the order they are applied, which
+#            leaves every existing refusal intact.
+#
+#            **What a plan guard cannot see, and what this round used
+#            instead.** Twelve rounds of standing guards — `listQueryScaling`,
+#            `growthScanPlans`, `expressionSortPlans`, the seven plan tests —
+#            all ask a question about a *statement*. Every finding here is work
+#            done between statements: a regex loop, a font parse, an `await`.
+#            The three that mattered were found by timing a region and reading
+#            a CPU profile, and two of the three were sitting under a comment
+#            that already described them. The recipes are worth keeping:
+#            build the input at its own declared ceiling (`MAX_KNOWN_ENTITIES`,
+#            the 200-class cap, the 20 000-char document) and time it, rather
+#            than at the size a test fixture happens to use.
+#
+#            **Probed and clean, do not re-derive.** The engine's `compute` is
+#            13.9 ms at the 200-class cap and its `validate_payload` 0.12 ms,
+#            so the pre-flight is not worth touching; `allocate_with_volatilities`
+#            is the whole of that cost and R322 already halved it. The report
+#            renderer is linear in table rows (250 -> 4000 rows, 61 -> 523 ms)
+#            and, after the font fix, its remaining profile is fontkit's
+#            OpenType shaping and zlib — pdfkit's `layoutCache` already absorbs
+#            the repeated strings *within* a document, and sharing one across
+#            documents is not available because the glyph-to-subset mapping is
+#            per document. Report *assembly* is 0.5 ms against a 84 ms render,
+#            so R219's "render dwarfs everything" still holds and the exhibit
+#            builders are not the place to look. The cap-table import pipeline
+#            is linear to the 5 000-entry cap (parse 4.2 ms, validate 1.9 ms).
+#            The frontend's money formatters are already cached and its badge
+#            polls already carry `BADGE_MIN_REFETCH_MS`, which closes R154's
+#            long-standing NOT TAKEN. The web BFF reads its prerender manifest
+#            and its inline-script hashes once, at boot. The only other
+#            scan-per-list-item loops in the estate are the two observability
+#            redactors, whose lists are eight patterns and five environment
+#            variables.
+#
+#            gap: `format:check` is red on main and was before this round — five
+#            files, none of them touched here (`AdminUsersPage.tsx`,
+#            `ScenariosTab.tsx`, and three web-frontend tests). Same gate R314
+#            found red for the same reason; nothing runs it between rounds.
+#            gap: the AI gateway's `_xlsx_text` parses a whole worksheet into an
+#            ElementTree before `MAX_XLSX_ROWS_PER_SHEET` applies, and
+#            `list(root.iter(row))[:2000]` materialises every row to keep the
+#            first two thousand. The bound that actually holds is
+#            `MAX_XLSX_INFLATED_BUDGET` (128 MB), one layer out; making the row
+#            cap do the bounding needs `iterparse`, which is a rewrite of the
+#            reader rather than a fix to it.
+#            gap: a shared cross-document layout cache would take another bite
+#            out of the render — the shaping is 20%+ of what is left, and the
+#            same table headers and running heads are shaped in every report.
+#            It needs the glyph-to-subset indirection pdfkit deliberately keeps
+#            per document, so it is a change to the library's model, not to
+#            this call site.
