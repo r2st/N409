@@ -883,6 +883,15 @@ _BIDI_CONTROLS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u20
 # `_provider_words`.
 MAX_PROVIDER_WORDS = 200
 
+# What a refusal says when the provider said nothing readable.
+#
+# Every call site embeds this after a colon — `brave HTTP 502: {…}` — and an
+# empty return leaves the sentence hanging on it. A 5xx with an empty body is
+# the ordinary shape of a proxy failing in front of a provider, and a body of
+# nothing but whitespace or reordering controls cleans down to the same thing.
+# The engine tier's twin answers the same case with `(unnamed)`.
+NO_PROVIDER_WORDS = "(no message)"
+
 
 def _provider_words(raw: object, limit: int = MAX_PROVIDER_WORDS) -> str:
     """A string that came off a provider, prepared for the sentence quoting it.
@@ -922,7 +931,10 @@ def _provider_words(raw: object, limit: int = MAX_PROVIDER_WORDS) -> str:
     grows past what the bound can hold. A body that is entirely whitespace (or
     entirely reordering controls) is still walked whole — there is no answer
     until the last character says there is nothing after it — but it allocates
-    nothing while doing so.
+    nothing while doing so. Either comes back as `NO_PROVIDER_WORDS` rather
+    than as the empty string: every caller writes this after a colon, and a
+    provider that said nothing is a fact the sentence should state rather than
+    trail off on.
     """
     text = raw if isinstance(raw, str) else str(raw)
     kept: list[str] = []
@@ -931,8 +943,17 @@ def _provider_words(raw: object, limit: int = MAX_PROVIDER_WORDS) -> str:
         if ch in _BIDI_CONTROLS:
             continue
         code = ord(ch)
-        out = "?" if (code < 0x20 or 0x7F <= code <= 0x9F or code in (0x2028, 0x2029)) else ch
-        if out.isspace():
+        # A control that is *whitespace* becomes a space; every other control
+        # becomes `?`. Both are inert — neither can end the log line this is
+        # printed into — and the split is what makes the sentence readable. What
+        # these arms are handed is `resp.text`, an entire HTML error page, and
+        # mapping its newlines and tabs to `?` turned "502 Bad Gateway\n<hr>\n
+        # nginx" into "502 Bad Gateway?<hr>?nginx": text that reads as corrupted
+        # rather than as a provider's answer, at one `?` per line of markup.
+        # A space also folds into the leading/interior handling below, where a
+        # `?` is a character the bound then spends itself on.
+        out = " " if ch.isspace() else ("?" if (code < 0x20 or 0x7F <= code <= 0x9F) else ch)
+        if out == " ":
             if kept and len(kept) + len(pending) < limit:
                 pending.append(out)
             continue
@@ -942,7 +963,7 @@ def _provider_words(raw: object, limit: int = MAX_PROVIDER_WORDS) -> str:
         kept.append(out)
         if len(kept) > limit:
             return "".join(kept[:limit]) + "…"
-    return "".join(kept)
+    return "".join(kept) or NO_PROVIDER_WORDS
 
 
 def _json_object(resp: httpx.Response, provider: str) -> dict:

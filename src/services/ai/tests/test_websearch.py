@@ -1133,7 +1133,8 @@ class TestProviderWordsCost:
         "raw",
         [
             "   leading and trailing   ",
-            "\n\tcontrols become question marks\n",
+            "\n\tline breaks become spaces\n",
+            "\x00\x1bother controls become question marks",
             "  ",
             "",
             "\u202egnp.exe",
@@ -1151,9 +1152,13 @@ class TestProviderWordsCost:
         from a plain prefix.
         """
         cleaned = "".join(
-            "?"
-            if (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ord(ch) in (0x2028, 0x2029))
-            else ("" if ch in websearch._BIDI_CONTROLS else ch)
+            ""
+            if ch in websearch._BIDI_CONTROLS
+            else (
+                " "
+                if ch.isspace()
+                else ("?" if (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F) else ch)
+            )
             for ch in raw
         ).strip()
         expected = (
@@ -1161,4 +1166,26 @@ class TestProviderWordsCost:
             if len(cleaned) <= websearch.MAX_PROVIDER_WORDS
             else cleaned[: websearch.MAX_PROVIDER_WORDS] + "\u2026"
         )
-        assert websearch._provider_words(raw) == expected
+        # Nothing left over is not the empty string; see the case below.
+        assert websearch._provider_words(raw) == (expected or websearch.NO_PROVIDER_WORDS)
+
+    @pytest.mark.parametrize("raw", ["", "   ", "\n\t ", "\u202e\u200f", "\u2069  \u061c"])
+    def test_a_provider_that_said_nothing_is_said_to_have_said_nothing(self, raw):
+        """Round 387, methodology M19.
+
+        Every call site writes this after a colon — `brave HTTP 502: {…}` — and
+        an empty body is the ordinary shape of a proxy failing in front of a
+        provider. Returning "" left the analyst a sentence ending on its own
+        punctuation: `searxng HTTP 502: `. That reaches them, not just a log —
+        `research.py` wraps a `SearchError` as `search failed: {exc}`, the
+        service answers `/ai/v1/research` with it as a 503 `detail`, and the
+        valuation service writes a non-opaque upstream detail to
+        `network_items.error` and draws it in the problem document.
+        """
+        assert websearch._provider_words(raw) == websearch.NO_PROVIDER_WORDS
+
+    def test_the_refusal_reads_as_a_sentence_when_the_body_is_empty(self):
+        """The sentence, not only the fragment — this is what a reader gets."""
+        said = websearch._provider_words("")
+        assert f"searxng HTTP 502: {said}" == "searxng HTTP 502: (no message)"
+        assert not f"searxng HTTP 502: {said}".endswith(": ")
