@@ -10091,3 +10091,125 @@
 #            live work under a withdrawn firm is an ordinary existing state
 #            rather than one a restore would create — the checked-and-negative
 #            answer is worth as much as the finding would have been.
+
+# R373 — Cross-cutting concerns (M4). Three findings, no migration, 8 new tests,
+#            all three the same shape: a rule this codebase has already written
+#            down, applied everywhere but one place. M4's premise is that the
+#            inconsistency *is* the bug, and on a codebase this heavily swept
+#            the productive question turned out to be "which module states a
+#            rule in its own doc comment, and who has never read it".
+#
+#            237589a — `domain/numericColumn.ts` exists because an engine figure
+#            computed from parts that are each inside their own bound can still
+#            be finite, positive and too large for the `numeric(p, s)` it is
+#            about to be stored in, and Postgres answers that with `22003
+#            numeric field overflow`: a 500 naming nothing, on a request whose
+#            every input was accepted. The module declares the two columns it
+#            was written for and `funds.ts` and `debt.ts` apply it. Two later
+#            subsystems store an engine figure on a `numeric(20, 2)` and had
+#            never heard of it. `rollforward_runs.rolled_equity_value` is
+#            `prior x (1 + rate) ** years` — `RunBody` caps the rate at 10
+#            (1000% a year), the gap is however far apart two analyst-entered
+#            valuation dates are, and `compound_factor` checks the factor for
+#            overflow and underflow and nothing in between — so a $10M anchor
+#            at the rate cap is unstorable after about eleven years. Both the
+#            engine and `shapeRollforward` ask whether the result is finite and
+#            positive; neither asks whether it fits.
+#            `valuation_projections.terminal_value` is the same shape one
+#            division further on, `FCF x (1 + g) / (r - g)` growing without
+#            bound as the spread closes. Both now answer 422 naming the figure
+#            and the ceiling, which is the sentence that points at the rate —
+#            the thing the analyst can actually change.
+#
+#            The census beside it is the general form: a column declared in
+#            `numericColumn.ts` and cited by no `requireStorableFigure` call
+#            site is the same omission wearing the rule's name, and is how these
+#            two came to exist.
+#
+#            54a6676 + 0f00df5 — `SUSPENDED_ROLE`'s note in `auth/rbac.ts` is
+#            the most explicit statement of an M4 rule in the repository:
+#            `ignored` is *additive*, so a suspended account keeps every other
+#            grant and "every predicate that answers 'what may this principal
+#            do' has to subtract `ignored` for itself". Four predicates in
+#            `rbac.ts` were fixed when that note was written. Two places it
+#            names were not.
+#
+#            `auth/operations.ts` has four predicates; three subtract
+#            (`visibleCommentKinds`, `canPostComment` and `canIngestEmail`
+#            through `isOps`, `canManageTokens` explicitly on its second line).
+#            `canEditComment`'s second arm compares `comment.author_id` against
+#            the principal's id — a fact about a row rather than a capability —
+#            so a suspended author kept edit and delete on their own comments.
+#            Not reachable through the route: `loadEditable` reads the
+#            engagement first and `valuationScope` is `none` for a suspended
+#            principal, so the 404 lands before this is asked. Fixed anyway,
+#            because that is an argument about one caller and this is the policy
+#            layer; `canManageBranding` and `canManageTokens` both subtract on
+#            exactly the arm that reads a row.
+#
+#            The same note says a literal spelled per-`WHERE`-clause "is how the
+#            push half and the policy layer come to disagree about what a
+#            suspension is", and names two SQL predicates. Both were still
+#            spelling it out: `isLastUserAdmin`, the guard deciding whether the
+#            last working administrator may close their account, and
+#            `listUserIdsWithRoles`, which addresses every billing, job-queue
+#            and auditor-note fan-out. The reviewer picker binds the constant;
+#            these two did not. No behaviour changes today — the literal and the
+#            constant are the same six characters — which is the reason it wants
+#            a census rather than a reviewer: the drift only exists on the day
+#            one of the three spellings moves. The scan requires a comparison
+#            operator, so `key: 'ignored'` in `domain/workflow.ts` (the
+#            valuation *state* of that name) is not it, and prose is exempt
+#            because three notes quote the clause they are arguing about.
+#
+#            came back clean, and the negatives are most of what the round did.
+#            The three inbound webhooks agree on raw-body signature verification,
+#            unstorable-text scanning and the event ledger. The three Fastify
+#            services register the same nine shared plugins and the same crash
+#            and shutdown handlers; the two Python services' eleven twin modules
+#            differ only where a documented asymmetry says they should, and the
+#            AI tier's log-field allowlist is still a strict subset of the
+#            engine's. Every route with two path params relates the second id to
+#            the first — three looked like they did not and all three check on
+#            the next line. `dangerouslySetInnerHTML` is sanitised at all seven
+#            sites; every `truncated` the API reports is surfaced by the SPA,
+#            through `ListTruncationNote` or a picker's own overflow note; every
+#            write-bearing valuation tab handles `retired`; the six ETag
+#            anchors all have an `ifMatch` caller. These are fortified by census
+#            tests and they hold.
+#
+#            gap: the guarded set is now four `numeric` columns, and the
+#            declaration is still hand-written from the migrations. Nothing
+#            reads `migrations/*.sql` to ask which *other* engine-computed
+#            figures land on a `numeric(p, s)` — `volatility_estimates`'
+#            five `numeric(8, 4)` columns are the interesting ones, since a
+#            ceiling of 10000 on a fraction is far closer than 1e18 on a
+#            currency amount, and a price series with an unadjusted split in it
+#            is the ordinary way to reach a four-figure annualised vol. Not
+#            fixed because the reachability argument there is about market data
+#            rather than about arithmetic, and it wants a real series to make.
+#            gap: `comparable_items` stores `ev`, `revenue_ltm/ntm` and
+#            `ebitda_ltm/ntm` on `numeric(20, 2)` from the market feed and from
+#            CSV import, and neither door checks magnitude. Left alone because
+#            these are observed figures rather than computed ones — the failure
+#            is a caller typing a number, which is the case `domain/int4.ts`
+#            covers on the input side and which wants a schema bound rather than
+#            a storable-figure check at the write.
+#            gap: `board_signoffs` has `token_expires_at` and no `revoked_at`,
+#            where `auditor_access` and `client_intake_links` — the other two
+#            public portal-link families — both carry one and both expose a
+#            revoke route. Revoking a board signing link today means reissuing
+#            it. Recorded rather than fixed: it is a column, a migration and a
+#            route, which is a feature and not the correction of an
+#            inconsistency, and whether a board link should be revocable
+#            separately from being rotated is a product decision.
+#            gap: the payments Stripe webhook compares `classifyStripeEvent`'s
+#            verdict against `'duplicate'` only, where the billing one handles
+#            `'stale'` as well; a stale event at the payments endpoint falls
+#            through to the handler and is then recorded `'handled'`. Inert
+#            today — the only ordered type that endpoint sees is a
+#            subscription-mode `checkout.session.completed`, which it ignores,
+#            and nothing else writes an ordering row under `endpoint =
+#            'payments'` for the query to find. Left alone because closing it
+#            means deciding what the payments endpoint's ordering *means*, and
+#            the honest answer is that it has none.
