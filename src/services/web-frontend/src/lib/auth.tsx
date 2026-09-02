@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 import {
   api,
+  ApiError,
   clearToken,
   hasStoredSession,
   setToken,
@@ -101,9 +102,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(me);
         setStatus('authenticated');
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return;
-        logout();
+        /*
+         * Only a refusal ends the session. A 401 means the cookie is gone or
+         * the epoch moved on, and `api()` has already cleared the marker and
+         * raised UNAUTHORIZED_EVENT — `logout()` here is the same conclusion
+         * reached twice, and is kept so this effect is correct on its own.
+         *
+         * Everything else is a failure to *ask*, not an answer: the API
+         * restarting behind the proxy (502), a gateway timeout, a laptop that
+         * woke up offline (fetch rejects with a TypeError). Signing out on
+         * those discarded the onboarding wizard's place, the company name
+         * typed at registration and the checklist — see
+         * `lib/accountStorage.ts` — for a session the server never disowned,
+         * and the page after it is indistinguishable from a real sign-out. The
+         * marker stays, so the next load asks again; the status goes anonymous
+         * rather than staying `loading`, because a gate that never resolves is
+         * a spinner forever.
+         */
+        if (err instanceof ApiError && err.status === 401) {
+          logout();
+          return;
+        }
+        setStatus('anonymous');
       });
     return () => {
       cancelled = true;

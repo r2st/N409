@@ -93,6 +93,37 @@ describe('RequireAuth', () => {
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
 
+  /*
+   * Round 360 (M5). The restore effect caught every rejection and called
+   * `logout()`, so a 502 while the API restarted, a gateway timeout or a
+   * laptop that woke up offline signed the user out *and* cleared the
+   * onboarding wizard's place, the company hint and the checklist. The server
+   * had not disowned the session; nothing said so anywhere.
+   */
+  it('keeps the session marker when /auth/me could not be reached', async () => {
+    localStorage.setItem('n409.token', '1');
+    localStorage.setItem('n409.company_hint', 'Acme Robotics, Inc.');
+    sessionStorage.setItem('n409.onboarding.draft', '{"valuation":{"company_name":"Acme"}}');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    renderGate();
+
+    expect(await screen.findByText('LOGIN from=/dashboard')).toBeInTheDocument();
+    expect(localStorage.getItem('n409.token')).toBe('1');
+    expect(localStorage.getItem('n409.company_hint')).toBe('Acme Robotics, Inc.');
+    expect(sessionStorage.getItem('n409.onboarding.draft')).not.toBeNull();
+  });
+
+  it('keeps the session marker when /auth/me answers 502', async () => {
+    localStorage.setItem('n409.token', '1');
+    sessionStorage.setItem('n409.onboarding.draft', '{"valuation":{"company_name":"Acme"}}');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Bad Gateway' }, 502));
+    renderGate();
+
+    expect(await screen.findByText('LOGIN from=/dashboard')).toBeInTheDocument();
+    expect(localStorage.getItem('n409.token')).toBe('1');
+    expect(sessionStorage.getItem('n409.onboarding.draft')).not.toBeNull();
+  });
+
   it('drops a session marker whose cookie the server no longer honours', async () => {
     localStorage.setItem('n409.token', '1');
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
@@ -100,9 +131,12 @@ describe('RequireAuth', () => {
         ? jsonResponse({ title: 'Unauthorized' }, 401)
         : jsonResponse({ ok: true }),
     );
+    sessionStorage.setItem('n409.onboarding.draft', '{"valuation":{"company_name":"Acme"}}');
     renderGate();
     expect(await screen.findByText('LOGIN from=/dashboard')).toBeInTheDocument();
     expect(localStorage.getItem('n409.token')).toBeNull();
+    // A refusal still is one: the account-scoped keys go with it.
+    await waitFor(() => expect(sessionStorage.getItem('n409.onboarding.draft')).toBeNull());
   });
 });
 
