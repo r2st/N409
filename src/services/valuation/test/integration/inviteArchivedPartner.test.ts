@@ -145,6 +145,57 @@ describe.skipIf(!dbUp)('invitations into a firm that is then archived', () => {
     expect(dead.json().detail).toBe(DEAD_LINK_DETAIL.invitation);
   });
 
+  it('refuses to resend it, rather than mailing a link that dead-ends', async () => {
+    const partner = await createPartner(`arch-resend-${Date.now()}`);
+    const email = `resend.${Date.now()}@example.com`;
+    await invite(email, partner);
+    const { rows: before } = await ctx.pool.query<{ id: string; expires_at: Date }>(
+      'SELECT id, expires_at FROM user_invitations WHERE lower(email) = lower($1)',
+      [email],
+    );
+    const id = before[0]!.id;
+
+    await setArchived(partner, true);
+
+    const mailedBefore = await ctx.pool.query(
+      'SELECT id FROM email_outbox WHERE lower(to_email) = lower($1)',
+      [email],
+    );
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/users/invitations/${id}/resend`,
+      headers: authHeader(admin.token),
+    });
+    // Named, not merged into the dead-link sentence: the caller here is the one
+    // administrator who can act on it, and both remedies are actions of theirs.
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toMatch(/archived partner/i);
+
+    // Nothing was sent, and the row was not touched — in particular the token
+    // was not rotated, so the link already in the invitee's inbox is still the
+    // one that works when the firm comes back.
+    const mailedAfter = await ctx.pool.query(
+      'SELECT id FROM email_outbox WHERE lower(to_email) = lower($1)',
+      [email],
+    );
+    expect(mailedAfter.rows).toHaveLength(mailedBefore.rows.length);
+    const { rows: after } = await ctx.pool.query<{ expires_at: Date; revoked_at: Date | null }>(
+      'SELECT expires_at, revoked_at FROM user_invitations WHERE id = $1',
+      [id],
+    );
+    expect(after[0]!.revoked_at).toBeNull();
+    expect(after[0]!.expires_at.getTime()).toBe(before[0]!.expires_at.getTime());
+
+    // And the resend works again the moment the flag goes back, on the same row.
+    await setArchived(partner, false);
+    const again = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/users/invitations/${id}/resend`,
+      headers: authHeader(admin.token),
+    });
+    expect(again.statusCode).toBe(200);
+  });
+
   it('leaves an invitation with no firm behind it alone', async () => {
     // `partner_id` is null for a platform-side seat, and the predicate has to
     // pass those: an EXISTS over a NULL id matches nothing, so an unqualified

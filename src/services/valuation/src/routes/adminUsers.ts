@@ -388,7 +388,14 @@ export function registerAdminUserRoutes(
     if (!isUlid(id)) throw problems.notFound();
 
     const refreshed = await refreshInvitation(deps.pool, id);
-    if (!refreshed) throw problems.conflict('This invitation was already accepted or revoked');
+    // See `refreshInvitation`: the same firm the mint and the redemption both
+    // ask about, said here rather than in a link that dead-ends.
+    if (refreshed.status === 'archived_partner')
+      throw problems.conflict(
+        'This invitation names an archived partner and cannot be accepted while it stays that way. ' +
+          'Restore the partner from the partner list, or revoke the invitation.',
+      );
+    if (refreshed.status !== 'ok') throw problems.conflict('This invitation was already accepted or revoked');
     const inviter = await findUserById(deps.pool, principal.id);
     await sendInviteEmail(req, refreshed.invitation, refreshed.secret, inviter?.email ?? 'An administrator');
     await audit(principal.id, 'invitation_resent', 'invitation', id, refreshed.invitation.email);

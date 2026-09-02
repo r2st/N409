@@ -189,20 +189,51 @@ export async function hasPendingInvitation(pool: pg.Pool, email: string): Promis
   return rows.length > 0;
 }
 
-/** Resend: mint a new token + expiry, invalidating the previous link. */
-export async function refreshInvitation(
-  pool: pg.Pool,
-  id: string,
-): Promise<{ invitation: InvitationRow; secret: string } | null> {
+export type RefreshResult =
+  | { status: 'ok'; invitation: InvitationRow; secret: string }
+  | { status: 'gone' }
+  | { status: 'archived_partner' };
+
+/**
+ * Resend: mint a new token + expiry, invalidating the previous link.
+ *
+ * The third door onto this row, and the one that was asking the fewest
+ * questions. Minting refuses an archived partner (`assertAssignablePartner`)
+ * and redeeming refuses one (`LIVE_PARTNER_SQL`, on both the accept and the
+ * invite-info reader) — a resend sat between them asking only about the row's
+ * own two columns, so an invitation into a firm that had been archived since it
+ * went out was re-minted, re-mailed and answered 200, and the link it put in
+ * someone's inbox is refused by the page that would show them the form.
+ *
+ * Resend is also the only way to revive a lapsed invitation, which is what
+ * makes this more than cosmetic: an administrator whose way of dealing with a
+ * dead link is to send it again gets no signal at all that the reason it is
+ * dead is one they can act on. The refusal names it, and names both remedies —
+ * the archive flag is a boolean an administrator can set back, so the row is
+ * left pending and revocable exactly as `acceptInvitation` leaves it.
+ */
+export async function refreshInvitation(pool: pg.Pool, id: string): Promise<RefreshResult> {
   const secret = randomBytes(32).toString('base64url');
   const { rows } = await pool.query<InvitationRow>(
     `UPDATE user_invitations
      SET token_sha256 = $2, expires_at = now() + interval '${INVITE_TTL}'
      WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL
+       AND ${LIVE_PARTNER_SQL}
      RETURNING ${RETURNING}`,
     [id, hashToken(secret)],
   );
-  return rows[0] ? { invitation: rows[0], secret } : null;
+  if (rows[0]) return { status: 'ok', invitation: rows[0], secret };
+
+  // Which of the two predicates refused. Read after the fact and only on the
+  // failing path: it decides a sentence, not an outcome, and the row cannot
+  // become redeemable again between the two statements without an
+  // administrator un-archiving the firm in that window.
+  const { rows: live } = await pool.query(
+    `SELECT 1 FROM user_invitations
+     WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL`,
+    [id],
+  );
+  return { status: live.length > 0 ? 'archived_partner' : 'gone' };
 }
 
 /**
