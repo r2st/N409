@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
+import type { EventActor } from '../events/record.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { deleteSignature, listSignatures, upsertSignature } from '../repos/signatures.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -23,6 +24,8 @@ const SignBody = z.object({
   signer_title: z.string().max(200).nullable().optional(),
   signature_text: nonBlankText(2, 500),
 });
+
+const actorOf = (principal: Principal): EventActor => ({ actorType: 'human', actorId: principal.id });
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Signatures are operations-only');
@@ -57,14 +60,18 @@ export function registerSignatureRoutes(app: FastifyInstance, deps: { pool: pg.P
     const parsed = SignBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid signature', parsed.error);
 
-    const signature = await upsertSignature(deps.pool, {
-      valuationId: id,
-      role: parsed.data.role,
-      signerUserId: principal.id,
-      signerName: parsed.data.signer_name,
-      signerTitle: parsed.data.signer_title ?? null,
-      signatureText: parsed.data.signature_text,
-    });
+    const signature = await upsertSignature(
+      deps.pool,
+      {
+        valuationId: id,
+        role: parsed.data.role,
+        signerUserId: principal.id,
+        signerName: parsed.data.signer_name,
+        signerTitle: parsed.data.signer_title ?? null,
+        signatureText: parsed.data.signature_text,
+      },
+      actorOf(principal),
+    );
     return reply.status(201).send({ signature });
   });
 
@@ -80,7 +87,7 @@ export function registerSignatureRoutes(app: FastifyInstance, deps: { pool: pg.P
         throw problems.conflict('Cannot remove signatures from a published valuation');
       }
       if (role !== 'main' && role !== 'second') throw problems.notFound();
-      const removed = await deleteSignature(deps.pool, id, role);
+      const removed = await deleteSignature(deps.pool, id, role, actorOf(principal));
       if (!removed) throw problems.notFound();
       return reply.status(204).send();
     },

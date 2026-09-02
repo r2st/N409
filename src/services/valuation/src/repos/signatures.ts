@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { newUlid, problems } from '@n409/shared';
 import { withTransaction, type Queryable } from '../db/pool.js';
 import { lockPublishGate } from './publishLock.js';
+import { recordEvent, type EventActor } from '../events/record.js';
 
 export type SignatureRole = 'main' | 'second';
 
@@ -46,7 +47,19 @@ async function assertNotPublished(
   if (rows[0]?.state === 'published') throw problems.conflict(message);
 }
 
-/** Insert-or-replace: re-signing after changes supersedes the previous row. */
+/**
+ * Insert-or-replace: re-signing after changes supersedes the previous row.
+ *
+ * The replacement is the reason this records (R388, M3). One row per role is
+ * the right shape for "who is certifying this engagement now", and it is the
+ * whole of what this table can say: the `ON CONFLICT DO UPDATE` below writes
+ * the new signatory over the old one, and the old one is then nowhere. A file
+ * signed by one reviewer, re-signed by another and published carried no record
+ * that the first certification was ever given — see `signature_recorded` in
+ * `domain/auditTrail.ts`. The event is in the same transaction as the write,
+ * per `events/record.ts`, and names the superseded signatory when there was
+ * one, because that is the fact the row can no longer hold.
+ */
 export async function upsertSignature(
   pool: pg.Pool,
   input: {
@@ -57,10 +70,40 @@ export async function upsertSignature(
     signerTitle?: string | null;
     signatureText: string;
   },
+  actor: EventActor,
 ): Promise<SignatureRow> {
   return withTransaction(pool, async (client) => {
     await assertNotPublished(client, input.valuationId, 'Cannot re-sign a published valuation');
-    return upsertSignatureIn(client, input);
+    // Read before the write, for the reason `deleteOrganization` reads before
+    // its detach: the `RETURNING` hands back the row as it now is, and the
+    // superseded signatory is exactly what this statement is about to
+    // overwrite. Under the gate lock already held, so nothing lands between.
+    const { rows: prior } = await client.query<SignatureRow>(
+      'SELECT * FROM valuation_signatures WHERE valuation_id = $1 AND role = $2',
+      [input.valuationId, input.role],
+    );
+    const superseded = prior[0];
+    const signature = await upsertSignatureIn(client, input);
+    await recordEvent(client, {
+      valuationId: input.valuationId,
+      type: 'signature_recorded',
+      actor,
+      payload: {
+        role: input.role,
+        signer_name: input.signerName,
+        signer_title: input.signerTitle ?? null,
+        ...(superseded
+          ? {
+              replaced: {
+                signer_user_id: superseded.signer_user_id,
+                signer_name: superseded.signer_name,
+                signed_at: superseded.signed_at,
+              },
+            }
+          : {}),
+      },
+    });
+    return signature;
   });
 }
 
@@ -107,18 +150,41 @@ export async function listSignatures(pool: pg.Pool, valuationId: string): Promis
   return rows;
 }
 
+/**
+ * Withdraw a signature.
+ *
+ * `RETURNING *` rather than a row count, because the event has to say whose
+ * attestation was withdrawn and when it had been given — after this statement
+ * the row is gone and nothing else on the platform holds it. A delete that
+ * matched nothing writes nothing: the route answers 404 and no attestation
+ * changed hands.
+ */
 export async function deleteSignature(
   pool: pg.Pool,
   valuationId: string,
   role: SignatureRole,
+  actor: EventActor,
 ): Promise<boolean> {
   return withTransaction(pool, async (client) => {
     await assertNotPublished(client, valuationId, 'Cannot remove signatures from a published valuation');
-    const { rowCount } = await client.query(
-      'DELETE FROM valuation_signatures WHERE valuation_id = $1 AND role = $2',
+    const { rows } = await client.query<SignatureRow>(
+      'DELETE FROM valuation_signatures WHERE valuation_id = $1 AND role = $2 RETURNING *',
       [valuationId, role],
     );
-    return (rowCount ?? 0) > 0;
+    const removed = rows[0];
+    if (!removed) return false;
+    await recordEvent(client, {
+      valuationId,
+      type: 'signature_removed',
+      actor,
+      payload: {
+        role,
+        signer_user_id: removed.signer_user_id,
+        signer_name: removed.signer_name,
+        signed_at: removed.signed_at,
+      },
+    });
+    return true;
   });
 }
 

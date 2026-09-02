@@ -280,6 +280,33 @@ export const EVENT_CATALOG = {
   board_resolution_reopened: D('Board resolution reopened', 'review', 'critical', 'client'),
   board_signoff_recorded: D('Board sign-off recorded', 'review', 'critical', 'client'),
 
+  /*
+   * The certification the publish gate is built around, and the withdrawal of
+   * it (R388, methodology M3).
+   *
+   * `valuation_signatures` holds one row per role, so it answers "who is
+   * certifying this engagement now" and nothing else. `upsertSignature`
+   * overwrites the row on a re-sign and `deleteSignature` removes it, and
+   * neither wrote anything: an engagement could be signed by one reviewer,
+   * re-signed by another, and published, with no record anywhere that the
+   * first signature was ever given.
+   *
+   * Removal is not an exotic path. `assertPublishGate`'s own refusal for a
+   * stale second signature tells the operator to "have the second signatory
+   * re-sign, or remove their signature on the Signatures panel, before
+   * publishing" — so withdrawing a concurring appraiser's attestation is a
+   * sanctioned step on the way to delivery, and it was the one step on that
+   * way that left no trace. Every neighbour on the same path is on the spine:
+   * `qa_review_completed`, `changes_requested`, `board_signoff_recorded`,
+   * `report_rendered`.
+   *
+   * `critical` for the reason `qa_review_completed` is, and internal for the
+   * reason it is too — the deliverable prints the signatures it carries, and
+   * who was asked to sign it and did not is the firm's own quality control.
+   */
+  signature_recorded: D('Valuation signed', 'review', 'critical'),
+  signature_removed: D('Signature removed', 'review', 'critical'),
+
   // ── Output & delivery ───────────────────────────────────────────────────
   report_saved: D('Report draft saved', 'output', 'notice'),
   report_reverted: D('Report reverted', 'output', 'critical'),
