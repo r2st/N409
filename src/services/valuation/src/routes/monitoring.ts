@@ -23,9 +23,10 @@ import {
 } from '../repos/capTables.js';
 import { findUsersByIds } from '../repos/users.js';
 import {
+  boardResolutionHead,
   findResolutionByValuation,
-  findResolutionsByValuationIds,
-  type BoardResolutionRow,
+  findResolutionHeadsByValuationIds,
+  type BoardResolutionHead,
 } from '../repos/boardApprovals.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
@@ -118,7 +119,14 @@ interface SnapshotSources {
    * summary. The type is what keeps it narrow.
    */
   capTable: CapTableHead | null;
-  resolution: BoardResolutionRow | null;
+  /**
+   * The one column this function reads off a board resolution, for the reason
+   * the three above are heads (R398). `board_resolutions` is three long text
+   * columns around one date — `body_html` holds the whole rendered document and
+   * the other two again inside it — and a page of monitors was pulling every
+   * one of them to read a day. The type is what keeps it narrow.
+   */
+  resolution: BoardResolutionHead | null;
 }
 
 /**
@@ -251,7 +259,10 @@ async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<Li
       calc: head,
       params: paramsHead,
       capTable: capTableHeadRow,
-      resolution,
+      // Narrowed here for the reason the three above are: one row is one row,
+      // `findResolutionByValuation` is what every other caller uses, and both
+      // paths then hand `assembleSnapshot` the same shape.
+      resolution: resolution ? boardResolutionHead(resolution) : null,
     }),
     cap_table_changed_at: capTableHeadRow?.updated_at ?? null,
   };
@@ -269,7 +280,7 @@ async function buildSnapshots(pool: pg.Pool, valuations: ValuationRow[]): Promis
     latestSucceededCalculationHeadsByValuationIds(pool, ids),
     findParamsHeadsByValuationIds(pool, ids),
     findCapTableHeadsByValuationIds(pool, ids),
-    findResolutionsByValuationIds(pool, ids),
+    findResolutionHeadsByValuationIds(pool, ids),
   ]);
   return new Map(
     valuations.map((valuation) => {

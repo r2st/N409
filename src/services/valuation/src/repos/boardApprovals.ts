@@ -217,6 +217,51 @@ export async function findResolutionsByValuationIds(
 }
 
 /**
+ * The one fact the monitoring snapshot reads off a board resolution (R398, M8).
+ *
+ * Same shape as `CalculationHead` (R298), `ValuationParamsHead` (R393) and
+ * `CapTableHead`: `assembleSnapshot` takes `valuation_date` — the day the
+ * safe-harbor clock is counted from — and reads nothing else on the row.
+ */
+export interface BoardResolutionHead {
+  valuation_id: string;
+  /** The `date` column, through {@link calendarDateRow} as the wide read is. */
+  valuation_date: string;
+}
+
+/**
+ * Heads for a list of valuations, for {@link BoardResolutionHead}'s reason.
+ *
+ * The wide reader is a `SELECT *` and this table is three long text columns
+ * around one date. `body_html` is the whole rendered resolution — 1.7 kB of
+ * boilerplate before the analyst's own prose — and it *contains* the other two,
+ * `methodology_summary` (capped at 4,000 characters by the route that writes
+ * it) and `appraiser_qualifications`, which are stored again beside it. So a
+ * page of `POST /monitors/scan` was pulling somewhere between 1.1 MB and 7 MB
+ * across the wire, at 500 monitors, to read 500 dates.
+ *
+ * Spelled out as a column list rather than `SELECT *` minus three, because
+ * there is no such SQL — and because that is what makes a fourth text column
+ * added to this table absent here by default rather than fetched by default.
+ */
+export async function findResolutionHeadsByValuationIds(
+  pool: pg.Pool,
+  valuationIds: string[],
+): Promise<Map<string, BoardResolutionHead>> {
+  if (valuationIds.length === 0) return new Map();
+  const { rows } = await pool.query<BoardResolutionHead>(
+    'SELECT valuation_id, valuation_date FROM board_resolutions WHERE valuation_id = ANY($1)',
+    [[...new Set(valuationIds)]],
+  );
+  return new Map(rows.map((row) => [row.valuation_id, calendarDateRow(row, 'valuation_date')]));
+}
+
+/** The head of a row already in hand, so the one-valuation path narrows here. */
+export function boardResolutionHead(row: BoardResolutionRow): BoardResolutionHead {
+  return { valuation_id: row.valuation_id, valuation_date: row.valuation_date };
+}
+
+/**
  * Put a director on the sign-off list.
  *
  * THE `FOR UPDATE` IS THE POINT, and it is the same argument `recordSignoff`

@@ -93,6 +93,10 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'caller',
     why: 'One row per valuation id handed in, and every caller passes a page of `eachEnabledMonitor` or of a capped list.',
   },
+  'boardApprovals.ts:findResolutionHeadsByValuationIds': {
+    bound: 'caller',
+    why: 'The narrowed form of the reader above, and bounded the same way: one head per valuation id handed in.',
+  },
   'capTables.ts:findCapTablesByValuationIds': {
     bound: 'caller',
     why: 'One cap table per valuation id handed in.',
