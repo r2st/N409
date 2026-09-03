@@ -78,7 +78,12 @@ def test_a_sparse_pdf_still_stops_at_the_page_ceiling(monkeypatch):
             self.pages = [_Blank(tally, i) for i in range(500)]
 
     monkeypatch.setattr("app.documents.PdfReader", lambda _stream: _BlankReader())
-    _pdf_text(b"%PDF-1.4 stub")
+    # The ceiling is what this test is about, and it still holds. The refusal
+    # is R397's: forty pages of nothing is a scan, not a blank document, and
+    # returning "" said the second thing. See
+    # `test_a_pdf_with_no_extractable_text_is_declared_not_read_as_blank`.
+    with pytest.raises(ValueError):
+        _pdf_text(b"%PDF-1.4 stub")
     assert len(tally) == 40
 
 
@@ -177,3 +182,41 @@ def test_a_budgeted_document_reaches_extract_texts_intact(monkeypatch):
     out = extract_texts([doc])
     assert len(out) == 1
     assert len(out[0].text) == MAX_CHARS_PER_DOC
+
+
+# ── A PDF whose pages carry no text ──────────────────────────────────────────
+
+
+def test_a_pdf_with_no_extractable_text_is_declared_not_read_as_blank(monkeypatch):
+    """Every page returning "" made the reader return "\n", which reached the
+    corpus as a document with nothing under its heading — indistinguishable
+    from one that had nothing in it. R397 (M11)."""
+    from app.documents import extract_texts
+
+    class _Blank:
+        def extract_text(self) -> str:
+            return ""
+
+    class _BlankReader:
+        pages = [_Blank(), _Blank()]
+
+    monkeypatch.setattr("app.documents.PdfReader", lambda _stream: _BlankReader())
+    doc = {
+        "id": "d",
+        "filename": "board_consent.pdf",
+        "kind": "other",
+        "content_base64": base64.b64encode(b"%PDF-1.4 stub").decode(),
+    }
+    [out] = extract_texts([doc])
+    assert out.text.startswith("[could not extract text:")
+    # The sentence has to name the fix — it is the one thing separating this
+    # from every other unreadable file.
+    assert "OCR" in out.text
+
+
+def test_a_pdf_whose_pages_carry_text_is_untouched(monkeypatch):
+    class _Reader1:
+        pages = [type("P", (), {"extract_text": lambda self: "Board consent"})()]
+
+    monkeypatch.setattr("app.documents.PdfReader", lambda _stream: _Reader1())
+    assert _pdf_text(b"%PDF-1.4 stub") == "Board consent"

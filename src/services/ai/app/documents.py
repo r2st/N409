@@ -290,7 +290,36 @@ def _pdf_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
         size += len(text) + 1
         if size >= limit:
             break
-    return "\n".join(pages)
+    out = "\n".join(pages)
+    if not out.strip():
+        # A SCAN IS NOT A BLANK PAGE (round 397, methodology M11).
+        #
+        # `page.extract_text()` returns "" for a page whose content is an
+        # image, which is what a signed board consent, a term sheet or a
+        # certificate of incorporation is when the client photographed it or
+        # ran it through the office scanner — the most ordinary way a real
+        # document arrives here unreadable. Every page returning "" made this
+        # function return "", and `extract_texts` passed that straight through:
+        # a document in the corpus with nothing under its heading.
+        #
+        # Which reads, to the model and to the analyst looking at the
+        # per-document summary, exactly like a document that had nothing in it.
+        # Nothing raised, so the run counted no failure and
+        # `documents_unreadable` stayed at zero, while the extraction that came
+        # back was drawn from a corpus one file short and said so nowhere.
+        #
+        # `strip()` rather than `not out`: the join above puts a newline
+        # between pages, so a two-page scan already returns "\n" and not "".
+        # Raised rather than noted in place because that is the degrade this
+        # module has, and because the sentence is one the analyst can act on —
+        # it names the fix, which is the only thing separating this from every
+        # other unreadable file.
+        raise ValueError(
+            "no text could be read out of this PDF — it is almost certainly a scan or a "
+            "photograph, which has to be run through OCR, or re-saved from the program "
+            "that produced it, before it can be read"
+        )
+    return out
 
 
 def _rich_text(node: ElementTree.Element) -> str:
