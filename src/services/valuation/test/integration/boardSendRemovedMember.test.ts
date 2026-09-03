@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
-import { markMemberSent, remintSignoffToken } from '../../src/repos/boardApprovals.js';
+import { findSignoffById, markMemberSent, remintSignoffToken } from '../../src/repos/boardApprovals.js';
 
 const dbUp = await isDbAvailable();
 
@@ -126,11 +126,16 @@ describe.skipIf(!dbUp)('sending a signing link to a member removed in the same m
     // to have a way of saying it.
     const email = 'dana+outcomes@board.example';
     const { memberId } = await newMember('OutcomeCo', email);
+    const signoff = (await findSignoffById(ctx.pool, memberId))!;
+    const actor = { actorType: 'human', actorId: ops.id } as const;
     expect(await remintSignoffToken(ctx.pool, memberId, 'a'.repeat(64))).toBe(true);
-    expect(await markMemberSent(ctx.pool, memberId)).toBe(true);
+    expect(await markMemberSent(ctx.pool, signoff, actor)).toBe(true);
 
     await ctx.pool.query('DELETE FROM board_signoffs WHERE id = $1', [memberId]);
     expect(await remintSignoffToken(ctx.pool, memberId, 'b'.repeat(64))).toBe(false);
-    expect(await markMemberSent(ctx.pool, memberId)).toBe(false);
+    // The stamp takes the row it is about to write under its own lock, so a
+    // removed member is `false` here and writes no `board_resolution_sent`
+    // either — the spine must not report a send for a director who is gone.
+    expect(await markMemberSent(ctx.pool, signoff, actor)).toBe(false);
   });
 });

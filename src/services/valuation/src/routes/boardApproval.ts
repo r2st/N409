@@ -458,7 +458,10 @@ export function registerBoardApprovalRoutes(
         );
         throw err;
       }
-      const stamped = await markMemberSent(deps.pool, member.id).catch((err: unknown) => {
+      const stamped = await markMemberSent(deps.pool, member, {
+        actorType: 'human',
+        actorId: principal.id,
+      }).catch((err: unknown) => {
         logUnretried(
           app.log,
           err,

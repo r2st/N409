@@ -425,12 +425,62 @@ export async function remintSignoffToken(
  * statement earlier and on another connection, and `deleteBoardMember` is a
  * live door in exactly that window: the same one it reasons about itself when
  * it refuses to write twice for a double-clicked remove.
+ *
+ * AND THIS IS WHERE `board_resolution_sent` IS WRITTEN (R396, methodology M3).
+ * The type has been declared in `BOARD_EVENT_TYPES` and described in the
+ * catalog — client-visible, `notice` — since the feature shipped, and nothing
+ * has ever written it. So the board state machine's trail read
+ * `board_resolution_generated` and then, some days later,
+ * `board_resolution_approved`, with the step that produced the second missing
+ * from between them: the client could not see that their directors had been
+ * asked, or when, or how often.
+ *
+ * `sent_at` is not that record and cannot be made into one. It is one nullable
+ * column on a row `deleteBoardMember` removes and `upsertResolution` discards
+ * wholesale, so the fact that a director was asked to sign is destroyed with
+ * the row — which is the argument `board_member_removed` already makes for
+ * keeping the address, and the argument R312 made for recording the
+ * regeneration. It also holds one instant, and this route is re-sendable: each
+ * re-send revokes the link the previous one put in an inbox, and only the last
+ * of them was anywhere.
+ *
+ * In the stamp's transaction rather than beside it, so the two cannot disagree:
+ * a spine saying the resolution went out to a member the list shows as unsent
+ * is worse than either fact alone. `signoff_id` names the row and no address is
+ * copied, per `addBoardMember`.
  */
-export async function markMemberSent(pool: pg.Pool, signoffId: string): Promise<boolean> {
-  const { rowCount } = await pool.query('UPDATE board_signoffs SET sent_at = now() WHERE id = $1', [
-    signoffId,
-  ]);
-  return (rowCount ?? 0) > 0;
+export async function markMemberSent(
+  pool: pg.Pool,
+  signoff: BoardSignoffRow,
+  actor: EventActor,
+): Promise<boolean> {
+  return withTransaction(pool, async (client) => {
+    // Read before the write, under the lock the UPDATE is about to take, for
+    // the reason `upsertResolution` reads before its own: `RETURNING` hands
+    // back the row as it now is, and whether this was the first send is
+    // precisely the column being overwritten.
+    const { rows: prior } = await client.query<{ sent_at: Date | null }>(
+      'SELECT sent_at FROM board_signoffs WHERE id = $1 FOR UPDATE',
+      [signoff.id],
+    );
+    if (prior.length === 0) return false;
+    await client.query('UPDATE board_signoffs SET sent_at = now() WHERE id = $1', [signoff.id]);
+    await recordEvent(client, {
+      valuationId: signoff.valuation_id,
+      type: BOARD_EVENT_TYPES.resolutionSent,
+      actor,
+      payload: {
+        resolution_id: signoff.resolution_id,
+        signoff_id: signoff.id,
+        // Which send this was. A re-send is not a repetition: it mints a new
+        // token and kills the link the previous message carried, so a director
+        // holding the older mail has a dead one — and the trail is where that
+        // sequence is legible.
+        resent: prior[0]!.sent_at !== null,
+      },
+    });
+    return true;
+  });
 }
 
 /**
