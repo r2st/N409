@@ -301,16 +301,50 @@ export async function saveCapTable(
       if (live[0]?.version !== expectedVersion) staleWrite(live[0]?.version, expectedVersion);
     }
 
-    const { rows } = await client.query<CapTableRow>(
-      `INSERT INTO cap_tables (id, valuation_id, source_format, entries, validation, column_mapping, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+    /*
+     * THE OTHER HALF OF THE COLUMN NOBODY READS (R402, methodology M8).
+     *
+     * R393 took `validation` out of both readers, having established that there
+     * is no path on which the stored value is the one a caller sees —
+     * `withFreshValidation` replaces it on every read. What it left alone was
+     * this statement, which is where the blob comes from: it was serialised
+     * here, parsed into `jsonb` by the server, written to the row (and its
+     * TOAST table), journalled to WAL, carried into every base backup — and then
+     * handed straight back by `RETURNING *`, across the wire, through the
+     * driver's `JSON.parse`, to be discarded by the next reader.
+     *
+     * A cache that no reader selects is not a cache. It is a second copy of the
+     * row, and on the shape this table actually takes it is the *larger* copy:
+     * `validateCapTable` emits one issue object with a prose message per
+     * finding, and the per-entry rules are a product of entries and rules. A
+     * 2,000-row register of preferred classes with no price recorded — valid,
+     * saveable, and the ordinary shape of a share register — raises
+     * `no_investment` on every row: 2,001 issues, 342 kB of JSON and 380 kB of
+     * `jsonb` beside 345 kB of entries. The write doubled the row to store a
+     * value nothing would ever read back.
+     *
+     * So the column is written as the empty document its own DDL defaults to
+     * (0074: `jsonb NOT NULL DEFAULT '{}'`), and set back to that on an update
+     * so a re-save reclaims whatever a previous release stored. `RETURNING` is
+     * the reader's own column list for the same reason it is in
+     * `findCapTable` — there is no `SELECT *` minus a column — and the row this
+     * function answers with carries `withFreshValidation`'s derivation, which is
+     * by construction what the caller's next read would have given it.
+     *
+     * `input.validation` stays in the signature: `recordEvent` below states
+     * `valid` on the import event, and that is a fact about what was saved
+     * rather than a cache of it.
+     */
+    const { rows } = await client.query<StoredCapTableRow>(
+      `INSERT INTO cap_tables (id, valuation_id, source_format, entries, column_mapping, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ${
          expectAbsent
            ? 'ON CONFLICT (valuation_id) DO NOTHING'
            : `ON CONFLICT (valuation_id) DO UPDATE SET
          source_format  = EXCLUDED.source_format,
          entries        = EXCLUDED.entries,
-         validation     = EXCLUDED.validation,
+         validation     = '{}'::jsonb,
          column_mapping = EXCLUDED.column_mapping,
          updated_at     = now(),
          -- Not EXCLUDED.version: that is the new row's default (1), which would
@@ -319,13 +353,12 @@ export async function saveCapTable(
          -- asked to be guarded.
          version        = cap_tables.version + 1`
        }
-       RETURNING *`,
+       RETURNING ${STORED_CAP_TABLE_COLUMNS}`,
       [
         newUlid(),
         input.valuationId,
         input.sourceFormat,
         JSON.stringify(input.entries),
-        JSON.stringify(input.validation),
         JSON.stringify(input.columnMapping),
         input.createdBy,
       ],
@@ -344,6 +377,6 @@ export async function saveCapTable(
         valid: input.validation.valid,
       },
     });
-    return rows[0]!;
+    return withFreshValidation(rows[0]!);
   });
 }
