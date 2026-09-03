@@ -3,6 +3,7 @@ import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { ENGAGEMENT_EVENT_TYPES, stageByKey, type StageHistoryEntry } from '../domain/engagement.js';
+import { STATE_GROUPS } from '../domain/operations.js';
 import type { RoleKey } from '../domain/roles.js';
 
 export interface EngagementRow {
@@ -325,8 +326,33 @@ const ACTIVE_ENGAGEMENT_SELECT = `
        WHERE ur.user_id = e.assigned_analyst_id
     ) ar ON true`;
 
-/** Applied by both readers below; see ACTIVE_ENGAGEMENT_SELECT for why. */
-const ACTIVE_ENGAGEMENT_WHERE = `v.archived_at IS NULL AND e.current_stage <> 'complete'`;
+/**
+ * Applied by both readers below; see ACTIVE_ENGAGEMENT_SELECT for why.
+ *
+ * A CLOSED VALUATION IS THE OTHER WAY THE WORK STOPS (round 400, methodology
+ * M3). The paragraph above is about `archived_at`, and it is the rarer half:
+ * retirement is the retention sweep's word for a file the firm withdraws years
+ * later. `cancelled`, `timeout` and `ignored` are how work actually stops — the
+ * three terminal states of `WORKFLOW_TRANSITIONS`, reached the week the client
+ * goes quiet — and nothing cascades from them onto the engagement. Closing a
+ * valuation moves `state` and nothing else: not `engagements.current_stage`,
+ * which only `advanceStage` writes and which nobody is going to advance,
+ * because nobody is working the file.
+ *
+ * So the row stays `<> 'complete'` forever and both readers kept finding it,
+ * with exactly the two consequences named above and one worse: the board showed
+ * a called-off engagement among the live ones, and the overdue sweep emailed
+ * the assigned analyst "Overdue: … is past SLA in …" about it once per tick,
+ * for as long as the stage stayed open — which is forever — while writing an
+ * `engagement_overdue_reminder` onto a spine whose 0001 trigger will not let it
+ * be taken back off.
+ *
+ * `STATE_GROUPS.closed` rather than three literals: this is the fourth
+ * predicate in the service asking what "closed" means, and a list spelled once
+ * per query is how they come to disagree.
+ */
+const ACTIVE_ENGAGEMENT_WHERE = `v.archived_at IS NULL AND e.current_stage <> 'complete'
+     AND v.state <> ALL(ARRAY[${STATE_GROUPS.closed.map((s) => `'${s}'`).join(', ')}]::valuation_state[])`;
 
 /**
  * Every active engagement, a page at a time.
