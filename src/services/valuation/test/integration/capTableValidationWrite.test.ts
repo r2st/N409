@@ -128,7 +128,9 @@ describe.skipIf(!dbUp)('cap-table writes do not store the column nobody reads (R
     // table is valid, saveable, and carries one issue per row.
     const rows = entries(400, null);
     const saved = await save(id, rows);
-    expect(saved.validation.issues.length).toBeGreaterThan(300);
+    // One `no_investment` per row, past the issue cap — so the document this
+    // statement would otherwise have stored is the large one.
+    expect(saved.validation.issues.length + saved.validation.issues_truncated).toBeGreaterThan(300);
 
     const { rows: stored } = await ctx.pool.query<{ validation: unknown }>(
       'SELECT validation FROM cap_tables WHERE valuation_id = $1',

@@ -920,9 +920,41 @@ export interface CapTableSummary {
   class_count: number;
 }
 
+/**
+ * The most issues one validation may carry (R402, methodology M8).
+ *
+ * The per-entry rules are a *product* — entries times rules — and nothing
+ * bounded the result. That is not a hostile shape: a register of preferred
+ * classes with no price recorded raises `no_investment` on every row, which is
+ * valid, saveable and the ordinary shape of a share register off a transfer
+ * agent. At {@link MAX_CAP_TABLE_ENTRIES} it is 2,001 issue objects, each
+ * carrying its own prose sentence — 342 kB of JSON, re-derived on every read
+ * (`withFreshValidation`), sent on every read of the cap-table tab, and drawn as
+ * 2,001 list items the reader has to scroll past to reach the summary under
+ * them.
+ *
+ * Two hundred is where a list stops being read line by line. It is well above
+ * any table an analyst reconciles by hand and far above every fixture in the
+ * tree, so nothing that was reported before is reported differently now — what
+ * changes is only the tail of a systematic finding, and `issues_truncated` says
+ * how much of it there was.
+ */
+export const MAX_CAP_TABLE_ISSUES = 200;
+
 export interface CapTableValidation {
   valid: boolean;
   issues: CapTableIssue[];
+  /**
+   * Issues past {@link MAX_CAP_TABLE_ISSUES}, dropped from `issues`.
+   *
+   * Zero on every ordinary table. Disclosed rather than silent, for the reason
+   * every capped list on this service states its own cap: a list that stops
+   * without saying so is read as the whole answer.
+   *
+   * `valid` is **not** derived from the kept list — it counts errors across the
+   * uncapped set — so a table cannot be truncated into validity.
+   */
+  issues_truncated: number;
   summary: CapTableSummary;
 }
 
@@ -1469,7 +1501,28 @@ export function validateCapTable(
     }
   }
 
-  return { valid: !issues.some((i) => i.severity === 'error'), issues, summary };
+  /*
+   * Errors first, then warnings, and the cap applied to the concatenation.
+   *
+   * The order is `ValidationBanner`'s own — errors are what block the save, so
+   * they stay together at the top — and applying the cap after it is what makes
+   * the truncation safe to read: a table whose errors alone exceed the cap
+   * shows errors, never a page of warnings with the errors cut off behind them.
+   *
+   * `valid` is computed over the uncapped list. Deriving it from the kept one
+   * would let a table with two hundred warnings and one error past the gate,
+   * which is the one thing this list is load-bearing for.
+   */
+  const valid = !issues.some((i) => i.severity === 'error');
+  if (issues.length <= MAX_CAP_TABLE_ISSUES) {
+    return { valid, issues, issues_truncated: 0, summary };
+  }
+  const errors = issues.filter((i) => i.severity === 'error');
+  const kept = [...errors, ...issues.filter((i) => i.severity !== 'error')].slice(
+    0,
+    MAX_CAP_TABLE_ISSUES,
+  );
+  return { valid, issues: kept, issues_truncated: issues.length - kept.length, summary };
 }
 
 export interface WaterfallInputs {

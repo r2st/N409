@@ -56,6 +56,14 @@ interface Issue {
 interface Validation {
   valid: boolean;
   issues: Issue[];
+  /**
+   * Issues the server dropped past its own cap (`MAX_CAP_TABLE_ISSUES`).
+   *
+   * Optional so a response from a build that predates the cap still types, and
+   * because that is the same response an absent field would produce: nothing was
+   * dropped.
+   */
+  issues_truncated?: number;
   summary: {
     total_shares: number;
     common_shares: number;
@@ -148,6 +156,11 @@ function byRow(a: Issue, b: Issue): number {
 function ValidationBanner({ validation }: { validation: Validation }) {
   const errors = validation.issues.filter((i) => i.severity === 'error');
   const warnings = validation.issues.filter((i) => i.severity === 'warning');
+  // A list that stops without saying so is read as the whole answer. The
+  // per-entry rules are a product of entries and rules, so a systematic finding
+  // on a large register runs to thousands; the server keeps the first
+  // `MAX_CAP_TABLE_ISSUES` and reports the rest as a count.
+  const omitted = validation.issues_truncated ?? 0;
   return (
     <div
       className={`rounded-md border px-4 py-3 text-sm ${
@@ -181,6 +194,12 @@ function ValidationBanner({ validation }: { validation: Validation }) {
               <span>{i.message}</span>
             </li>
           ))}
+          {omitted > 0 && (
+            <li className="pt-1 text-ink-500">
+              …and {omitted.toLocaleString()} more {omitted === 1 ? 'finding' : 'findings'} on rows
+              below these. Fix the ones listed and re-import to see the rest.
+            </li>
+          )}
         </ul>
       )}
     </div>
