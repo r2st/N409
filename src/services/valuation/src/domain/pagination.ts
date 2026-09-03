@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isStorableDate } from './calendarRange.js';
 
 /**
  * The `page` half of every paginated query string.
@@ -153,6 +154,40 @@ export function cursorAtSql(column: string): string {
 /** What {@link cursorAtSql} produces, and the only timestamp shape accepted. */
 export const CURSOR_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 
+/**
+ * Is this a shape *and* an instant?
+ *
+ * {@link CURSOR_AT_RE} is a shape check, and a shape check is not a calendar —
+ * the same distinction `market_movement.py._period` and `routes/rollforward.ts`
+ * make about `2026-02-31`, which "matches every plausible pattern and is not a
+ * day". `\d{2}` for the month admits 13, and for the day 45.
+ *
+ * That was the whole of the re-validation `decodeCursor` promises, and it left
+ * the failure that function exists to prevent wide open. It closes 22007
+ * (`'garbage'::timestamptz`, invalid *syntax*) and not 22008 (value out of
+ * range), which is what Postgres answers for a well-formed impossible date:
+ * measured on the deployment's own server, `'2026-02-31T00:00:00.000000Z'`,
+ * `'9999-13-45T25:61:61.999999Z'` and `'0000-00-00T00:00:00.000000Z'` all raise
+ * `22008 date/time field value out of range` when bound to
+ * `keysetAfterSql`'s `$n::timestamptz`. An uncaught driver error out of a
+ * partner's `?cursor=` — a 500 where the 400 beside it belongs.
+ *
+ * Two checks, because neither is the other. The round trip through `Date`
+ * refuses a date that is not a date: JavaScript rejects month 13 outright and
+ * *normalises* 2026-02-31 to 2026-03-03, so re-rendering and comparing is what
+ * catches the second kind. `isStorableDate` then applies the range the rest of
+ * the estate uses — year 0000 is a real `Date` and is not a year Postgres has.
+ *
+ * Milliseconds are the resolution `Date` carries; the microsecond tail is left
+ * to the regex, which has already established that it is six digits.
+ */
+function isRealCursorInstant(at: string): boolean {
+  const millis = `${at.slice(0, 23)}Z`;
+  const parsed = new Date(millis);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== millis) return false;
+  return isStorableDate(parsed);
+}
+
 /** ULIDs as `0001_core.sql`'s domain defines them (Crockford base32, 26 chars). */
 const CURSOR_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
@@ -196,7 +231,7 @@ export function decodeCursor(raw: string): Cursor | null {
   if (split < 0) return null;
   const at = decoded.slice(0, split);
   const id = decoded.slice(split + 1);
-  if (!CURSOR_AT_RE.test(at) || !CURSOR_ID_RE.test(id)) return null;
+  if (!CURSOR_AT_RE.test(at) || !isRealCursorInstant(at) || !CURSOR_ID_RE.test(id)) return null;
   return { at, id };
 }
 

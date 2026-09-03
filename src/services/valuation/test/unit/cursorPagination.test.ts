@@ -75,6 +75,33 @@ describe('cursor rejection', () => {
     'ulid of the wrong length': Buffer.from(`${AT}.01J00000000000000000000`, 'utf8').toString('base64url'),
     'empty id': Buffer.from(`${AT}.`, 'utf8').toString('base64url'),
     'empty string': '',
+    /*
+     * A shape is not a calendar.
+     *
+     * `CURSOR_AT_RE` is `\d{2}` for the month and `\d{2}` for the day, so each
+     * of these matched it and was handed to the driver. Bound to
+     * `keysetAfterSql`'s `$n::timestamptz` they raise `22008 date/time field
+     * value out of range` — measured against the deployment's own Postgres —
+     * which is not the 22007 the regex closes and is an uncaught 500 out of a
+     * partner's `?cursor=`, on the one function whose docstring promises that
+     * "every field is re-validated rather than trusted, because the alternative
+     * is a 500".
+     *
+     * 2026-02-31 is the interesting one: JavaScript does not refuse it, it
+     * *normalises* it to 2026-03-03, so only re-rendering and comparing catches
+     * it. Year 0000 is a real `Date` and not a year Postgres has.
+     */
+    'a day February does not have': Buffer.from(`2026-02-31T12:00:00.123456Z.${ID}`, 'utf8').toString(
+      'base64url',
+    ),
+    'a thirteenth month': Buffer.from(`2026-13-01T12:00:00.123456Z.${ID}`, 'utf8').toString('base64url'),
+    'an impossible clock': Buffer.from(`2026-08-15T25:61:61.123456Z.${ID}`, 'utf8').toString('base64url'),
+    'the zeroth of the zeroth': Buffer.from(`0000-00-00T00:00:00.000000Z.${ID}`, 'utf8').toString(
+      'base64url',
+    ),
+    'a year Postgres does not have': Buffer.from(`0000-01-01T00:00:00.000000Z.${ID}`, 'utf8').toString(
+      'base64url',
+    ),
   };
 
   for (const [name, raw] of Object.entries(rejected)) {
@@ -90,6 +117,12 @@ describe('cursor rejection', () => {
     const valid = encodeCursor({ at: AT, id: ID });
     expect(decodeCursor(`${valid}!`)).toBeNull();
     expect(decodeCursor(`${valid.slice(0, -1)}`)).toBeNull();
+  });
+
+  /** The leap day the calendar does have, so the check is not simply strict. */
+  it('accepts 29 February in a leap year', () => {
+    const at = '2024-02-29T12:00:00.123456Z';
+    expect(decodeCursor(encodeCursor({ at, id: ID }))).toEqual({ at, id: ID });
   });
 
   it('refuses an over-long cursor without decoding it', () => {
