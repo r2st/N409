@@ -1228,6 +1228,100 @@ export async function exportValuations(
 }
 
 /**
+ * The `valuation_params` columns a clone carries.
+ *
+ * A ROLL-FORWARD WAS COPYING THE 2022 HALF OF THE METHODOLOGY (round 395,
+ * methodology M3). This was an inline column list written when the table had
+ * twenty-four columns and never revisited; the table now has forty-three, and
+ * every column added since — the allocation method (0062/0076/0127), the DLOM
+ * model set and its study tables (0111, 0129, 0131), the development stage
+ * (0128), the required-return table (0130), the whole DLOC apparatus (0132)
+ * and the WACC build-up (0135) — was silently dropped. "Copy methodology
+ * params" is what the line above says it does, and those columns *are* the
+ * methodology: a roll-forward of a PWERM engagement came back on the default
+ * allocation, and one using the weighted DLOM form came back with no DLOM
+ * method at all, because `dlom_method` is carried and `dlom_methods` was not
+ * (the two are mutually exclusive by CHECK — `valuation_params_one_dlom_form`).
+ * Nothing said so: the new engagement is `pending`, so a params form showing
+ * defaults reads as a fresh engagement rather than as a copy that lost half
+ * its answers.
+ *
+ * Named here rather than inline because the list is the thing that goes stale.
+ * {@link UNCLONED_PARAM_COLUMNS} is the other half, and
+ * `cloneParamCoverage.test.ts` derives the table's real column set from
+ * `information_schema` and fails when a column is in neither — so the next
+ * migration to add one has to say which it is.
+ */
+export const CLONED_PARAM_COLUMNS = [
+  // The engagement's shape and its financial position (0001).
+  'inception_date',
+  'fiscal_year_end',
+  'exit_timeline',
+  'business_overview',
+  'revenue_status',
+  'last_round_date',
+  'last_year_revenue_cents',
+  'ytd_revenue_cents',
+  'runway_months',
+  'development_stage',
+  // Approach weighting and the approaches themselves (0001, 0062).
+  'weight_asset',
+  'weight_opm',
+  'weight_income',
+  'weight_market',
+  'allocation_method',
+  'market_method',
+  'market_horizon',
+  'market_custom_ranges',
+  'asset_method',
+  'required_return_table',
+  'wacc_inputs',
+  'auto_wacc',
+  // DLOM: the applied figure, both forms of "how it was derived", and the
+  // study tables those forms cite (0001, 0111, 0129, 0131).
+  'dlom',
+  'dlom_method',
+  'dlom_methods',
+  'dlom_qualitative',
+  'dlom_studies',
+  'dlom_statistic',
+  'dlom_study_table',
+  'dlom_pre_ipo_studies',
+  'dlom_pre_ipo_table',
+  // DLOC, the same shape one migration later (0001, 0132).
+  'dloc',
+  'dloc_method',
+  'control_premium',
+  'dloc_synergy_share',
+  'dloc_studies',
+  'dloc_statistic',
+  'dloc_study_table',
+] as const;
+
+/**
+ * The `valuation_params` columns a clone deliberately does not carry, and why.
+ *
+ * The pair to {@link CLONED_PARAM_COLUMNS}; together they must account for
+ * every column on the table, which is what `cloneParamCoverage.test.ts` pins.
+ */
+export const UNCLONED_PARAM_COLUMNS: Readonly<Record<string, string>> = {
+  valuation_id: 'the new engagement is the row, not a value on it',
+  rolling_forward: "the clone's own flag — set from the caller's roll-forward choice",
+  updated_at: "the copy is new; the source's edit time is not a fact about it",
+  version: 'the optimistic-lock counter starts over on a row nobody has edited',
+  // Not methodology. `engine_inputs` is the analyst-applied engine payload —
+  // every share class, the volatility, and `valuation_date`, which four
+  // surfaces read as the measurement date (`stateChange`, `communications`,
+  // the healthchecks). A roll-forward is by definition a *re-dating*, so
+  // carrying it forward would date the new engagement at last year's
+  // measurement date under a `rolling_forward` flag that says the opposite,
+  // and hand the client's prior cap table to an engagement whose cap table has
+  // not been collected. This is the same line the clone already draws for the
+  // cap table and the grants, which it does not copy either.
+  engine_inputs: 'last year\'s applied engine payload, including its measurement date',
+};
+
+/**
  * Clone / roll-forward (M3 feature 18): duplicate the aggregate root and its
  * methodology params into a fresh 'pending' engagement, linked back through
  * the audit spine.
@@ -1262,17 +1356,8 @@ export async function cloneValuation(
     );
     // Copy methodology params; a roll-forward flags the copy for re-dating.
     await client.query(
-      `INSERT INTO valuation_params
-         (valuation_id, rolling_forward, inception_date, fiscal_year_end, exit_timeline,
-          business_overview, revenue_status, last_round_date, last_year_revenue_cents,
-          ytd_revenue_cents, runway_months, weight_asset, weight_opm, weight_income,
-          weight_market, dloc, dlom, dlom_method, dlom_qualitative, market_method,
-          market_horizon, market_custom_ranges, asset_method)
-       SELECT $2, $3, inception_date, fiscal_year_end, exit_timeline,
-              business_overview, revenue_status, last_round_date, last_year_revenue_cents,
-              ytd_revenue_cents, runway_months, weight_asset, weight_opm, weight_income,
-              weight_market, dloc, dlom, dlom_method, dlom_qualitative, market_method,
-              market_horizon, market_custom_ranges, asset_method
+      `INSERT INTO valuation_params (valuation_id, rolling_forward, ${CLONED_PARAM_COLUMNS.join(', ')})
+       SELECT $2, $3, ${CLONED_PARAM_COLUMNS.join(', ')}
        FROM valuation_params WHERE valuation_id = $1`,
       [source.id, id, opts.rollForward],
     );
