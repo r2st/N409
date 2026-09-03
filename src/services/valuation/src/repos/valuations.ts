@@ -1322,6 +1322,104 @@ export const UNCLONED_PARAM_COLUMNS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The `valuations` columns a clone carries.
+ *
+ * A ROLL-FORWARD CAME BACK DETACHED FROM ITS ORGANIZATION (round 400,
+ * methodology M3). {@link CLONED_PARAM_COLUMNS} above fixed this exact defect
+ * on the 1:1 params row and left the aggregate root — the row the params hang
+ * off — carrying its own inline eleven-column list, written before migration
+ * 0049 and never revisited. Four columns added since were dropped:
+ *
+ *   - `organization_id`, `entity_type` and `parent_valuation_id` (0079) are
+ *     one relationship, written and cleared as a unit everywhere else
+ *     (`assignValuationToOrg`, `detachOrgMembers`, `setEntityParent`). The
+ *     clone wrote none of them, so a roll-forward of a portfolio company came
+ *     back `standalone` with no organization: the copy is absent from the
+ *     roll-up entirely (`listPortfolioEntities` selects on `organization_id`),
+ *     while last year's row is still in it — so the consolidated view of an
+ *     organization that rolled its entities forward reports last year's
+ *     figures and does not know the new engagements exist.
+ *   - `auto_pipeline` (0049) is the per-engagement opt-out. It is
+ *     `NOT NULL DEFAULT true`, so a clone of an engagement the firm had
+ *     deliberately taken off the automatic pipeline came back on it, and the
+ *     pipeline advanced a copy nobody had looked at yet.
+ *
+ * The default is what makes all four silent: none of them is NULL on the copy,
+ * so nothing reads as missing. The copy simply states something different from
+ * the engagement it says it is a copy of.
+ *
+ * {@link UNCLONED_VALUATION_COLUMNS} is the other half, and
+ * `cloneValuationColumns.test.ts` derives the real column set from
+ * `information_schema` and fails when a column is in neither — the same lock
+ * `cloneParamCoverage.test.ts` puts on the params list.
+ */
+export const CLONED_VALUATION_COLUMNS = [
+  // What the engagement is, and for whom.
+  'kind',
+  'company_name',
+  'service_name',
+  'partner_id',
+  'source',
+  'currency',
+  'service_countries',
+  'delivery_days',
+  'assigned_reviewer_id',
+  // Portfolio membership: the three columns that are one relationship (0079).
+  'organization_id',
+  'entity_type',
+  'parent_valuation_id',
+  // The automatic-pipeline opt-out (0049).
+  'auto_pipeline',
+] as const;
+
+/**
+ * The `valuations` columns a clone deliberately does not carry, and why.
+ *
+ * The pair to {@link CLONED_VALUATION_COLUMNS}; together they must account for
+ * every column on the table.
+ */
+export const UNCLONED_VALUATION_COLUMNS: Readonly<Record<string, string>> = {
+  id: 'minted for the copy',
+  number: 'assigned by the sequence, and it is what the copy is called',
+  user_id:
+    "the copy's owner is the caller's choice — ops clone on behalf of the source's owner, a client clones as themselves",
+  // Lifecycle. A clone is a new engagement at the start of the state machine,
+  // so every column describing where the *source* got to stays behind.
+  state: "the copy starts at 'pending', which is the column default",
+  waiting_on_client: 'a fresh engagement is not waiting on an answer yet',
+  workflow_id: 'the external workflow handle belongs to the run that created the source',
+  template_version: "stamped when this engagement's report is rendered",
+  engine_version: "stamped by the run that produces the copy's own figures",
+  created_at: 'the copy is new',
+  started_at: "the source's own progress through the state machine",
+  user_finished_at: "the source's own progress through the state machine",
+  completed_at: "the source's own progress through the state machine",
+  drafted_at: "the source's own progress through the state machine",
+  draft_accepted_at: "the source's own progress through the state machine",
+  published_at: "the source's own progress through the state machine",
+  due_date: "derived from the copy's own start, not inherited",
+  archived_at: 'the copy is live; cloning a retired engagement is refused upstream',
+  // Money. The copy is unbilled work.
+  paid_status: 'the copy is unpaid until it is paid for',
+  amount_cents: 'the copy is priced when it is quoted',
+  custom_amount_cents: 'the copy is priced when it is quoted',
+  paid_at: 'the copy has not been paid',
+  amount_raised_cents:
+    "the intake answer that drives the pricing band - re-asked, so the copy is not priced off last year's raise",
+  // Intake answers and attribution that are about the source engagement.
+  gclid: 'the ad click that produced the source, not this one',
+  qsbs_attestation: 'a client attestation made on the source engagement',
+  // Thread marks on the source's own conversation.
+  admin_read_at: "a read mark on the source's thread",
+  user_read_at: "a read mark on the source's thread",
+  last_comment_at: 'the copy has no comments',
+  // Identity and locking.
+  version: 'the optimistic-lock counter starts over on a row nobody has edited',
+  external_id:
+    "the partner's own id for the *source* engagement, and unique per partner (0164) — carrying it would collide",
+};
+
+/**
  * Clone / roll-forward (M3 feature 18): duplicate the aggregate root and its
  * methodology params into a fresh 'pending' engagement, linked back through
  * the audit spine.
@@ -1335,24 +1433,10 @@ export async function cloneValuation(
   return withTransaction(pool, async (client) => {
     const id = newUlid();
     const { rows } = await client.query<ValuationRow>(
-      `INSERT INTO valuations
-         (id, kind, company_name, service_name, user_id, partner_id, source, currency,
-          service_countries, delivery_days, assigned_reviewer_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO valuations (id, user_id, ${CLONED_VALUATION_COLUMNS.join(', ')})
+       VALUES ($1, $2, ${CLONED_VALUATION_COLUMNS.map((_, i) => `$${i + 3}`).join(', ')})
        RETURNING *`,
-      [
-        id,
-        source.kind,
-        source.company_name,
-        source.service_name,
-        opts.userId,
-        source.partner_id,
-        source.source,
-        source.currency,
-        source.service_countries,
-        source.delivery_days,
-        source.assigned_reviewer_id,
-      ],
+      [id, opts.userId, ...CLONED_VALUATION_COLUMNS.map((c) => source[c])],
     );
     // Copy methodology params; a roll-forward flags the copy for re-dating.
     await client.query(
