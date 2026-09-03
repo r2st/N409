@@ -771,10 +771,38 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const probabilityTotal = scenarios.reduce((sum, s) => sum + (Number(s.probability) || 0), 0);
   const probabilityOff = scenarios.length > 0 && Math.abs(probabilityTotal - 1) > 1e-4;
   const scenarioIssue = scenarioProblem(scenarios);
+  /*
+   * The blend's own cross-field rule, held to the same standard as the two
+   * beside it.
+   *
+   * `hybrid.valid` is the *field* half — each weight inside [0, 1] — and it was
+   * the whole of the gate. Two weights of 0.6 are both inside that range, so
+   * the save went through with a blend summing to 1.2 while the message below
+   * ("OPM + PWERM weights must sum to 1.00") was on screen saying it should
+   * not: drawn, and not enforced.
+   *
+   * What that costs is not the click. `resolve_hybrid_weights` refuses the sum
+   * in the engine, so the document stores, the engagement reads as configured,
+   * and the refusal arrives on whoever next presses Calculate — naming
+   * `hybrid.opm_weight` at the far end of a run they did not set up. That is
+   * exactly the deferral `EngineInputsBody` catches `exit_multiple` here to
+   * avoid, and the same rule the two sums either side of this one already
+   * enforce at the button: the approach weights through `weightsProblem`, the
+   * DLOM legs through `blendIssue`.
+   *
+   * One expression for the gate and the message, so a tolerance change cannot
+   * move one without the other.
+   */
+  const hybridSumOff =
+    isHybrid && Math.abs((Number(hybridWeights.opm) || 0) + (Number(hybridWeights.pwerm) || 0) - 1) > 1e-4;
   // The hybrid weights ride along with the scenarios save, so a bad one blocks
   // it too — the request carries both or neither.
   const scenariosBlocked =
-    probabilityOff || scenarioIssue !== null || (isHybrid && !hybrid.valid) || scenarioLoadError !== null;
+    probabilityOff ||
+    scenarioIssue !== null ||
+    (isHybrid && !hybrid.valid) ||
+    hybridSumOff ||
+    scenarioLoadError !== null;
 
   const setScenario = (i: number, key: keyof ScenarioRow) => (value: string) => {
     setScenariosSaved(false);
@@ -1107,12 +1135,11 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             </div>
           )}
         </div>
-        {isHybrid &&
-          Math.abs((Number(hybridWeights.opm) || 0) + (Number(hybridWeights.pwerm) || 0) - 1) > 1e-4 && (
-            <p className="mt-3 text-sm text-red-600" data-testid="hybrid-weight-warning">
-              OPM + PWERM weights must sum to 1.00.
-            </p>
-          )}
+        {hybridSumOff && (
+          <p className="mt-3 text-sm text-red-600" data-testid="hybrid-weight-warning">
+            OPM + PWERM weights must sum to 1.00.
+          </p>
+        )}
         {isCvm && (
           <p className="mt-3 text-sm text-ink-400">
             CVM allocates the current equity value by the deterministic liquidation waterfall — best for very

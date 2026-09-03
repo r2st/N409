@@ -367,6 +367,31 @@ describe('ParamsPanel — edges', () => {
       expect(patched).toHaveLength(0);
     });
 
+    /**
+     * The message was drawn and the button was not disabled.
+     *
+     * `hybrid.valid` is the field half — each weight inside [0, 1] — and it was
+     * the whole of the gate, so 0.6 and 0.6 are two valid fields and a blend
+     * that double-counts a fifth of the equity. `resolve_hybrid_weights`
+     * refuses the sum in the engine, so the document stored, the engagement
+     * read as configured, and the refusal landed on whoever next pressed
+     * Calculate — naming `hybrid.opm_weight` at the far end of a run they did
+     * not set up. The two sums either side of this one (approach weights, DLOM
+     * legs) have always blocked their own saves.
+     */
+    it('will not save a blend whose weights do not sum to one', async () => {
+      const patched = renderPanel(hybridSetup({ opm_weight: 0.4, pwerm_weight: 0.6 }));
+      await screen.findByTestId('hybrid-weights');
+      const opm = screen.getByLabelText(/OPM weight/i) as HTMLInputElement;
+      await userEvent.clear(opm);
+      await userEvent.type(opm, '0.6');
+
+      // Both weights are inside 0…1, so the field-level rules are all happy.
+      expect(await screen.findByTestId('hybrid-weight-warning')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /save scenarios/i }));
+      expect(patched).toHaveLength(0);
+    });
+
     it('carries both weights alongside the scenarios in one request', async () => {
       const patched = renderPanel(hybridSetup({ opm_weight: 0.4, pwerm_weight: 0.6 }));
       await screen.findByTestId('hybrid-weights');
