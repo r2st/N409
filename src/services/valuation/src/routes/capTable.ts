@@ -29,6 +29,7 @@ import { safeFilename } from '../documents/filename.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { CAP_TABLE_IMPORT_BODY_LIMIT } from './bodyLimits.js';
 
 /**
  * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic)
@@ -328,79 +329,87 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
   });
 
   // Parse + validate WITHOUT saving — powers the mapping preview.
-  app.post('/api/v1/valuations/:id/cap-table/preview', { preHandler: app.authenticate }, async (req) => {
-    const principal = requirePrincipal(req);
-    const { id } = req.params as { id: string };
-    const valuation = await loadReadable(deps.pool, id, principal);
-    refuseIfRetired(valuation, 'accepting cap table changes');
-    if (!canEdit(principal, valuation))
-      throw problems.forbidden('Only the client or ops can import a cap table');
-    const parsed = ImportBody.safeParse(req.body);
-    if (!parsed.success) throw invalidBody('Invalid import', parsed.error);
-    const { rows, mapping, sourceLines } = readInput(parsed.data);
-    const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);
-    return { entries, validation: validateCapTable(entries, totals), mapping };
-  });
+  app.post(
+    '/api/v1/valuations/:id/cap-table/preview',
+    { preHandler: app.authenticate, bodyLimit: CAP_TABLE_IMPORT_BODY_LIMIT },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      const { id } = req.params as { id: string };
+      const valuation = await loadReadable(deps.pool, id, principal);
+      refuseIfRetired(valuation, 'accepting cap table changes');
+      if (!canEdit(principal, valuation))
+        throw problems.forbidden('Only the client or ops can import a cap table');
+      const parsed = ImportBody.safeParse(req.body);
+      if (!parsed.success) throw invalidBody('Invalid import', parsed.error);
+      const { rows, mapping, sourceLines } = readInput(parsed.data);
+      const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);
+      return { entries, validation: validateCapTable(entries, totals), mapping };
+    },
+  );
 
   // Import + persist. Blocks on hard validation errors.
-  app.put('/api/v1/valuations/:id/cap-table', { preHandler: app.authenticate }, async (req, reply) => {
-    const principal = requirePrincipal(req);
-    const { id } = req.params as { id: string };
-    const valuation = await loadReadable(deps.pool, id, principal);
-    refuseIfRetired(valuation, 'accepting cap table changes');
-    if (!canEdit(principal, valuation))
-      throw problems.forbidden('Only the client or ops can import a cap table');
+  app.put(
+    '/api/v1/valuations/:id/cap-table',
+    { preHandler: app.authenticate, bodyLimit: CAP_TABLE_IMPORT_BODY_LIMIT },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id } = req.params as { id: string };
+      const valuation = await loadReadable(deps.pool, id, principal);
+      refuseIfRetired(valuation, 'accepting cap table changes');
+      if (!canEdit(principal, valuation))
+        throw problems.forbidden('Only the client or ops can import a cap table');
 
-    // Opt-in concurrency check: a client that echoes the ETag it read gets its
-    // import refused if somebody else — another editor, or the provider sync —
-    // has saved since (migration 0162). Parsed before the body so a malformed
-    // header fails the same way whatever the import contains.
-    const ifMatch = parseIfMatch(req.headers['if-match']);
-    if (ifMatch.kind === 'invalid') {
-      throw malformedIfMatch(ifMatch);
-    }
-    const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
+      // Opt-in concurrency check: a client that echoes the ETag it read gets its
+      // import refused if somebody else — another editor, or the provider sync —
+      // has saved since (migration 0162). Parsed before the body so a malformed
+      // header fails the same way whatever the import contains.
+      const ifMatch = parseIfMatch(req.headers['if-match']);
+      if (ifMatch.kind === 'invalid') {
+        throw malformedIfMatch(ifMatch);
+      }
+      const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
-    const parsed = ImportBody.safeParse(req.body);
-    if (!parsed.success) throw invalidBody('Invalid import', parsed.error);
+      const parsed = ImportBody.safeParse(req.body);
+      if (!parsed.success) throw invalidBody('Invalid import', parsed.error);
 
-    const { rows, mapping, sourceLines } = readInput(parsed.data);
-    const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);
-    /*
-     * Two validations, deliberately.
-     *
-     * `reported` knows what the sheet's totals row said and is what a refusal
-     * quotes back; `stored` is derived from the entries alone. The stored
-     * `validation` column is a cache that `findCapTable` re-derives on every
-     * read — `withFreshValidation`, pinned by test — so an issue that depends on
-     * the uploaded file, which the totals checks do, can only be persisted to be
-     * silently dropped the next time anybody looks at the row. Writing the
-     * reproducible one keeps the column meaning what it claims to mean.
-     *
-     * Nothing is lost by the split: the totals checks are warnings, so they
-     * cannot change `valid`, and the import screen reads them from the preview.
-     */
-    const reported = validateCapTable(entries, totals);
-    const validation = validateCapTable(entries);
-    if (!reported.valid) {
-      throw problems.unprocessable('Cap table has validation errors', { validation: reported });
-    }
-    const table = await saveCapTable(
-      deps.pool,
-      {
-        valuationId: id,
-        sourceFormat: parsed.data.format,
-        entries,
-        validation,
-        columnMapping: mapping,
-        createdBy: principal.id,
-      },
-      { actorType: 'human', actorId: principal.id },
-      { expectedVersion },
-    );
-    reply.header('ETag', versionEtag(table.version));
-    return { cap_table: table };
-  });
+      const { rows, mapping, sourceLines } = readInput(parsed.data);
+      const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);
+      /*
+       * Two validations, deliberately.
+       *
+       * `reported` knows what the sheet's totals row said and is what a refusal
+       * quotes back; `stored` is derived from the entries alone. The stored
+       * `validation` column is a cache that `findCapTable` re-derives on every
+       * read — `withFreshValidation`, pinned by test — so an issue that depends on
+       * the uploaded file, which the totals checks do, can only be persisted to be
+       * silently dropped the next time anybody looks at the row. Writing the
+       * reproducible one keeps the column meaning what it claims to mean.
+       *
+       * Nothing is lost by the split: the totals checks are warnings, so they
+       * cannot change `valid`, and the import screen reads them from the preview.
+       */
+      const reported = validateCapTable(entries, totals);
+      const validation = validateCapTable(entries);
+      if (!reported.valid) {
+        throw problems.unprocessable('Cap table has validation errors', { validation: reported });
+      }
+      const table = await saveCapTable(
+        deps.pool,
+        {
+          valuationId: id,
+          sourceFormat: parsed.data.format,
+          entries,
+          validation,
+          columnMapping: mapping,
+          createdBy: principal.id,
+        },
+        { actorType: 'human', actorId: principal.id },
+        { expectedVersion },
+      );
+      reply.header('ETag', versionEtag(table.version));
+      return { cap_table: table };
+    },
+  );
 
   // Waterfall-engine inputs projected from the stored cap table (ops).
   app.get(

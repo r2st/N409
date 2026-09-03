@@ -74,6 +74,7 @@ import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement
 import { invalidBody } from '../domain/validationProblem.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { REPORT_BODY_LIMIT } from './bodyLimits.js';
 
 const SectionSchema = z
   .object({
@@ -799,34 +800,38 @@ export function registerReportRoutes(
     };
   });
 
-  app.put('/api/v1/valuations/:id/report', { preHandler: app.authenticate }, async (req, reply) => {
-    const principal = requirePrincipal(req);
-    const { id } = req.params as { id: string };
-    const valuation = await loadForEdit(deps.pool, principal, id);
-    refuseIfRetired(valuation, 'accepting report edits');
+  app.put(
+    '/api/v1/valuations/:id/report',
+    { preHandler: app.authenticate, bodyLimit: REPORT_BODY_LIMIT },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id } = req.params as { id: string };
+      const valuation = await loadForEdit(deps.pool, principal, id);
+      refuseIfRetired(valuation, 'accepting report edits');
 
-    // Parsed before the body so a malformed header fails the same way whatever
-    // the editor is trying to save.
-    const expectedVersion = expectedReportVersion(req.headers['if-match']);
+      // Parsed before the body so a malformed header fails the same way whatever
+      // the editor is trying to save.
+      const expectedVersion = expectedReportVersion(req.headers['if-match']);
 
-    const parsed = PutBody.safeParse(req.body);
-    if (!parsed.success) throw invalidBody('Invalid report content', parsed.error);
+      const parsed = PutBody.safeParse(req.body);
+      if (!parsed.success) throw invalidBody('Invalid report content', parsed.error);
 
-    const report = await loadOrCreateReport(deps.pool, principal, valuation);
-    const content = sanitizeContent(parsed.data.content);
-    const saved = await saveVersion(deps.pool, {
-      report,
-      content,
-      actor: actorFor(principal),
-      origin: 'editor',
-      expectedVersion,
-    });
-    reply.header('ETag', versionEtag(saved.report.current_version));
-    return {
-      report: reportView(saved.report, valuation.state),
-      version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
-    };
-  });
+      const report = await loadOrCreateReport(deps.pool, principal, valuation);
+      const content = sanitizeContent(parsed.data.content);
+      const saved = await saveVersion(deps.pool, {
+        report,
+        content,
+        actor: actorFor(principal),
+        origin: 'editor',
+        expectedVersion,
+      });
+      reply.header('ETag', versionEtag(saved.report.current_version));
+      return {
+        report: reportView(saved.report, valuation.state),
+        version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
+      };
+    },
+  );
 
   app.get('/api/v1/valuations/:id/report/versions', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

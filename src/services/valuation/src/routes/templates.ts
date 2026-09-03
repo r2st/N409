@@ -19,6 +19,7 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { REPORT_TEMPLATE_BODY_LIMIT } from './bodyLimits.js';
 
 /**
  * Report template management (M4, P1 #20). Versioned like "409a.v53":
@@ -97,18 +98,22 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     return { templates: templates.map(serialize), truncated, page_limit: TEMPLATE_PAGE_LIMIT };
   });
 
-  app.post('/api/v1/report-templates', { preHandler: app.authenticate }, async (req, reply) => {
-    const principal = requirePrincipal(req);
-    requireOps(principal);
-    const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw invalidBody('Invalid template', parsed.error);
-    const template = await createTemplateVersion(deps.pool, {
-      ...parsed.data,
-      createdBy: principal.id,
-    });
-    await audit('template_created', principal.id, template);
-    return reply.status(201).send({ template: serialize(template) });
-  });
+  app.post(
+    '/api/v1/report-templates',
+    { preHandler: app.authenticate, bodyLimit: REPORT_TEMPLATE_BODY_LIMIT },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      requireOps(principal);
+      const parsed = CreateBody.safeParse(req.body);
+      if (!parsed.success) throw invalidBody('Invalid template', parsed.error);
+      const template = await createTemplateVersion(deps.pool, {
+        ...parsed.data,
+        createdBy: principal.id,
+      });
+      await audit('template_created', principal.id, template);
+      return reply.status(201).send({ template: serialize(template) });
+    },
+  );
 
   app.get('/api/v1/report-templates/:id', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
@@ -116,22 +121,26 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     return { template: serialize(await loadTemplate(deps.pool, id)) };
   });
 
-  app.patch('/api/v1/report-templates/:id', { preHandler: app.authenticate }, async (req) => {
-    const principal = requirePrincipal(req);
-    requireOps(principal);
-    const { id } = req.params as { id: string };
-    const template = await loadTemplate(deps.pool, id);
+  app.patch(
+    '/api/v1/report-templates/:id',
+    { preHandler: app.authenticate, bodyLimit: REPORT_TEMPLATE_BODY_LIMIT },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      requireOps(principal);
+      const { id } = req.params as { id: string };
+      const template = await loadTemplate(deps.pool, id);
 
-    const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
-    if (template.status !== 'draft') {
-      throw problems.conflict('Only draft templates are editable — create a new version instead');
-    }
-    const updated = await updateDraftTemplate(deps.pool, id, parsed.data);
-    if (!updated) throw problems.conflict('Template is no longer a draft');
-    await audit('template_updated', principal.id, updated, { fields: Object.keys(parsed.data) });
-    return { template: serialize(updated) };
-  });
+      const parsed = PatchBody.safeParse(req.body);
+      if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
+      if (template.status !== 'draft') {
+        throw problems.conflict('Only draft templates are editable — create a new version instead');
+      }
+      const updated = await updateDraftTemplate(deps.pool, id, parsed.data);
+      if (!updated) throw problems.conflict('Template is no longer a draft');
+      await audit('template_updated', principal.id, updated, { fields: Object.keys(parsed.data) });
+      return { template: serialize(updated) };
+    },
+  );
 
   app.post('/api/v1/report-templates/:id/activate', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
