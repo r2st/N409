@@ -12150,3 +12150,122 @@
 #            accepts" from the schema. `routes/bodyLimits.ts` names three
 #            routes by hand, and the fourth one added tomorrow will meet the
 #            same 413 for the same reason.
+#
+# R395 — State machine / lifecycle audit (M3), at `a87ff7f3..862015d9`. Four
+#            commits, one migration (0206), 4 new tests. Two of the three
+#            findings are one shape: a hand-written list that had to match a
+#            schema, and nothing between them.
+#
+#            d636727 — the roll-forward's documents came back unfiled.
+#            `documents.kind` and `documents.category` are two axes on purpose
+#            (domain/documentCategories.ts): kind is what the extractor does
+#            with a file, category is which thing the client was asked for.
+#            `cloneValuation` copied kind, and `category` is `NOT NULL DEFAULT
+#            'uploads'` (0105) — so every file on a clone arrived
+#            uncategorised. What makes it invisible rather than merely wrong is
+#            the pair of statements either side of it: the intake checklist
+#            counts `byCategory` (`documentCoverage`), so last year's cap
+#            table, annual statements and projections read as buckets nobody
+#            had filled and the client is asked a second time for files that
+#            are already on the engagement; and `listUnfiledDocuments` asks for
+#            `category = 'uploads' AND kind = 'other'`, which these rows fail
+#            because they keep their real kind — so they are missing from the
+#            checklist and absent from the queue of things to file.
+#            `reviewed_at`/`reviewed_by` stay uncopied, per 0121: review is a
+#            statement about an analyst on *this* engagement.
+#
+#            e2bff38 — and the params it carried were the 2022 half. The
+#            `valuation_params` copy beside it was an inline column list
+#            written when the table had twenty-four columns. The table has
+#            forty-three, and every column added since was dropped by the
+#            statement whose own comment says "copy methodology params" —
+#            `allocation_method` (0062/0076/0127), so a PWERM engagement rolled
+#            forward on the default allocation; `dlom_methods` (0129) and the
+#            study tables behind both DLOM forms (0111, 0131), and because
+#            `dlom_method` *was* carried and the two are mutually exclusive by
+#            CHECK (`valuation_params_one_dlom_form`), an engagement on the
+#            newer weighted form came back with no DLOM method at all; the
+#            whole DLOC apparatus (0132), the WACC build-up (0135), the
+#            required-return table (0130), the development stage (0128).
+#            Nothing said so: the clone is `pending`, so a params form showing
+#            defaults reads as a fresh engagement rather than as a copy that
+#            lost half its answers. The list is now named —
+#            `CLONED_PARAM_COLUMNS`, with `UNCLONED_PARAM_COLUMNS` giving a
+#            reason for each of the five it does not carry — because the list
+#            is the thing that goes stale, and `cloneParamCoverage.test.ts`
+#            derives the real column set from `information_schema` and fails
+#            when a column is in neither, or when an entry names a column that
+#            no longer exists. `engine_inputs` stays out deliberately: it is
+#            the applied engine payload including the `valuation_date` four
+#            surfaces read as the measurement date, and a roll-forward is by
+#            definition a re-dating.
+#
+#            644c4ea — one aged drip email stopped the outbox purge for good.
+#            `auto_email_sends.outbox_id` (0051) references `email_outbox(id)`
+#            with no delete action, which is NO ACTION. The table is
+#            append-only — it is the ledger the campaign scanner reads to
+#            honour `max_sends` and `repeat_hours` — and a drip message is
+#            settled the moment it leaves, so the first one to age past the
+#            operator's retention policy made `purgeExpiredOutbox`'s DELETE
+#            raise 23503, and R289 put the held count, the delete and the
+#            retention action log in one transaction, so the sweep rolled back
+#            with it. It does not recover: the DELETE takes `ORDER BY
+#            e.created_at ASC LIMIT`, so the batch it attempts is always the
+#            oldest eligible rows, which is exactly where the blocked ones are.
+#            The backlog then grows without limit and the retention policy
+#            stops being enforced for everything behind it. 0206 makes it `ON
+#            DELETE SET NULL` — not CASCADE, which would delete the ledger row
+#            and re-arm a drip already sent. This is the reading
+#            `email_delivery_events` and `email_suppressions` were given in
+#            0163; this table predates them and was never asked.
+#
+#            862015d — the guard that should have found it was red on
+#            something else. `hardDeletedTables` matched `DELETE FROM <table>`
+#            over whole source files, comments included, and R366's note on
+#            `retiredEngagement.ts` ("there is no endpoint that removes one,
+#            and `DELETE FROM valuations` is refused") therefore registered
+#            `valuations` as hard-deleted: `foreignKeyIndexCensus` has failed
+#            on eight invented crossings for twenty-nine rounds. A comment
+#            saying a table is never deleted from is the opposite of the
+#            evidence the scan wants, so comments are stripped first.
+#            `orphanPrevention` beside it was red on `payments.dispute_id`,
+#            which 0203 added without a census entry; it is Stripe's id for the
+#            chargeback a verdict belongs to and nothing local has a row for
+#            it. Both green, and both able to report a real crossing again.
+#
+#            Probed and left alone. The three connector families' revokes all
+#            blank the token, drop the schedule and refuse a resurrection
+#            (`updateTokens`' `status <> 'revoked'`), and `findDueConnections`
+#            re-asks the archived-engagement question at the timer rather than
+#            at the route. `patchTask` pins the status it read; `cancelGrant`,
+#            `deleteScenario`, `disableMonitor` and `completeAiJob` are each
+#            once-only with the event written from the row that moved.
+#            `releaseAssignedWork` still covers all three doors onto a closed
+#            account. Every writer of `valuations` invalidates the read-through
+#            cache. `deleteFund` refuses while the portfolio is linked and
+#            `deletePosition` deliberately does not. Nothing reads
+#            `option_grants` for an expense schedule — ASC 718 takes its grants
+#            from the request body — and the workbook's total line already
+#            counts only the active ones.
+#
+#            gap: the *other* half of `cloneValuation` — the `valuations` row
+#            itself — is still an inline column list, and it drops
+#            `organization_id`, `entity_type` and `parent_valuation_id`. A
+#            subsidiary rolled forward comes back a standalone outside its
+#            group. That is arguably right (the new engagement has not been
+#            placed yet) and arguably the same defect as e2bff38; it wants a
+#            decision, not a copy.
+#            gap: the clone carries `funding_rounds` and not
+#            `valuation_transactions`, which are the two halves of one M4
+#            history panel and live in one repo. Nothing states which reading
+#            is intended.
+#            gap: `M4_HISTORY_EVENT_TYPES.transactionUpdated` is declared and
+#            unreachable — there is no `updateTransaction`. The secondary book
+#            can only be corrected by delete-and-recreate, which is two events
+#            for one edit.
+#            gap: nothing derives "an FK with NO ACTION pointing at a table
+#            something deletes from" the way `foreignKeyIndexCensus` derives
+#            the unindexed one. The two live crossings left are both
+#            deliberate — `auto_emails.template_key`, which
+#            `deleteCommunicationTemplate` guards with its own NOT EXISTS, and
+#            nothing else — but they were checked by hand this round.
