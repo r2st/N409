@@ -594,7 +594,10 @@ describe.skipIf(!dbUp)('cap-table preview against a table that arrives mid-pull'
     let raced = false;
     const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
       if (raced || phase !== 'after') return;
-      if (!sql.includes('SELECT * FROM cap_tables WHERE valuation_id')) return;
+      // Matched on the predicate rather than the projection: `findCapTable`
+      // stopped selecting the `validation` column it overwrites (R393), and a
+      // matcher on the column list is a staged race that quietly stops staging.
+      if (!/FROM cap_tables WHERE valuation_id = \$1/.test(sql)) return;
       raced = true;
       const put = await ctx.app.inject({
         method: 'PUT',
@@ -658,7 +661,10 @@ describe.skipIf(!dbUp)('cap-table preview against a table that arrives mid-pull'
     let raced = false;
     const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
       if (raced || phase !== 'after') return;
-      if (!sql.includes('SELECT * FROM cap_tables WHERE valuation_id')) return;
+      // Matched on the predicate rather than the projection: `findCapTable`
+      // stopped selecting the `validation` column it overwrites (R393), and a
+      // matcher on the column list is a staged race that quietly stops staging.
+      if (!/FROM cap_tables WHERE valuation_id = \$1/.test(sql)) return;
       raced = true;
       await ctx.app.inject({
         method: 'PUT',

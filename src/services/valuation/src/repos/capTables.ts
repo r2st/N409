@@ -94,14 +94,48 @@ export class CapTableAppearedError extends ApiProblem {
  * way. The cost is a pass over at most a few hundred entries, which is less
  * than the JSON parse that produced them.
  */
-function withFreshValidation(row: CapTableRow): CapTableRow {
+function withFreshValidation(row: StoredCapTableRow): CapTableRow {
   return { ...row, validation: validateCapTable(row.entries) };
 }
 
+/**
+ * Every column but the one that is thrown away (R393, methodology M8).
+ *
+ * `withFreshValidation` above replaces `validation` on **every** read, for the
+ * reason set out there — the column is a cache of a pure function of `entries`,
+ * and it goes stale whenever a rule changes. Both readers were `SELECT *`, so
+ * the stored blob crossed the wire and went through the driver's `JSON.parse`
+ * on every read of a cap table, to be overwritten by the next expression. Not
+ * *sometimes* discarded: there is no path on which the stored value is the one
+ * a caller sees.
+ *
+ * It is not a small blob either, because it holds one issue object with a prose
+ * message per finding. A preferred row with no explicit multiple raises
+ * `default_liq_pref`, which is the ordinary shape of an imported sheet: on 100
+ * rows, 25.7 kB of entries and 8.8 kB of stored validation beside it.
+ *
+ * The batch reader is the one where it counts. `buildSnapshots` reads a cap
+ * table per monitored valuation, `MONITOR_PAGE_LIMIT` is 500, and
+ * `POST /monitors/scan` pages the whole enabled book through it. Measured at
+ * 200 monitors carrying 100-row tables: 27.3 ms and 6.80 MB parsed, against
+ * 21.9 ms and 5.08 MB.
+ *
+ * Spelled out rather than `SELECT *` minus a column, because there is no such
+ * SQL. A column added to the table and not to this list is absent from the row
+ * — which is the cost of the list, and why `CapTableRow` minus `validation` is
+ * stated as a type so the compiler carries it.
+ */
+const STORED_CAP_TABLE_COLUMNS = `id, valuation_id, source_format, entries, column_mapping,
+       created_by, created_at, updated_at, version`;
+
+/** The row as it comes back: everything but the column the reader re-derives. */
+type StoredCapTableRow = Omit<CapTableRow, 'validation'>;
+
 export async function findCapTable(pool: pg.Pool, valuationId: string): Promise<CapTableRow | null> {
-  const { rows } = await pool.query<CapTableRow>('SELECT * FROM cap_tables WHERE valuation_id = $1', [
-    valuationId,
-  ]);
+  const { rows } = await pool.query<StoredCapTableRow>(
+    `SELECT ${STORED_CAP_TABLE_COLUMNS} FROM cap_tables WHERE valuation_id = $1`,
+    [valuationId],
+  );
   return rows[0] ? withFreshValidation(rows[0]) : null;
 }
 
@@ -115,9 +149,10 @@ export async function findCapTablesByValuationIds(
   valuationIds: string[],
 ): Promise<Map<string, CapTableRow>> {
   if (valuationIds.length === 0) return new Map();
-  const { rows } = await pool.query<CapTableRow>('SELECT * FROM cap_tables WHERE valuation_id = ANY($1)', [
-    [...new Set(valuationIds)],
-  ]);
+  const { rows } = await pool.query<StoredCapTableRow>(
+    `SELECT ${STORED_CAP_TABLE_COLUMNS} FROM cap_tables WHERE valuation_id = ANY($1)`,
+    [[...new Set(valuationIds)]],
+  );
   return new Map(rows.map((row) => [row.valuation_id, withFreshValidation(row)]));
 }
 
