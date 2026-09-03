@@ -41,6 +41,20 @@ const ON_RED = {
   ],
 };
 
+/**
+ * The watch the scan no longer walks (R401, methodology M11).
+ *
+ * The monitor row stays enabled when an engagement is called off — the decision
+ * is reversible — but the scan skips it and nobody is emailed. This panel drew
+ * a live status badge and a `checked` stamp regardless, which is the one claim
+ * it exists to make.
+ */
+const ON_RED_UNWATCHED = {
+  ...ON_RED,
+  watched: false,
+  unwatched_reason: 'closed' as const,
+};
+
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -226,6 +240,26 @@ describe('MonitoringTab', () => {
     renderTab();
     await userEvent.click(await screen.findByRole('button', { name: /Disable monitoring/i }));
     await screen.findByText(/Could not stop monitoring this valuation\./);
+  });
+
+  it('says so when the engagement was called off and nothing is watching', async () => {
+    mockApi(ON_RED_UNWATCHED);
+    renderTab();
+    await screen.findByText(/monitoring is paused/i);
+    expect(screen.getByRole('status')).toHaveTextContent(/no alerts will be sent/i);
+    // The triggers stay on screen: they are facts about the engagement and they
+    // are what the watch resumes on. What was missing is that nobody acts on
+    // them, not the triggers themselves.
+    expect(screen.getByText(/A Series B closed on 2026-06-01\./)).toBeInTheDocument();
+  });
+
+  it('says nothing of the sort while the engagement is live', async () => {
+    // Non-vacuity for the case above: the same panel, the same triggers, and
+    // the only difference is the flag.
+    mockApi(ON_RED);
+    renderTab();
+    await screen.findByText(/A Series B closed on 2026-06-01\./);
+    expect(screen.queryByText(/monitoring is paused/i)).not.toBeInTheDocument();
   });
 
   it('reports a failed load rather than spinning forever', async () => {

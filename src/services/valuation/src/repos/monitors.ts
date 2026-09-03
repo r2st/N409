@@ -155,6 +155,49 @@ const ENABLED_MONITOR_SELECT = `
      AND v.state <> ALL(ARRAY[${STATE_GROUPS.closed.map((s) => `'${s}'`).join(', ')}]::valuation_state[])`;
 
 /**
+ * Why the scan will not reach this engagement's monitor, or null when it will.
+ *
+ * A WATCH THAT NOTHING WALKS, REPORTED AS A LIVE ONE (R401, methodology M11).
+ * The filter above is right and stays. What it leaves is that
+ * {@link ENABLED_MONITOR_SELECT} is not the only reader of a monitor:
+ * `GET /api/v1/valuations/:id/monitor` answers off `findMonitor`, which reads
+ * the row and asks the engagement nothing. So a monitor enabled before the
+ * close — which is every monitor this filter exists for, since the enable door
+ * now refuses a closed engagement — is dropped from the scan and from the ops
+ * dashboard, and goes on being reported by the detail endpoint as an enabled
+ * watch with a live status and a `last_checked_at` stamp.
+ *
+ * Which is the worst of the three surfaces to be wrong on, because it is the
+ * one somebody consults to find out whether an engagement is being watched.
+ * The badge reads 'Revaluation suggested' off triggers evaluated on the spot,
+ * so it is not stale; the claim that anything is watching them is. Nothing
+ * fires, nobody is emailed, and the only outward sign is a `checked` timestamp
+ * drifting further into the past on a panel that never says why.
+ *
+ * A predicate rather than a second WHERE clause because the two readers are
+ * asking at different times about different things — the scan asks the
+ * database for a set, the endpoint asks about a row it already holds — and
+ * `monitorScanFilterAgrees.test.ts` drives both over every state so they cannot
+ * come to disagree. Ordered like `unpayableReason`: retirement is checked
+ * first, so a file that is both says the thing that happened to it last.
+ *
+ * Reported rather than disabled, for the reason the filter is: `canRestart`
+ * puts a cancelled engagement back to `started` and the watch resumes.
+ */
+export type UnwatchedReason = 'retired' | 'closed';
+
+const CLOSED_STATES: ReadonlySet<string> = new Set(STATE_GROUPS.closed);
+
+export function unwatchedReason(valuation: {
+  archived_at: Date | null;
+  state: string;
+}): UnwatchedReason | null {
+  if (valuation.archived_at !== null) return 'retired';
+  if (CLOSED_STATES.has(valuation.state)) return 'closed';
+  return null;
+}
+
+/**
  * Every enabled monitor, newest first — a page of them.
  *
  * The dashboard reading this evaluates four snapshot queries' worth of data per

@@ -44,6 +44,7 @@ import {
   enableMonitor,
   findMonitor,
   listEnabledMonitors,
+  unwatchedReason,
   markCheckedMany,
   MONITOR_PAGE_LIMIT,
   notifiedSignaturesFor,
@@ -381,11 +382,30 @@ export function registerMonitoringRoutes(
     // would put a difference on screen that the trigger list denies.
     const baseline = baselineOf(monitor, live);
     const triggers = evaluateTriggers(baseline, live.snapshot, new Date());
+    /*
+     * Whether anything is actually watching this (R401, methodology M11).
+     *
+     * `ENABLED_MONITOR_SELECT` drops a retired or closed engagement from the
+     * scan and from the ops dashboard, and this endpoint reads `findMonitor`,
+     * which asks the engagement nothing. So the one surface somebody consults
+     * to find out whether an engagement is being watched was the one still
+     * claiming it is — enabled, with a live status badge and a `checked`
+     * stamp that quietly stops advancing.
+     *
+     * The triggers stay, and are still evaluated: they are facts about the
+     * engagement and they are what the watch resumes on. What is added is the
+     * fact that nothing will act on them until the engagement comes back.
+     */
+    const unwatched = unwatchedReason(valuation);
     return {
       monitor: { ...monitor, baseline },
       current: live.snapshot,
       status: overallStatus(triggers),
       triggers,
+      watched: unwatched === null,
+      // Named only when it is not — an engagement that is watched has no
+      // reason not to be, and a null field invites a caller to render one.
+      ...(unwatched === null ? {} : { unwatched_reason: unwatched }),
     };
   });
 

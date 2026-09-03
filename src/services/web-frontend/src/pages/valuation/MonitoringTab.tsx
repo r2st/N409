@@ -30,7 +30,27 @@ interface MonitorResponse {
   status: Level;
   triggers: Trigger[];
   monitorable?: boolean;
+  /**
+   * Whether the scan actually reaches this engagement (R401).
+   *
+   * The monitor row stays enabled when an engagement is retired or called off —
+   * the decision is reversible, and restoring it resumes the watch — but the
+   * scan skips it, so nothing evaluates the triggers and nobody is emailed. The
+   * panel showed a live status badge and a `checked` stamp regardless, which is
+   * the one claim this screen exists to make and the one it was making wrongly.
+   *
+   * Optional so an older server that does not send it reads as watched, which
+   * is what this panel assumed before the field existed.
+   */
+  watched?: boolean;
+  unwatched_reason?: 'retired' | 'closed';
 }
+
+/** Why the watch is dormant, in the words the client uses for each. */
+const UNWATCHED_NOTE: Record<'retired' | 'closed', string> = {
+  retired: 'This engagement has been retired, so monitoring is paused.',
+  closed: 'This engagement has been closed, so monitoring is paused.',
+};
 
 export const MONITOR_TONE: Record<Level, string> = {
   green: 'bg-bond-50 text-bond-700 ring-bond-200',
@@ -152,6 +172,16 @@ export function MonitoringTab() {
                 </span>
               )}
             </div>
+
+            {data.watched === false && (
+              <p
+                role="status"
+                className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800"
+              >
+                {UNWATCHED_NOTE[data.unwatched_reason ?? 'closed']} The triggers below are still current, but
+                nothing is checking them and no alerts will be sent until the engagement is reopened.
+              </p>
+            )}
 
             {data.triggers.length === 0 ? (
               <p className="mt-4 text-sm text-ink-500">
