@@ -1973,6 +1973,77 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           },
           'checkout settled — the engagement has been paid for',
         );
+        /*
+         * MONEY THAT LANDED ON WORK THAT HAD BEEN CALLED OFF (R401, methodology
+         * M11).
+         *
+         * R400 shut the *checkout* door: `unpayableReason` refuses to open a
+         * Checkout Session for a retired or closed engagement, and it wrote the
+         * consequence down in as many words — "the money buys a closed
+         * engagement and needs a hand-issued refund". What it could not shut is
+         * the window between the two. A Checkout Session lives for hours; the
+         * client has the pay panel open, or the session URL in a tab, ops
+         * cancel the engagement that afternoon, and the client pays. The door
+         * was shut behind them, not in front of them.
+         *
+         * Every instrument on this path then reports a healthy sale. The
+         * settlement is `info`, worded 'the engagement has been paid for'; the
+         * advance to `paid` is skipped in silence because `updated.state` is
+         * not `completed`; `announcePaymentReceived` emails the client a
+         * receipt. Nothing anywhere says the engagement had been called off, so
+         * the refund the code above knows is owed depends entirely on somebody
+         * noticing — and the one surface that would show it, the pay panel, now
+         * correctly refuses to say anything at all.
+         *
+         * `alert: true` because this is the estate's flag for a failure no
+         * retry is coming for and a person has to act on: no sweep revisits a
+         * settled payment, and the money does not come back on its own.
+         * `log_alert_lines_total` counts the field and `PermanentFailuresLogged`
+         * reads the counter, so this reaches the endpoint that alerts rather
+         * than only the journal.
+         *
+         * Asked of `valuation` — the row as it was when the money landed — and
+         * not of `updated`: the settlement has just written `paid_status`, so
+         * `unpayableReason` would answer `settled` for a file it should be
+         * answering `closed` about. `settled` is excluded for the same reason
+         * the checkout door excludes it: a second charge on an already-paid
+         * engagement is an add-on, not work that stopped. A closed *and* paid
+         * engagement still reports `closed`, because the reasons are ordered.
+         *
+         * Ops-only, and deliberately not also the owner. The client has just
+         * been sent a receipt by `announcePaymentReceived`; a second message
+         * telling them we took money for cancelled work is a conversation
+         * somebody should have after issuing the refund, not a notification
+         * racing the receipt into the same inbox.
+         */
+        const stopped = valuation ? unpayableReason(valuation) : null;
+        if (stopped === 'retired' || stopped === 'closed') {
+          log.error(
+            {
+              alert: true,
+              actorType: 'system',
+              source: 'stripe',
+              sessionId,
+              paymentId: settledPayment.id,
+              valuationId: settledPayment.valuation_id,
+              valuationState: valuation!.state,
+              unpayableReason: stopped,
+              amountCents: Number(settledPayment.amount_cents),
+              currency: settledPayment.currency,
+            },
+            'checkout settled on an engagement that had already been called off — a refund has to be issued by hand',
+          );
+          await alertBilling(log, {
+            valuationId: settledPayment.valuation_id,
+            ownerId: null,
+            type: 'payment_on_stopped_engagement',
+            title: 'Payment taken on an engagement that had been called off',
+            body:
+              `${formatMoneyCents(Number(settledPayment.amount_cents), settledPayment.currency)} settled ` +
+              `after this engagement was ${stopped === 'retired' ? 'retired' : 'closed'}. ` +
+              'Nothing will reverse it automatically — issue a refund.',
+          });
+        }
         if (valuation) await announcePaymentReceived(log, settledPayment, valuation);
       };
 

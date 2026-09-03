@@ -91,6 +91,11 @@ export const NOTIFICATION_TYPES: Readonly<Record<string, NotificationTypeSpec>> 
     audience: 'both',
     why: 'Part of a payment was refunded; the balance is a fact somebody has to reconcile.',
   },
+  payment_on_stopped_engagement: {
+    optOut: null,
+    audience: 'ops',
+    why: 'Money settled on an engagement that had already been retired or closed; only a hand-issued refund reverses it.',
+  },
   payment_disputed: {
     optOut: null,
     audience: 'ops',
