@@ -234,8 +234,36 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
       expect(res.json().Resources).toEqual([]);
     });
 
-    it('ignores a filter it does not understand and lists instead', async () => {
-      const res = await scim('GET', '/scim/v2/Users?filter=' + encodeURIComponent('displayName pr'));
+    /**
+     * A filter this endpoint cannot read is refused, and used to be dropped.
+     *
+     * Dropping it is not a smaller version of answering: the client asked which
+     * users match and was told, 200 and well-formed, that every provisioned
+     * account does. A SCIM client reads a ListResponse as the matching set —
+     * Okta's and Entra's import matching reconcile against it — so a filter on
+     * an attribute this regex misses turned "does bob@corp.example exist" into
+     * a roster of the whole directory. `ServiceProviderConfig` publishes
+     * `filter.supported: true`, so nothing on the wire says otherwise.
+     *
+     * RFC 7644 §3.12 has the classifier for it, which is why the refusal
+     * carries `invalidFilter` rather than being a bare 400.
+     */
+    it.each([
+      ['an unsupported attribute', 'displayName pr'],
+      ['an unsupported operator', 'userName co "corp.example"'],
+      // The half a lookup filter is most likely to grow: Entra appends
+      // conditions, and the regex reads the first clause and drops the rest.
+      ['a compound filter', 'userName eq "listed@corp.example" and active eq true'],
+    ])('refuses %s rather than listing every provisioned user', async (_why, filter) => {
+      const res = await scim('GET', '/scim/v2/Users?filter=' + encodeURIComponent(filter));
+      expect(res.statusCode).toBe(400);
+      expect(res.headers['content-type']).toContain(CT);
+      expect(res.json().scimType).toBe('invalidFilter');
+      expect(res.json()).not.toHaveProperty('Resources');
+    });
+
+    it('still lists for a blank filter, which is not a filter', async () => {
+      const res = await scim('GET', '/scim/v2/Users?filter=');
       expect(res.statusCode).toBe(200);
       expect(res.json().totalResults).toBeGreaterThan(0);
     });

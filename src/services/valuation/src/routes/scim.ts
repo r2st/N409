@@ -12,6 +12,7 @@ import {
   activeFromPatch,
   isScimRejection,
   parseScimUser,
+  isUnsupportedFilter,
   parseUserNameFilter,
   scimError,
   scimList,
@@ -336,7 +337,25 @@ export function registerScimRoutes(
 
       scope.get('/Users', limited, async (req, reply) => {
         if (!(await requireToken(req, reply))) return;
-        const filter = parseUserNameFilter((req.query as { filter?: unknown }).filter);
+        const rawFilter = (req.query as { filter?: unknown }).filter;
+        // A filter this endpoint cannot read is refused, not dropped — see
+        // `isUnsupportedFilter`. Dropping it answered "which user has this
+        // userName" with the whole provisioned directory.
+        if (isUnsupportedFilter(rawFilter)) {
+          return reply
+            .status(400)
+            .header('content-type', CT)
+            .send(
+              scimError(
+                400,
+                'This endpoint reads one filter: userName eq "value". No other attribute or ' +
+                  'operator is supported, and a filter it cannot read is refused rather than ' +
+                  'ignored — ignoring it would answer with every provisioned user.',
+                'invalidFilter',
+              ),
+            );
+        }
+        const filter = parseUserNameFilter(rawFilter);
         if (filter) {
           // Same boundary as `loadManaged`, and the reason it matters more here:
           // the filter takes an address rather than an id, so without it this is a

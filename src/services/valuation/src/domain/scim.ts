@@ -75,7 +75,7 @@ export interface ScimListResponse {
  * publishing a token for a condition no handler produces would be a claim about
  * behaviour rather than a description of it.
  */
-export type ScimType = 'uniqueness' | 'invalidValue' | 'invalidSyntax';
+export type ScimType = 'uniqueness' | 'invalidValue' | 'invalidSyntax' | 'invalidFilter';
 
 export interface ScimErrorResponse {
   schemas: string[];
@@ -249,8 +249,42 @@ export function scimPage(query: unknown): { startIndex: number; count: number } 
  */
 export function parseUserNameFilter(filter: unknown): string | null {
   if (typeof filter !== 'string' || !filter) return null;
-  const m = /userName\s+eq\s+"([^"]+)"/i.exec(filter);
+  // Anchored. Unanchored, this matched a *prefix*: `userName eq "a@b.c" and
+  // active eq true` — the shape Entra sends once a lookup grows a condition,
+  // and `userName eq "a" or userName eq "b"` — read as the first clause and
+  // the rest silently dropped, so the answer was to a question the client did
+  // not ask. A filter with anything else in it is one this endpoint does not
+  // read, which is what `isUnsupportedFilter` now says out loud.
+  const m = /^\s*userName\s+eq\s+"([^"]+)"\s*$/i.exec(filter);
   return m ? m[1]!.toLowerCase() : null;
+}
+
+/**
+ * True when a `filter` was sent and is not the one this endpoint reads.
+ *
+ * `parseUserNameFilter` answers `null` for two different requests — "no filter"
+ * and "a filter I cannot read" — and `GET /Users` treated both as the first.
+ * So a filter this regex misses was *dropped*, and the client that asked
+ * "which user has this userName" was answered with the whole provisioned
+ * directory, 200 and well-formed. That is worse than a refusal in the one way
+ * that matters here: a SCIM client takes a ListResponse as the set that
+ * matched, and Okta's and Entra's import matching then reconcile against
+ * accounts nobody asked about. `ServiceProviderConfig` publishes
+ * `filter.supported: true`, so the client has no reason to suspect it.
+ *
+ * Only `userName eq "…"` is read — the lookup Okta and Entra send — and RFC
+ * 7644 §3.12 has a classifier for exactly this: `invalidFilter`. Anything else,
+ * including a repeated `?filter=` (which arrives as an array, see above), is
+ * now that 400 rather than a silent full listing.
+ *
+ * Derived from the parser rather than written beside it, so the two cannot
+ * disagree about which filters are readable. An absent or blank `filter` is not
+ * a filter at all and stays the unfiltered listing it has always been.
+ */
+export function isUnsupportedFilter(filter: unknown): boolean {
+  if (filter === undefined || filter === null) return false;
+  if (typeof filter === 'string' && filter.trim() === '') return false;
+  return parseUserNameFilter(filter) === null;
 }
 
 export interface ScimCreate {

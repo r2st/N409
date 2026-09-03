@@ -3,6 +3,7 @@ import {
   toScimUser,
   scimError,
   scimList,
+  isUnsupportedFilter,
   parseUserNameFilter,
   parseScimUser,
   isScimRejection,
@@ -155,6 +156,51 @@ describe('parseUserNameFilter', () => {
 
   it('returns null for malformed filter (no quotes)', () => {
     expect(parseUserNameFilter('userName eq bob@acme.com')).toBeNull();
+  });
+
+  /**
+   * The regex was unanchored, so it matched a *prefix*. Every filter below
+   * carries `userName eq "…"` and means something else: Entra appends
+   * conditions to a lookup, and an `or` names a second user. Reading the first
+   * clause and dropping the rest answers a question the client did not ask —
+   * and does it inside a 200, where nothing says a clause was ignored.
+   */
+  it.each([
+    'userName eq "bob@acme.com" and active eq true',
+    'userName eq "bob@acme.com" or userName eq "ada@acme.com"',
+    'not (userName eq "bob@acme.com")',
+  ])('reads no userName out of a filter that is more than one: %s', (filter) => {
+    expect(parseUserNameFilter(filter)).toBeNull();
+  });
+});
+
+describe('isUnsupportedFilter', () => {
+  it('is false for no filter at all', () => {
+    for (const absent of [undefined, null, '', '   ']) {
+      expect(isUnsupportedFilter(absent)).toBe(false);
+    }
+  });
+
+  it('is false for the one filter the endpoint reads', () => {
+    expect(isUnsupportedFilter('userName eq "bob@acme.com"')).toBe(false);
+  });
+
+  it.each([
+    ['another attribute', 'displayName pr'],
+    ['another operator', 'userName co "acme"'],
+    ['a compound filter', 'userName eq "bob@acme.com" and active eq true'],
+    // A repeated `?filter=` arrives as an array; it is a filter, and not one
+    // this reads.
+    ['a repeated parameter', ['userName eq "bob@acme.com"', 'displayName pr']],
+  ])('is true for %s', (_why, filter) => {
+    expect(isUnsupportedFilter(filter)).toBe(true);
+  });
+
+  it('agrees with the parser rather than restating it', () => {
+    // Every filter the parser cannot read is one this reports, and vice versa.
+    for (const filter of ['userName eq "a@b.c"', 'displayName pr', 'userName co "b"']) {
+      expect(isUnsupportedFilter(filter)).toBe(parseUserNameFilter(filter) === null);
+    }
   });
 });
 
