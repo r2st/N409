@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { ValuationScope } from '../auth/rbac.js';
+import { STATE_GROUPS } from '../domain/operations.js';
 import {
   DISPUTE_TERMINAL_STATUSES,
   PAYMENT_REVERSIBLE_STATUSES,
@@ -545,9 +546,23 @@ export async function listPaymentsForScope(
  * Archived engagements are excluded. This list is not a report, it is a demand
  * for money with a button beside it, and a retired engagement has already been
  * withdrawn from every list the payer can see — so the invoice named an
- * engagement they could not open. `state NOT IN ('cancelled','timeout')` was
- * already filtering finished work for the same reason; archiving is the other
- * way an engagement stops being collectable.
+ * engagement they could not open. Closing the file is filtered for the same
+ * reason; archiving is the other way an engagement stops being collectable.
+ *
+ * A CLOSED ENGAGEMENT KEPT ITS PAY-NOW BUTTON (round 400, methodology M3).
+ * The filter was written `state NOT IN ('cancelled', 'timeout')` and there are
+ * three ways a file closes, not two: `ignored` sits beside them in
+ * `WORKFLOW_TRANSITIONS` (all three are terminal, all three restart only to
+ * `started`), in `HALTED_STATES`, in `STATE_GROUPS.closed`, and in the
+ * `ignored` named bucket — which is where ops put an engagement that never
+ * came to anything. It was added to the state machine after this list was
+ * written and nothing brought the list along, so a file ops had closed as
+ * ignored kept an unpaid invoice with a checkout button on the client's
+ * billing page, for work nobody is doing. Taking the payment does not reopen
+ * the engagement either: `paid_status` moves, the state does not.
+ *
+ * Named off `STATE_GROUPS.closed` rather than relisted, so the fourth way to
+ * close a file arrives here with the third.
  *
  * {@link listPaymentsForScope} deliberately does *not* filter it. That is the
  * ledger: those payments were really taken, and money that left a customer's
@@ -572,13 +587,15 @@ export async function listUnpaidValuationsForScope(
   const params: unknown[] = [];
   const where = scopeWhere(scope, params);
   const limit = Math.min(Math.max(opts.limit ?? UNPAID_VALUATION_PAGE_LIMIT, 1), UNPAID_VALUATION_PAGE_LIMIT);
+  params.push([...STATE_GROUPS.closed]);
+  const closed = params.length;
   params.push(limit + 1);
   const { rows } = await pool.query<UnpaidValuationRow>(
     `SELECT v.id, v.number::text AS number, v.company_name, v.kind::text AS kind, v.currency,
             v.amount_raised_cents::text AS amount_raised_cents
      FROM valuations v
      WHERE ${where} AND v.archived_at IS NULL
-       AND v.paid_status = 'unpaid' AND v.state NOT IN ('cancelled', 'timeout')
+       AND v.paid_status = 'unpaid' AND v.state <> ALL($${closed}::valuation_state[])
      ORDER BY v.created_at DESC
      LIMIT $${params.length}`,
     params,
