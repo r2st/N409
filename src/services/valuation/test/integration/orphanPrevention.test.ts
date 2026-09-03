@@ -52,6 +52,10 @@ const EXTERNAL: ReadonlyMap<string, string> = new Map([
   ['network_items.request_id', "the requesting system's correlation id"],
   ['option_grants.external_id', "the equity platform's grant id"],
   ['payments.charge_id', 'Stripe'],
+  // Stripe's id for the chargeback this row's verdict belongs to (0203). Held
+  // so a `charge.dispute.created` arriving after the `closed` for the same case
+  // can be told from a genuinely new one; nothing local ever has a row for it.
+  ['payments.dispute_id', 'Stripe'],
   ['payments.payment_intent_id', 'Stripe'],
   ['payments.session_id', 'Stripe Checkout'],
   ['saml_assertions_seen.assertion_id', "the IdP's assertion id, held to refuse a replay"],
