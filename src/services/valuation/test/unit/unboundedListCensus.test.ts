@@ -97,6 +97,10 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'caller',
     why: 'One cap table per valuation id handed in.',
   },
+  'capTables.ts:findCapTableHeadsByValuationIds': {
+    bound: 'caller',
+    why: 'The narrowed form of the reader above, and bounded the same way: one head per valuation id handed in.',
+  },
   'communications.ts:findTemplatesByKeys': {
     bound: 'caller',
     why: 'Keyed on the template keys the caller names, which come from the catalogue rather than from data.',

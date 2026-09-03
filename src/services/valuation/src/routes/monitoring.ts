@@ -15,7 +15,12 @@ import {
   type CalculationHead,
 } from '../repos/calculations.js';
 import { findParams, findParamsHeadsByValuationIds, type ValuationParamsHead } from '../repos/params.js';
-import { findCapTable, findCapTablesByValuationIds, type CapTableRow } from '../repos/capTables.js';
+import {
+  capTableHead,
+  findCapTable,
+  findCapTableHeadsByValuationIds,
+  type CapTableHead,
+} from '../repos/capTables.js';
 import { findUsersByIds } from '../repos/users.js';
 import {
   findResolutionByValuation,
@@ -105,7 +110,14 @@ interface SnapshotSources {
    * revenue figures and a date. The type is what keeps it narrow.
    */
   params: ValuationParamsHead | null;
-  capTable: CapTableRow | null;
+  /**
+   * The two facts this function reads off a cap table, for the reason `calc`
+   * and `params` above are heads (R398). The batch reader behind it was
+   * re-deriving the whole `validateCapTable` — every rule, and a prose message
+   * per finding — once per monitored valuation, to take one number off the
+   * summary. The type is what keeps it narrow.
+   */
+  capTable: CapTableHead | null;
   resolution: BoardResolutionRow | null;
 }
 
@@ -197,7 +209,7 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
     run_kind: calc?.run_kind ?? null,
     fmv_per_share: calc?.fmv_per_share ? Number(calc.fmv_per_share) : null,
     annual_revenue: annualRevenue,
-    fully_diluted_shares: capTable?.validation?.summary?.fully_diluted_shares ?? null,
+    fully_diluted_shares: capTable?.fully_diluted_shares ?? null,
     // Same column type, same trap: the funding-round trigger compares this
     // string against the baseline's, and two malformed strings compare wrong.
     last_round_date: isoDay(params?.last_round_date),
@@ -230,9 +242,18 @@ async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<Li
         last_round_date: params.last_round_date,
       }
     : null;
+  // Narrowed here for the reason `calc` and `params` are: one row is one row,
+  // `findCapTable` is what every other caller uses, and both paths then hand
+  // `assembleSnapshot` the same shape.
+  const capTableHeadRow = capTable ? capTableHead(capTable) : null;
   return {
-    snapshot: assembleSnapshot(valuation, { calc: head, params: paramsHead, capTable, resolution }),
-    cap_table_changed_at: capTable?.updated_at ?? null,
+    snapshot: assembleSnapshot(valuation, {
+      calc: head,
+      params: paramsHead,
+      capTable: capTableHeadRow,
+      resolution,
+    }),
+    cap_table_changed_at: capTableHeadRow?.updated_at ?? null,
   };
 }
 
@@ -247,7 +268,7 @@ async function buildSnapshots(pool: pg.Pool, valuations: ValuationRow[]): Promis
   const [calcs, params, capTables, resolutions] = await Promise.all([
     latestSucceededCalculationHeadsByValuationIds(pool, ids),
     findParamsHeadsByValuationIds(pool, ids),
-    findCapTablesByValuationIds(pool, ids),
+    findCapTableHeadsByValuationIds(pool, ids),
     findResolutionsByValuationIds(pool, ids),
   ]);
   return new Map(

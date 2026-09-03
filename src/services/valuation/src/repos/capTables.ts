@@ -4,6 +4,7 @@ import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import {
   CAP_TABLE_EVENT_TYPES,
+  fullyDilutedShares,
   validateCapTable,
   type CapTableEntry,
   type CapTableValidation,
@@ -154,6 +155,80 @@ export async function findCapTablesByValuationIds(
     [[...new Set(valuationIds)]],
   );
   return new Map(rows.map((row) => [row.valuation_id, withFreshValidation(row)]));
+}
+
+/**
+ * The two facts the monitoring snapshot reads off a cap table (R398, M8).
+ *
+ * Third instance of one shape. R298 narrowed the run to a `CalculationHead`
+ * and R393 narrowed the params row to a `ValuationParamsHead`, both because
+ * `assembleSnapshot` takes two scalars off a document and the batch reader
+ * behind it was shipping the document. The cap table is the one that was left,
+ * and it costs more than either — not because of the bytes, but because of what
+ * is *computed* from them.
+ */
+export interface CapTableHead {
+  valuation_id: string;
+  /** `validation.summary.fully_diluted_shares`, by the only route to it. */
+  fully_diluted_shares: number;
+  /** The monitor's `cap_table_changed_at`. */
+  updated_at: Date;
+}
+
+/**
+ * Heads for a list of valuations, for {@link CapTableHead}'s reason.
+ *
+ * `withFreshValidation` is deliberately not on this path, and that is the whole
+ * point of the function. Every read of a cap table re-derives the *entire*
+ * validation — every per-entry rule, and one issue object carrying a prose
+ * message per finding — because the stored column is a cache that goes stale
+ * (see `withFreshValidation`). That is the right trade for a reader that
+ * displays the issues. The monitoring scan is not one: it reads
+ * `summary.fully_diluted_shares` and nothing else, and `fullyDilutedShares` is
+ * the exported function that computes exactly that number from the same
+ * entries — so this is the same answer by a shorter route, not a second
+ * derivation of it.
+ *
+ * The difference is per valuation and the scan pages 500 at a time. At the
+ * 2,000-entry cap, `validateCapTable` is 0.390 ms against `fullyDilutedShares`'
+ * 0.014 ms — 195 ms of event loop against 7 ms for one page of `POST
+ * /monitors/scan`, all of it building issue prose nobody reads. At a
+ * hundred-row table it is 18 ms against 0.4 ms.
+ *
+ * `entries` is still fetched, because the sum is over it. Summing in SQL would
+ * put `asConvertedShares`' rules — the finite coercion, and preferred-only
+ * conversion with a non-positive ratio counting 1:1 — in a second place that
+ * could come to disagree with the engine's basis, which is the one thing a
+ * fully-diluted count may not do.
+ */
+export async function findCapTableHeadsByValuationIds(
+  pool: pg.Pool,
+  valuationIds: string[],
+): Promise<Map<string, CapTableHead>> {
+  if (valuationIds.length === 0) return new Map();
+  const { rows } = await pool.query<{ valuation_id: string; entries: CapTableEntry[]; updated_at: Date }>(
+    `SELECT valuation_id, entries, updated_at FROM cap_tables WHERE valuation_id = ANY($1)`,
+    [[...new Set(valuationIds)]],
+  );
+  return new Map(
+    rows.map((row) => [
+      row.valuation_id,
+      {
+        valuation_id: row.valuation_id,
+        fully_diluted_shares: fullyDilutedShares(row.entries),
+        updated_at: row.updated_at,
+      },
+    ]),
+  );
+}
+
+/** The head of a row already in hand, so the one-valuation path narrows here. */
+export function capTableHead(row: CapTableRow): CapTableHead {
+  return {
+    valuation_id: row.valuation_id,
+    fully_diluted_shares: row.validation.summary.fully_diluted_shares,
+    updated_at: row.updated_at,
+  };
 }
 
 export interface SaveCapTableOptions {
