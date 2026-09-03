@@ -249,7 +249,18 @@ export function AdminBlogPage() {
               >
                 <TextInput
                   required
-                  maxLength={120}
+                  /*
+                   * The service's own ceiling, which is also fastify's
+                   * `maxParamLength` — a longer slug could not be routed to
+                   * even if it stored. The box let 120 characters be typed, so
+                   * the twenty past the ceiling were refused by the server as
+                   * a 422 rendered in the banner at the top of the form,
+                   * rather than by the box the slug is in. The sibling help
+                   * console has always stopped at the same 100.
+                   * `test/slugMaxLengthParity.test.ts` reads both services and
+                   * fails when either moves.
+                   */
+                  maxLength={100}
                   pattern="[a-z0-9-]+"
                   value={editor.slug}
                   onChange={(e) => setEditor({ ...editor, slug: e.target.value })}
