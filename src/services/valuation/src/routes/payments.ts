@@ -58,6 +58,7 @@ import {
   refundState,
   type DisputeStatus,
 } from '../domain/payments.js';
+import { STATE_GROUPS } from '../domain/operations.js';
 import { fitsInt4 } from '../domain/int4.js';
 import { createNotifications } from '../repos/notifications.js';
 import {
@@ -270,7 +271,7 @@ export function checkoutAvailableTo(
 }
 
 /**
- * Whether this engagement may still be charged for.
+ * Why this engagement may no longer be charged for, or null when it may be.
  *
  * A retired engagement may not. `listUnpaidValuationsForScope` already stopped
  * offering one on the billing page — "this list is not a report, it is a demand
@@ -283,13 +284,57 @@ export function checkoutAvailableTo(
  * withdrawn — and getting it back is a refund somebody has to notice and issue
  * by hand.
  *
+ * A CLOSED ENGAGEMENT IS THE SAME DEFECT ONE AXIS OVER (round 400, methodology
+ * M3). Retirement is not how most work stops: `cancelled`, `timeout` and
+ * `ignored` are the three terminal states of `WORKFLOW_TRANSITIONS`, and the
+ * pay-now list has filtered them out since it was written, on exactly the
+ * grounds quoted above. The button was gated on `archived_at` alone, so the
+ * pay panel on a cancelled engagement quoted a price and opened a live
+ * Checkout Session for work that had been called off. Closing a file is what
+ * ops do far more often than retiring one — retirement is the retention
+ * sweep's word, years later — so this is the reachable half of the pair.
+ *
+ * Paying does not reopen it, either: the webhook moves `paid_status` and
+ * `nextState` has nowhere to advance a terminal state to, so the money buys a
+ * closed engagement and needs a hand-issued refund.
+ *
  * The receipt and history routes deliberately do *not* apply this. Those are
  * records of money that really moved, and it did not stop moving because the
- * engagement was later retired.
+ * engagement was later retired or called off.
  */
-export function payableEngagement(valuation: Pick<ValuationRow, 'archived_at' | 'paid_status'>): boolean {
-  return valuation.archived_at === null && valuation.paid_status === 'unpaid';
+export type UnpayableReason = 'retired' | 'closed' | 'settled';
+
+const CLOSED_STATES: ReadonlySet<string> = new Set(STATE_GROUPS.closed);
+
+export function unpayableReason(
+  valuation: Pick<ValuationRow, 'archived_at' | 'paid_status' | 'state'>,
+): UnpayableReason | null {
+  if (valuation.archived_at !== null) return 'retired';
+  if (CLOSED_STATES.has(valuation.state)) return 'closed';
+  if (valuation.paid_status !== 'unpaid') return 'settled';
+  return null;
 }
+
+export function payableEngagement(
+  valuation: Pick<ValuationRow, 'archived_at' | 'paid_status' | 'state'>,
+): boolean {
+  return unpayableReason(valuation) === null;
+}
+
+/**
+ * The sentence each refusal is answered with.
+ *
+ * One map, read by the checkout's 409 and shipped to the pay panel as
+ * `payable_reason`, because the panel had the retired sentence hard-coded for
+ * every falsy `payable` — so a cancelled engagement was going to be told it had
+ * been retired, which is a different thing that happens years later and is not
+ * what the client should ask us about.
+ */
+export const UNPAYABLE_DETAIL: Readonly<Record<UnpayableReason, string>> = {
+  retired: 'This engagement has been retired and can no longer be paid for.',
+  closed: 'This engagement has been closed and can no longer be paid for.',
+  settled: 'This engagement has already been paid for.',
+};
 
 const CheckoutBody = z
   .object({
@@ -347,8 +392,11 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // be charged for is a fact about the engagement, and answering "payments
       // are not configured" to someone trying to pay for a retired file would
       // send them back to try again tomorrow.
-      if (valuation.archived_at !== null) {
-        throw problems.conflict('This engagement has been retired and can no longer be paid for.');
+      const unpayable = unpayableReason(valuation);
+      // `settled` is left to the richer refusal further down, which has to tell
+      // "you paid" from "your firm paid" — see the `paid_by_partner` note there.
+      if (unpayable !== null && unpayable !== 'settled') {
+        throw problems.conflict(UNPAYABLE_DETAIL[unpayable]);
       }
 
       if (!deps.stripeSecretKey) {
@@ -680,6 +728,9 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // say "we will invoice you instead" about work nobody is going to
         // invoice for.
         payable: payableEngagement(valuation),
+        // Which refusal, so the panel says the true one rather than the one it
+        // had hard-coded. Omitted when the engagement is payable.
+        ...(payableEngagement(valuation) ? {} : { payable_reason: unpayableReason(valuation) }),
         // Sent only when it is true and only to the caller who can act on it.
         // An ops user about to click "Pay now" against a test key needs to know
         // no money will move; a client is never shown the button at all, and

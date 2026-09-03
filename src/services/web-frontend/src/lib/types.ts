@@ -777,6 +777,13 @@ export interface PaymentQuote {
    */
   payable?: boolean;
   /**
+   * Which refusal, when `payable` is false. The panel used to say "retired"
+   * for every one of them, and being closed — cancelled, timed out, or set
+   * aside as ignored — is a different thing, decided by different people, at a
+   * different time. Optional for the same reason as `payable`.
+   */
+  payable_reason?: 'retired' | 'closed' | 'settled';
+  /**
    * Present and true only for ops, and only when the deployment holds a Stripe
    * *test* key. Such a key opens a real Checkout page that takes `4242…` and
    * declines every real card, so the checkout is offered to ops (who are

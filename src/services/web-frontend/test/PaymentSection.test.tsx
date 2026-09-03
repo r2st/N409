@@ -90,6 +90,26 @@ describe('PaymentSection (price transparency before checkout)', () => {
     expect(screen.queryByText(/we will invoice you instead/i)).not.toBeInTheDocument();
   });
 
+  /**
+   * And it says which refusal. The sentence was hard-coded to "retired" for
+   * every falsy `payable`, so a cancelled engagement — much the commoner way
+   * work stops, and decided by different people at a different time — was
+   * described to the client with the retention sweep's word for a file
+   * archived years later.
+   */
+  it('names the closure rather than calling every refusal a retirement', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/payments/quote'))
+        return jsonResponse({ quote: { ...QUOTE, payable: false, payable_reason: 'closed' } });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+
+    render(<PaymentSection valuation={VALUATION} />);
+    const note = await screen.findByTestId('payment-not-payable');
+    expect(note).toHaveTextContent(/has been closed/i);
+    expect(note).not.toHaveTextContent(/retired/i);
+  });
+
   it('keeps the button for an API too old to send `payable`', async () => {
     // Rolling deploy: a browser on the new build talking to the old API must
     // not hide the button from a client who is trying to pay.

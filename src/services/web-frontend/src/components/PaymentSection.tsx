@@ -11,6 +11,18 @@ import { Button, ErrorNote, ListTruncationNote } from './ui';
  * Stripe-hosted page opens; the webhook flips paid_status, and the redirect
  * lands on /payment/success which polls for it.
  */
+/**
+ * The sentence for each way an engagement stops being payable. Mirrors
+ * `UNPAYABLE_DETAIL` on the server, which answers the POST with the same
+ * distinction — see `state-label parity`: this is a user-visible label the
+ * browser restates, so the two have to agree.
+ */
+const NOT_PAYABLE_TEXT: Record<NonNullable<PaymentQuote['payable_reason']>, string> = {
+  retired: 'This engagement has been retired — it can no longer be paid for.',
+  closed: 'This engagement has been closed — it can no longer be paid for.',
+  settled: 'This engagement has already been paid for.',
+};
+
 export function PaymentSection({ valuation }: { valuation: Valuation }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -197,13 +209,19 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
       )}
 
       <div className="mt-4 flex flex-wrap items-center gap-4">
-        {/* Retired first: it is the more specific of the two refusals, and the
+        {/* Unpayable first: it is the more specific of the two refusals, and the
             invoice-fallback wording below would promise an invoice for work
             nobody is going to send one for. `payable === false` rather than
-            falsy, so an API older than the field still renders the button. */}
+            falsy, so an API older than the field still renders the button.
+            The sentence comes from `payable_reason` — this said "retired" for
+            every refusal, and a cancelled engagement has not been retired: that
+            is the retention sweep's word for a file archived years later, and
+            being told it would send the client to ask us about the wrong
+            thing. An API older than the field says nothing, and "retired" is
+            what it always meant by a false `payable`. */}
         {quote?.payable === false ? (
           <p className="ml-auto text-sm text-amber-800" data-testid="payment-not-payable">
-            This engagement has been retired — it can no longer be paid for. Talk to us if that is wrong.
+            {NOT_PAYABLE_TEXT[quote.payable_reason ?? 'retired']} Talk to us if that is wrong.
           </p>
         ) : quote && !quote.configured ? (
           <p className="ml-auto text-sm text-amber-800">
