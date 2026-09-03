@@ -434,8 +434,35 @@ def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
     share classes out of a P&L.
     """
     try:
-        root = _parse_xml_part(zf.read("xl/workbook.xml"))
-    except (KeyError, ElementTree.ParseError):
+        data = zf.read("xl/workbook.xml")
+    except KeyError:
+        # Not there at all. `_xlsx_text` answers with the numbered fallback if
+        # the archive holds worksheet parts and refuses the file if it does
+        # not, and neither of those is news: nothing was lost that this reader
+        # could have had.
+        return []
+    try:
+        root = _parse_xml_part(data)
+    except ElementTree.ParseError:
+        # AN UNREADABLE WORKBOOK PART IS NOT AN ABSENT ONE EITHER
+        # (round 397, methodology M11).
+        #
+        # R390 drew exactly this line one part below, for `xl/_rels`, and drew
+        # it because losing the pairing between a tab's name and its rows costs
+        # the model its only cue for what a block of rows *is*. The same
+        # sentence is true here and more so: this part is where the names come
+        # from, so a workbook whose entry list will not parse loses every one
+        # of them and falls all the way back to `Sheet1…SheetN`.
+        #
+        # The rows still arrive and the fallback is still right — say what is
+        # missing, keep what is not. What was missing was the saying. This
+        # branch shared its `except` with the absent case above, so the one
+        # outcome R390's own log line exists to make visible happened here
+        # with nothing recorded at any tier.
+        _log.warning(
+            "a workbook's sheet list could not be read; sheets are numbered rather than named",
+            extra={"event": "xlsx_sheet_index_unreadable"},
+        )
         return []
     try:
         rels = _xlsx_rels(zf)

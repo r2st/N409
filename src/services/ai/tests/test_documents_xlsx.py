@@ -869,3 +869,37 @@ def test_a_workbook_that_lost_its_index_still_reads_its_worksheets():
     [doc] = extract_texts([_doc(damaged)])
     assert "=== Sheet: Sheet1 ===" in doc.text
     assert "Series A\t2000000" in doc.text
+
+
+def test_an_unreadable_workbook_part_is_said_out_loud(caplog):
+    """The part the tab names come from. It shared an `except` with its own
+    absence, so every sheet fell back to `Sheet1…SheetN` — R390's exact loss,
+    one part up — with nothing recorded anywhere."""
+    damaged = _zip_of(
+        {
+            "xl/workbook.xml": '<workbook xmlns="http://schemas.openxmlformats.org/'
+            'spreadsheetml/2006/main"><sheets><sheet name="Cap Ta',
+            "xl/sharedStrings.xml": _SHARED_STRINGS,
+            "xl/worksheets/sheet1.xml": _SHEET1,
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="documents"):
+        [doc] = extract_texts([_doc(damaged)])
+    # The rows still arrive, under a heading that claims nothing.
+    assert "=== Sheet: Sheet1 ===" in doc.text
+    assert "Series A\t2000000" in doc.text
+    assert any(
+        getattr(r, "event", None) == "xlsx_sheet_index_unreadable" for r in caplog.records
+    )
+
+
+def test_an_absent_workbook_part_is_not_reported_as_unreadable(caplog):
+    """Nothing was lost that this reader could have had, so there is nothing
+    to say — the two must not share one line any more than one `except`."""
+    with caplog.at_level(logging.WARNING, logger="documents"):
+        extract_texts(
+            [_doc(_zip_of({"xl/sharedStrings.xml": _SHARED_STRINGS, "xl/worksheets/sheet1.xml": _SHEET1}))]
+        )
+    assert not [
+        r for r in caplog.records if getattr(r, "event", None) == "xlsx_sheet_index_unreadable"
+    ]
