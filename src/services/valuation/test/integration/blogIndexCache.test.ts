@@ -102,6 +102,27 @@ describe.skipIf(!dbUp)('marketing blog — the index computes its read times onc
     expect(post.excerpt).toBe('A short excerpt.');
   });
 
+  it('reads the body once for a post page too, not once per reader', async () => {
+    const publicPost = () =>
+      ctx.app.inject({ method: 'GET', url: '/api/v1/blog/posts/r398-index-post-1' });
+
+    bodyReads = 0;
+    const first = await publicPost();
+    expect(first.statusCode).toBe(200);
+    expect(bodyReads).toBeGreaterThan(0);
+    // The body is what the page is, so it is still sent — the walk behind
+    // `read_minutes` is what stops repeating.
+    expect(first.json().post.body_html).toContain('word');
+    expect(first.json().post.read_minutes).toBe(2);
+
+    for (let i = 0; i < 3; i += 1) {
+      bodyReads = 0;
+      const again = await publicPost();
+      expect(bodyReads, `request ${i + 2}`).toBe(0);
+      expect(again.json()).toEqual(first.json());
+    }
+  });
+
   it('recomputes after a write clears the entry, so an edited post is not stale', async () => {
     const listed = (await publicList()).json().posts as Array<{ slug: string; id?: string }>;
     expect(listed.some((p) => p.slug === 'r398-index-post-0')).toBe(true);

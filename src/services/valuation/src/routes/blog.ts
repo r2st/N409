@@ -221,6 +221,11 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     // reason — and a 404 rather than a 422, because the caller asked for a URL
     // that names nothing, which is not a malformed request but a missing page.
     if (!Slug.safeParse(slug).success) throw problems.notFound();
+    // The projection is cached, not the row, for the reason the index above
+    // caches its summaries: `toPublic` ends in `readMinutes(post.body_html)`,
+    // and `body_html` is 200,000 characters at what the authoring route
+    // accepts. Per request that is a walk of a longform post for a number that
+    // cannot change until the post does.
     const post = (await cache.getOrLoad(
       `slug:${slug}`,
       // The miss is cached too (null), so a crawler walking dead links does
@@ -228,11 +233,11 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       // same reason and cleared the moment it is published.
       async () => {
         const row = await findPostBySlug(deps.pool, slug);
-        return row?.published ? row : null;
+        return row?.published ? toPublic(row) : null;
       },
-    )) as BlogPostRow | null;
+    )) as ReturnType<typeof toPublic> | null;
     if (!post) throw problems.notFound();
-    return conditionalJson(req, reply, { post: toPublic(post) }, PUBLIC_REVALIDATE);
+    return conditionalJson(req, reply, { post }, PUBLIC_REVALIDATE);
   });
 
   // ── Authoring (ops-only, audited) ────────────────────────────────────────
