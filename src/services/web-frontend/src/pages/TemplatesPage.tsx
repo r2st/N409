@@ -268,6 +268,18 @@ export function TemplatesPage() {
                               <Button
                                 variant="secondary"
                                 disabled={busy || opening !== null}
+                                // `opening` is a fetch in another row, which
+                                // this row's reader has no way to see. Held for
+                                // a reason — a second press while one body is
+                                // in flight would land the wrong template in
+                                // the editor the first press opened — so the
+                                // reason is said rather than left as a button
+                                // that does nothing.
+                                title={
+                                  opening !== null && opening !== t.id
+                                    ? 'Another template’s body is loading.'
+                                    : undefined
+                                }
                                 onClick={() => void toggleEditor(t.id)}
                               >
                                 {opening === t.id
