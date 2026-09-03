@@ -117,6 +117,38 @@ export const EngineInputsBody = z
         period_end: DateStr.nullable().optional(),
       })
       .strict()
+      /**
+       * The measurement window, the right way round.
+       *
+       * These two are the only pair on this body that describe an interval, and
+       * each was bounded on its own — so `{ period_start: '2026-06-30',
+       * period_end: '2025-01-01' }` validated, persisted, and reached the
+       * engine, which prints them back verbatim (`market_movement.py._period`
+       * says in as many words that they "are not arithmetic").
+       *
+       * Exhibit C then states them as fact. `reportExhibits.ts` renders the
+       * benchmark row's third cell as `${from} to ${to}`, beside a return
+       * computed as `index_end / index_start - 1`, on a signed §409A opinion.
+       * An inverted window therefore prints a period running backwards next to
+       * a return whose sign is the reverse of what that period implies — and it
+       * is the one adjustment in the report a reviewer is meant to check by
+       * looking up the benchmark over the stated dates.
+       *
+       * `routes/params.ts` carries exactly this refinement over the three study
+       * tables, for exactly this reason; the market-movement block was the pair
+       * that did not. Ordering only, and only when both ends are given: a block
+       * stating one end and not the other is undated rather than misdated, and
+       * the exhibit already falls back to "Round date to valuation date" unless
+       * it has both.
+       */
+      .refine(
+        (m) =>
+          !m ||
+          m.period_start == null ||
+          m.period_end == null ||
+          m.period_start <= m.period_end,
+        { message: 'period_start must not be after period_end', path: ['period_start'] },
+      )
       .nullable()
       .optional(),
 

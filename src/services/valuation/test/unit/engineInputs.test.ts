@@ -310,4 +310,53 @@ describe('EngineInputsBody', () => {
       expect(EngineInputsBody.safeParse({ hybrid }).success).toBe(true);
     }
   });
+
+  /**
+   * The market-movement window is printed, not computed.
+   *
+   * `market_movement.py._period` keeps these two out of the arithmetic on
+   * purpose — they exist so Exhibit C can state the interval the benchmark
+   * levels were read over. `reportExhibits.ts` renders that cell as
+   * `${from} to ${to}`, so a pair the wrong way round ships on a signed §409A
+   * opinion as a period running backwards, beside a return computed from
+   * `index_end / index_start - 1` whose sign then contradicts it.
+   *
+   * Each end was bounded on its own and nothing compared them. The three study
+   * tables in `routes/params.ts` carry this same refinement; this block was the
+   * pair that did not.
+   */
+  describe('market_movement period', () => {
+    const window = (period_start: string | null, period_end: string | null) => ({
+      market_movement: { index_start: 100, index_end: 110, period_start, period_end },
+    });
+
+    it('rejects a window whose end precedes its start', () => {
+      const res = EngineInputsBody.safeParse(window('2026-06-30', '2025-01-01'));
+      expect(res.success).toBe(false);
+      expect(res.error?.issues[0]?.message).toBe('period_start must not be after period_end');
+      expect(res.error?.issues[0]?.path).toContain('period_start');
+    });
+
+    it('accepts a window in order, and a single day', () => {
+      expect(EngineInputsBody.safeParse(window('2025-01-01', '2026-06-30')).success).toBe(true);
+      expect(EngineInputsBody.safeParse(window('2025-01-01', '2025-01-01')).success).toBe(true);
+    });
+
+    /**
+     * One end alone is undated, not misdated — the exhibit already falls back
+     * to "Round date to valuation date" unless it has both.
+     */
+    it('accepts a block that states one end and not the other', () => {
+      expect(EngineInputsBody.safeParse(window('2026-06-30', null)).success).toBe(true);
+      expect(EngineInputsBody.safeParse(window(null, '2025-01-01')).success).toBe(true);
+      expect(
+        EngineInputsBody.safeParse({ market_movement: { index_start: 100, index_end: 110 } }).success,
+      ).toBe(true);
+    });
+
+    /** The block is nullable, and a refinement must not make null a failure. */
+    it('still accepts a cleared block', () => {
+      expect(EngineInputsBody.safeParse({ market_movement: null }).success).toBe(true);
+    });
+  });
 });
