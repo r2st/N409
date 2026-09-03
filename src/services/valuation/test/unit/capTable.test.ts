@@ -721,6 +721,43 @@ describe('the import format is a vocabulary, not a string', () => {
     expect(wrong.error?.issues[0]?.path).toEqual(['format']);
   });
 
+  /**
+   * The column mapping is stored, not just consumed.
+   *
+   * `resolveMapping` drops keys outside `CAP_TABLE_FIELDS`, so an over-wide map
+   * was never an over-wide *parse* — but the values it keeps are written to
+   * `cap_tables.column_mapping` and re-read with the row for the life of the
+   * engagement. The field bounded neither string nor the key count, on the one
+   * route whose body limit is raised to 4 MiB for the CSV beside it.
+   */
+  describe('ImportBody.mapping bounds', () => {
+    it('accepts a real mapping', () => {
+      const res = ImportBody.safeParse({
+        csv: 'a,b',
+        mapping: { shares: 'Shares Outstanding', security_class: 'Liquidation Preference' },
+      });
+      expect(res.success).toBe(true);
+    });
+
+    it('refuses a column name longer than a spreadsheet heading', () => {
+      const res = ImportBody.safeParse({ csv: 'a,b', mapping: { shares: 'x'.repeat(201) } });
+      expect(res.success).toBe(false);
+      expect(res.error?.issues[0]?.path).toEqual(['mapping', 'shares']);
+    });
+
+    it('refuses an over-long field name', () => {
+      const res = ImportBody.safeParse({ csv: 'a,b', mapping: { ['f'.repeat(65)]: 'Shares' } });
+      expect(res.success).toBe(false);
+    });
+
+    it('refuses a map with more entries than there are fields to map', () => {
+      const wide = Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`f${i}`, 'Shares']));
+      const res = ImportBody.safeParse({ csv: 'a,b', mapping: wide });
+      expect(res.success).toBe(false);
+      expect(res.error?.issues[0]?.message).toBe('At most 32 column mappings');
+    });
+  });
+
   it('a key outside the set resolves to no preset at all — which is the bug', () => {
     // The behaviour the schema now stands in front of, asserted so the reason
     // for the enum stays visible.

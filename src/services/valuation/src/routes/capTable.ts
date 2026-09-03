@@ -60,6 +60,17 @@ export const MAX_CAP_TABLE_UPLOAD_BYTES = 10 * 1024 * 1024;
  */
 const MAX_UPLOAD_ROWS = MAX_CAP_TABLE_ENTRIES;
 
+/**
+ * Bounds on `ImportBody.mapping` — see the field's own note.
+ *
+ * The key axis is the eight `CAP_TABLE_FIELDS`, with headroom so a client
+ * sending a stale field name meets the schema's message rather than being
+ * silently ignored by `resolveMapping`; the value axis is one column heading.
+ */
+const MAX_MAPPING_KEYS = 32;
+const MAX_MAPPING_KEY_CHARS = 64;
+const MAX_MAPPING_COLUMN_CHARS = 200;
+
 export const ImportBody = z
   .object({
     format: z.enum(FORMAT_PRESET_KEYS).default('generic'),
@@ -79,8 +90,38 @@ export const ImportBody = z
      * so a client that sends nonsense mislabels its own errors and nothing else.
      */
     source_lines: z.array(z.number().int().min(1)).max(MAX_CAP_TABLE_ENTRIES).optional(),
-    /** field → source column overrides on top of the format preset. */
-    mapping: z.record(z.string(), z.string()).optional(),
+    /**
+     * field → source column overrides on top of the format preset.
+     *
+     * Bounded on both axes, which it was not. `z.record(z.string(),
+     * z.string())` bounds neither the key count nor either string, so the only
+     * ceiling on this field was the transport's — and this route is one of the
+     * three that *raises* it, to `CAP_TABLE_IMPORT_BODY_LIMIT` (4 MiB), for the
+     * sake of `csv` beside it. `routes/specialty.ts` and `routes/debt.ts` bound
+     * the same `z.record` shape for the same reason each says out loud: the map
+     * does not die with the request.
+     *
+     * Here it dies even less. `resolveMapping` drops keys that are not
+     * `CAP_TABLE_FIELDS`, so an over-wide map cost only the walk — but the
+     * *values* it keeps are written to `cap_tables.column_mapping` (jsonb) by
+     * `saveCapTable`, returned by the preview endpoint, and re-read with the
+     * row by every reader of `STORED_CAP_TABLE_COLUMNS` from then on. Eight
+     * megabyte-long column names is a cap table whose every subsequent GET
+     * carries four megabytes of a header nobody typed.
+     *
+     * A value is a column heading in someone's spreadsheet: the longest one any
+     * `FORMAT_PRESETS` entry names is "Liquidation Preference" at 22
+     * characters, and a heading past 200 is not one an analyst is picking out
+     * of a mapping dropdown. The key bound is the field-name axis of the same
+     * map — `resolveMapping` ignores anything that is not one of the eight, so
+     * this only stops the walk being paid for.
+     */
+    mapping: z
+      .record(z.string().max(MAX_MAPPING_KEY_CHARS), z.string().max(MAX_MAPPING_COLUMN_CHARS))
+      .refine((v) => Object.keys(v).length <= MAX_MAPPING_KEYS, {
+        message: `At most ${MAX_MAPPING_KEYS} column mappings`,
+      })
+      .optional(),
   })
   .strict();
 
