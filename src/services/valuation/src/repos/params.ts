@@ -213,6 +213,53 @@ export async function findParams(pool: pg.Pool, valuationId: string): Promise<Va
 }
 
 /**
+ * The three columns the monitoring snapshot reads, and nothing else.
+ *
+ * THE PAGE READ A WHOLE PARAMS ROW TO TAKE TWO REVENUE FIGURES AND A DATE
+ * (R393, methodology M8). `buildSnapshots` calls the batch reader once per
+ * monitored valuation and `assembleSnapshot` then touches
+ * `last_year_revenue_cents`, `ytd_revenue_cents` and `last_round_date`.
+ * `valuation_params` carries six `jsonb` columns beside them — `engine_inputs`
+ * is the whole engine payload including every share class, and the DLOM, DLOC,
+ * required-return and WACC study tables are four more — so a page of monitors
+ * pulled all of that across the wire and through the driver's `JSON.parse` for
+ * three scalars. Measured at 200 monitors with a fifty-class engine input
+ * (11.5 kB): **18.8 ms / 3.71 MB parsed against 0.3 ms / 0.03 MB**, and
+ * `MONITOR_PAGE_LIMIT` is 500.
+ *
+ * This is R298's `latestSucceededCalculationHeadsByValuationIds` beside it in
+ * the same `Promise.all`, and the third of that fan-out's four reads to be
+ * narrowed — R393 took the cap table in the same round. The one that stays wide
+ * is `findResolutionsByValuationIds`, whose row has no document column on it.
+ *
+ * `findParamsByValuationIds` stays as it is for the other caller: the
+ * remediation console re-runs the engine for each row it fetches, so it wants
+ * every column, and `MAX_RERUN` is 25.
+ *
+ * `calendarDateRow` for the same reason `hydrated` applies it: `last_round_date`
+ * is a `date` column, the driver hands one back as midnight *local*, and the
+ * trigger compares this string against the baseline's. Two malformed strings
+ * compare wrong (domain/calendarDate).
+ */
+export type ValuationParamsHead = Pick<
+  ValuationParamsRow,
+  'valuation_id' | 'last_year_revenue_cents' | 'ytd_revenue_cents' | 'last_round_date'
+>;
+
+export async function findParamsHeadsByValuationIds(
+  pool: pg.Pool,
+  valuationIds: string[],
+): Promise<Map<string, ValuationParamsHead>> {
+  if (valuationIds.length === 0) return new Map();
+  const { rows } = await pool.query<ValuationParamsHead>(
+    `SELECT valuation_id, last_year_revenue_cents, ytd_revenue_cents, last_round_date
+       FROM valuation_params WHERE valuation_id = ANY($1)`,
+    [[...new Set(valuationIds)]],
+  );
+  return new Map(rows.map((row) => [row.valuation_id, calendarDateRow(row, 'last_round_date')]));
+}
+
+/**
  * Batch form of {@link findParams}, keyed by valuation id — one round trip for
  * a whole list of valuations rather than one per valuation.
  */

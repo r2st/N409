@@ -8,7 +8,11 @@ import {
   latestSucceededCalculation,
   latestSucceededCalculationHeadsByValuationIds,
 } from '../../src/repos/calculations.js';
-import { findParams, findParamsByValuationIds } from '../../src/repos/params.js';
+import {
+  findParams,
+  findParamsByValuationIds,
+  findParamsHeadsByValuationIds,
+} from '../../src/repos/params.js';
 import { findCapTable, findCapTablesByValuationIds } from '../../src/repos/capTables.js';
 import { findResolutionByValuation, findResolutionsByValuationIds } from '../../src/repos/boardApprovals.js';
 import {
@@ -287,6 +291,84 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
       }
     });
 
+    /**
+     * The reader the page actually calls, and the one the page's cost is.
+     *
+     * `buildSnapshots` reads `findParamsHeadsByValuationIds`, not the wide form
+     * above — `assembleSnapshot` touches two revenue figures and a date, and
+     * `valuation_params` carries `engine_inputs` plus four study tables beside
+     * them (R393). The parity assertion is the wide reader's, so the narrowing
+     * cannot change an answer; the assertion below is the narrowing itself.
+     */
+    it('findParamsHeadsByValuationIds agrees with the row it narrows', async () => {
+      const heads = await findParamsHeadsByValuationIds(pool, monitored);
+      for (const id of monitored) {
+        const full = await findParams(pool, id);
+        expect(heads.get(id)?.last_year_revenue_cents).toBe(full?.last_year_revenue_cents);
+        expect(heads.get(id)?.ytd_revenue_cents).toBe(full?.ytd_revenue_cents);
+        expect(heads.get(id)?.last_round_date).toBe(full?.last_round_date);
+      }
+    });
+
+    /**
+     * ASSERTED AS A DIFFERENCE, because the answer does not move either way —
+     * the same blindness R322's `not.toHaveProperty` had, and R393's analytics
+     * and cap-table guards take the same shape. Fill `engine_inputs` with a
+     * fifty-class engine payload and what the statement returns must not
+     * change. Against the pre-fix `SELECT *` it grows by the payload.
+     */
+    it('does not read the documents beside the three columns', async () => {
+      const bytesRead = async (): Promise<number> => {
+        let total = 0;
+        const original = pool.query.bind(pool);
+        (pool as unknown as { query: (...a: unknown[]) => unknown }).query = async (...args: unknown[]) => {
+          const first = args[0];
+          const sql = typeof first === 'string' ? first : ((first as { text?: string })?.text ?? '');
+          const result = (await (original as (...a: unknown[]) => unknown)(...args)) as {
+            rows?: unknown[];
+          };
+          if (/FROM valuation_params/i.test(sql)) {
+            total += Buffer.byteLength(JSON.stringify(result?.rows ?? []));
+          }
+          return result;
+        };
+        try {
+          await findParamsHeadsByValuationIds(pool, monitored);
+        } finally {
+          (pool as unknown as { query: unknown }).query = original;
+        }
+        return total;
+      };
+
+      const before = await bytesRead();
+      const engineInputs = {
+        valuation_date: '2026-01-01',
+        share_classes: Array.from({ length: 50 }, (_, i) => ({
+          name: `Series ${i}`,
+          shares: 100_000 + i,
+          liquidation_preference: 1_000_000,
+          conversion_ratio: 1,
+          seniority: (i % 5) + 1,
+          price_per_share: 1.25,
+        })),
+      };
+      const studies = Array.from({ length: 30 }, (_, i) => ({ study: `Study ${i}`, mean: 0.3, n: 100 + i }));
+      for (const id of monitored) {
+        await pool.query(
+          `UPDATE valuation_params
+              SET engine_inputs = $2, dlom_study_table = $3, dloc_study_table = $3, required_return_table = $3
+            WHERE valuation_id = $1`,
+          [id, JSON.stringify(engineInputs), JSON.stringify(studies)],
+        );
+      }
+      expect(await bytesRead()).toBe(before);
+      // Not vacuous: the documents really are on the rows now.
+      const wide = await findParamsByValuationIds(pool, monitored);
+      expect(
+        Buffer.byteLength(JSON.stringify([...wide.values()].map((r) => r.engine_inputs))),
+      ).toBeGreaterThan(before);
+    });
+
     it('findCapTablesByValuationIds returns nothing for valuations without one', async () => {
       const batch = await findCapTablesByValuationIds(pool, monitored);
       for (const id of monitored) {
@@ -305,6 +387,7 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
       for (const helper of [
         latestSucceededCalculationHeadsByValuationIds,
         findParamsByValuationIds,
+        findParamsHeadsByValuationIds,
         findCapTablesByValuationIds,
         findResolutionsByValuationIds,
       ]) {

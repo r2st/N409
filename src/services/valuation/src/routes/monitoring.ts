@@ -14,7 +14,7 @@ import {
   latestSucceededCalculationHeadsByValuationIds,
   type CalculationHead,
 } from '../repos/calculations.js';
-import { findParams, findParamsByValuationIds, type ValuationParamsRow } from '../repos/params.js';
+import { findParams, findParamsHeadsByValuationIds, type ValuationParamsHead } from '../repos/params.js';
 import { findCapTable, findCapTablesByValuationIds, type CapTableRow } from '../repos/capTables.js';
 import { findUsersByIds } from '../repos/users.js';
 import {
@@ -97,7 +97,14 @@ interface SnapshotSources {
    * find them already fetched.
    */
   calc: CalculationHead | null;
-  params: ValuationParamsRow | null;
+  /**
+   * The three columns of the params row this function reads, for the reason
+   * `calc` is a head (R393). `valuation_params` carries six `jsonb` columns —
+   * `engine_inputs` is the whole engine payload, and four more are study
+   * tables — and a page of monitors was pulling every one of them to take two
+   * revenue figures and a date. The type is what keeps it narrow.
+   */
+  params: ValuationParamsHead | null;
   capTable: CapTableRow | null;
   resolution: BoardResolutionRow | null;
 }
@@ -212,8 +219,19 @@ async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<Li
   const head: CalculationHead | null = calc
     ? { fmv_per_share: calc.fmv_per_share, run_kind: specialtyRunKind(calc.results ?? null) }
     : null;
+  // The params row is narrowed here for the same reason and in the same place:
+  // one row is one row, `findParams` is what every other caller uses, and both
+  // paths then hand `assembleSnapshot` the same shape.
+  const paramsHead: ValuationParamsHead | null = params
+    ? {
+        valuation_id: params.valuation_id,
+        last_year_revenue_cents: params.last_year_revenue_cents,
+        ytd_revenue_cents: params.ytd_revenue_cents,
+        last_round_date: params.last_round_date,
+      }
+    : null;
   return {
-    snapshot: assembleSnapshot(valuation, { calc: head, params, capTable, resolution }),
+    snapshot: assembleSnapshot(valuation, { calc: head, params: paramsHead, capTable, resolution }),
     cap_table_changed_at: capTable?.updated_at ?? null,
   };
 }
@@ -228,7 +246,7 @@ async function buildSnapshots(pool: pg.Pool, valuations: ValuationRow[]): Promis
   const ids = valuations.map((v) => v.id);
   const [calcs, params, capTables, resolutions] = await Promise.all([
     latestSucceededCalculationHeadsByValuationIds(pool, ids),
-    findParamsByValuationIds(pool, ids),
+    findParamsHeadsByValuationIds(pool, ids),
     findCapTablesByValuationIds(pool, ids),
     findResolutionsByValuationIds(pool, ids),
   ]);
