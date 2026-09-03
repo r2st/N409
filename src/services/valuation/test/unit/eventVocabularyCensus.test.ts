@@ -105,6 +105,24 @@ export function assertedTypes(text: string, table: string): string[] {
   return found;
 }
 
+/**
+ * Valuation event types the catalog describes and nothing writes, with the
+ * reason each may stand.
+ *
+ * Listed rather than excluded by a rule, so the next one lands here as a
+ * decision somebody made — the reading `foreignKeyIndexCensus` gives its
+ * `EXEMPT` and `deleteOnceCensus` its `ACKNOWLEDGED`. Both directions are
+ * asserted, so an entry that acquires a writer fails as a dead position.
+ */
+const UNWRITTEN: Record<string, string> = {
+  transaction_updated:
+    'Declared beside `transaction_added` and `transaction_deleted` by symmetry with the funding ' +
+    'rounds beside them, which do have `updateRound`. There is no `updateTransaction` and no route ' +
+    'that would call one: the secondary book is corrected by delete-and-recreate, which is two ' +
+    'events for one edit. Whether to build the writer or retire the type is a product decision, ' +
+    'and this entry is where it is owed rather than a hole nobody is looking at.',
+};
+
 const collect = (files: typeof SRC, recorder: string) =>
   files.flatMap(({ file, text }) => recordedTypes(text, recorder).map((type) => ({ file, type })));
 
@@ -194,6 +212,76 @@ describe('event vocabulary', () => {
         'valuation_events',
       ),
     ).toEqual([]);
+  });
+
+  /**
+   * The valuation catalog's own orphan check, which did not exist (R396,
+   * methodology M3).
+   *
+   * The header above says every descriptor is one something actually writes,
+   * and only `ADMIN_EVENT_CATALOG` was ever asked. Asking `EVENT_CATALOG` the
+   * admin question — does the literal appear anywhere in `src` — answers yes
+   * for every type in the catalog, because these types are *declared* as
+   * literals: `resolutionSent: 'board_resolution_sent'` in a
+   * `*_EVENT_TYPES` map is where the string lives, and a writer refers to the
+   * alias. The admin types have no such map, which is why the generous rule
+   * worked there and could not work here.
+   *
+   * So a declaration is not a write. The alias-map entries are struck out
+   * before the literal is looked for, and the alias is then followed: a type
+   * counts as written if its string survives outside its own declaration
+   * (`recordFundEvent(client, live, 'fund_position_added', …)`, or the ternary
+   * in `pipelineRuns.ts`) or if some file uses the accessor the map gave it.
+   *
+   * `board_resolution_sent` is what this found: declared and described since
+   * the board feature shipped, client-visible, and written by nothing — so the
+   * trail went from `board_resolution_generated` straight to
+   * `board_resolution_approved` and never said the directors had been asked.
+   */
+  it('has no valuation descriptor for a type nothing writes', () => {
+    const blob = SRC.map(({ text }) => text).join('\n');
+    const aliases = new Map<string, string[]>();
+    for (const m of blob.matchAll(/^\s*(\w+):\s*'([a-z0-9_]+)'\s*,\s*$/gm)) {
+      aliases.set(m[2]!, [...(aliases.get(m[2]!) ?? []), m[1]!]);
+    }
+    const written = blob.replace(/^\s*\w+:\s*'[a-z0-9_]+'\s*,\s*$/gm, '');
+    const orphans = Object.keys(EVENT_CATALOG).filter((type) => {
+      if (written.includes(`'${type}'`)) return false;
+      return !(aliases.get(type) ?? []).some((alias) => blob.includes(`.${alias}`));
+    });
+    expect(orphans).toEqual(Object.keys(UNWRITTEN));
+  });
+
+  it('has no exemption for a type something now writes', () => {
+    // The other direction, per `foreignKeyIndexCensus`: an entry here for a
+    // type that has since acquired a writer is a licence nobody is using, and
+    // the next reader takes it for a still-open hole.
+    const blob = SRC.map(({ text }) => text).join('\n');
+    const aliases = new Map<string, string[]>();
+    for (const m of blob.matchAll(/^\s*(\w+):\s*'([a-z0-9_]+)'\s*,\s*$/gm)) {
+      aliases.set(m[2]!, [...(aliases.get(m[2]!) ?? []), m[1]!]);
+    }
+    const written = blob.replace(/^\s*\w+:\s*'[a-z0-9_]+'\s*,\s*$/gm, '');
+    const stale = Object.keys(UNWRITTEN).filter(
+      (type) =>
+        written.includes(`'${type}'`) ||
+        (aliases.get(type) ?? []).some((alias) => blob.includes(`.${alias}`)),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it('would catch the descriptor R396 found', () => {
+    // The vacuity guard. A type held only by its own map entry is the shape
+    // `board_resolution_sent` was in, and the generous rule the admin half uses
+    // calls it written.
+    const declaredOnly = "export const X_EVENT_TYPES = {\n  somethingHappened: 'something_happened',\n} as const;";
+    expect(declaredOnly.includes("'something_happened'")).toBe(true);
+    expect(declaredOnly.replace(/^\s*\w+:\s*'[a-z0-9_]+'\s*,\s*$/gm, '')).not.toContain(
+      "'something_happened'",
+    );
+    // And every type in the catalog is still reachable by one rule or the
+    // other, or the assertion above would be comparing two empty lists.
+    expect(Object.keys(EVENT_CATALOG).length).toBeGreaterThan(60);
   });
 
   it('has no admin descriptor for a type nothing writes', () => {
