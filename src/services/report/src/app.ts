@@ -73,6 +73,16 @@ const ChartSpec = z.discriminatedUnion('type', [
   }),
 ]);
 
+/**
+ * The years `generated_at` may hold — see the field's own note.
+ *
+ * `Date.UTC` maps years 0–99 onto 1900–1999, so the floor is set with
+ * `setUTCFullYear`, the documented way back out.
+ */
+const MIN_GENERATED_AT = new Date(Date.UTC(1, 0, 1));
+MIN_GENERATED_AT.setUTCFullYear(1);
+const MAX_GENERATED_AT = new Date(Date.UTC(9999, 11, 31, 23, 59, 59, 999));
+
 const SummaryFigure = z.object({
   label: z.string().min(1).max(120),
   value: z.string().max(120),
@@ -153,9 +163,41 @@ export const RenderBody = z.object({
    * watermark exists to prevent, arriving as a silent success.
    */
   watermark: z.string().min(1).max(60).nullable().optional(),
-  // Written to the PDF's CreationDate, so a report re-downloaded months later
-  // still says when it was produced rather than when the bytes were.
-  generated_at: z.coerce.date().optional(),
+  /**
+   * Written to the PDF's CreationDate, so a report re-downloaded months later
+   * still says when it was produced rather than when the bytes were.
+   *
+   * Coerced through a string or a number and then range-checked, because bare
+   * `z.coerce.date()` is `new Date(input)` and "is it an Invalid Date", and
+   * neither half stops a date this document cannot carry:
+   *
+   * * PDFKit formats the year by slicing four digits off it, so a JavaScript
+   *   date outside years 1–9999 does not fail — it comes out *plausible and
+   *   wrong*. Measured against the real library: `-005000-01-01` writes
+   *   `D:50000101000000Z` (year 5000 AD) and `+275760-09-13` writes
+   *   `D:57600913000000Z` (year 5760 AD). Both are well-formed extended-ISO
+   *   instants that satisfy the bare schema, and the deliverable is a signed
+   *   §409A opinion whose metadata a data room indexes and a reviewer reads.
+   * * `new Date(null)` and `new Date(false)` are the epoch, not an Invalid
+   *   Date, so a caller sending `generated_at: null` to mean "I have no
+   *   timestamp" got a report stamped 1970-01-01 rather than the library's own
+   *   default of now. Absent is how you say that; `.optional()` above is the
+   *   field for it.
+   *
+   * The 1–9999 range is the one `domain/calendarRange.ts` commits to on the
+   * valuation side, and the one `z.string().datetime()` enforces by accident of
+   * its regex — so the two services agree about what a year is. That census
+   * bans the bare spelling, but it walks its own package and could not see this
+   * one.
+   */
+  generated_at: z
+    .union([z.string(), z.number()])
+    .pipe(z.coerce.date())
+    .refine(
+      (d) => d.getTime() >= MIN_GENERATED_AT.getTime() && d.getTime() <= MAX_GENERATED_AT.getTime(),
+      'generated_at must be a date between year 1 and year 9999',
+    )
+    .optional(),
   keywords: z.array(z.string().min(1).max(80)).max(20).optional(),
 });
 

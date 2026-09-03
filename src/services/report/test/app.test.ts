@@ -46,6 +46,68 @@ describe('report service', () => {
     expect(res.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
   });
 
+  /**
+   * `generated_at` becomes the PDF's CreationDate, and PDFKit slices four
+   * digits off the year rather than refusing one it cannot write. So a date
+   * outside years 1–9999 does not fail loudly; it comes out plausible and
+   * wrong — `-005000-01-01` as year 5000, `+275760-09-13` as year 5760 — in
+   * the metadata of a signed §409A opinion. `new Date(null)` is the epoch
+   * rather than an Invalid Date, so a caller saying "no timestamp" the wrong
+   * way stamped the report 1970.
+   */
+  describe('generated_at bounds', () => {
+    const render = (generated_at: unknown) =>
+      buildApp().inject({
+        method: 'POST',
+        url: '/render/v1/pdf',
+        payload: {
+          title: 'Valuation Report',
+          company_name: 'Acme',
+          sections: [{ heading: 'Introduction', html: '<p>Hi.</p>' }],
+          generated_at,
+        },
+      });
+
+    /** The four-digit year is what reaches the page; assert it, not the input. */
+    const creationYear = (pdf: Buffer): string | null => {
+      const m = pdf.toString('latin1').match(/\(D:(\d{4})/);
+      return m ? m[1]! : null;
+    };
+
+    it('writes the year it was given', async () => {
+      const res = await render('2026-09-03T10:00:00.000Z');
+      expect(res.statusCode).toBe(200);
+      expect(creationYear(res.rawPayload)).toBe('2026');
+    });
+
+    it('refuses a year PDFKit would truncate into a different one', async () => {
+      for (const out of ['-005000-01-01T00:00:00.000Z', '+275760-09-13T00:00:00.000Z']) {
+        const res = await render(out);
+        expect(res.statusCode).toBe(422);
+        expect(res.json().detail).toMatch(/generated_at/);
+      }
+    });
+
+    it('refuses a null rather than stamping the epoch on it', async () => {
+      const res = await render(null);
+      expect(res.statusCode).toBe(422);
+      expect(res.json().detail).toMatch(/generated_at/);
+    });
+
+    it('still lets the field be absent, which is how "no timestamp" is said', async () => {
+      const res = await buildApp().inject({
+        method: 'POST',
+        url: '/render/v1/pdf',
+        payload: {
+          title: 'Valuation Report',
+          company_name: 'Acme',
+          sections: [{ heading: 'Introduction', html: '<p>Hi.</p>' }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
   it('rejects an invalid render request with 422 problem+json', async () => {
     const app = buildApp();
     const res = await app.inject({
