@@ -203,6 +203,82 @@ describe('pg-verify.sh --quick', () => {
     mkdirSync(path.join(root, 'daily'), { recursive: true });
     expect(() => run(['--quick'], {}, root)).toThrow();
   });
+
+  // A comparison that could not be made is not a comparison that passed
+  // (R397, M11). The `if actual="$(sha_of ...)"` had no else, so every way of
+  // failing to compute the digest fell through to the `log "ok"` at the bottom
+  // of the loop and the summary counted the file as checked.
+  describe('when the digest cannot be recomputed', () => {
+    /** Runs the script and returns its status and stderr, pass or fail. */
+    function quick(root: string, env: Record<string, string> = {}) {
+      const res = spawnSync('bash', [SCRIPT, '--quick'], {
+        env: {
+          ...process.env,
+          DATABASE_URL: DB_URL,
+          ENV_FILE: path.join(work, 'does-not-exist.env'),
+          BACKUP_ROOT: root,
+          PG_RESTORE: stubRestore,
+          PSQL: stubPsql,
+          STUB_LOG: psqlLog,
+          VERIFY_DB: 'n409_verify_test',
+          ...env,
+        },
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+      return { status: res.status ?? 1, stderr: res.stderr ?? '' };
+    }
+
+    /** A digest command that exists and fails — a dump on a disk that is going. */
+    function brokenSha(): string {
+      const bin = path.join(work, 'broken-sha256');
+      writeFileSync(bin, '#!/usr/bin/env bash\nexit 1\n');
+      chmodSync(bin, 0o755);
+      return bin;
+    }
+
+    it('never reports a dump ok when its checksum was not compared', () => {
+      const root = rootWith('q6');
+      const res = quick(root, { SHA256: brokenSha() });
+      expect(res.stderr).toContain('NOT CHECKED');
+      expect(res.stderr).not.toContain('ok n409-');
+    });
+
+    it('says why, and separates a missing tool from a failing one', () => {
+      const root = rootWith('q7');
+      expect(quick(root, { SHA256: brokenSha() }).stderr).toMatch(
+        /could not be recomputed — .*broken-sha256 failed/,
+      );
+      // `SHA256=` empty means the resolution below it found nothing either:
+      // `command -v` is only consulted when the override is unset or empty.
+      const bare = quick(rootWith('q8'), { SHA256: 'definitely-not-a-command' });
+      expect(bare.stderr).toMatch(/could not be recomputed — definitely-not-a-command failed/);
+    });
+
+    it('counts them in the summary rather than in the checked total', () => {
+      const res = quick(rootWith('q9'), { SHA256: brokenSha() });
+      expect(res.stderr).toContain('1 with a manifest that could not be recomputed');
+    });
+
+    // Neither a good dump nor a bad one — an unanswered question. Paging over
+    // the verifier's own tooling is how the job gets masked, taking the real
+    // failures with it; the same argument FLAG_BACKUP_VERIFICATION makes.
+    it('does not page: the archive was still read', () => {
+      const res = quick(rootWith('q10'), { SHA256: brokenSha() });
+      expect(res.status).toBe(0);
+      expect(res.stderr).toContain('NOT CHECKED');
+    });
+
+    it('still fails a mismatch when the digest does work', () => {
+      const root = path.join(work, 'q11');
+      const dump = path.join(root, 'daily', 'n409-20260801-020000.dump');
+      writeDump(dump);
+      writeFileSync(dump, 'FAKE-DUMP\n12\nsomething-else\n');
+      const res = quick(root);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain('sha256 mismatch');
+    });
+  });
 });
 
 describe('pg-verify.sh full restore', () => {

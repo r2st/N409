@@ -39,6 +39,8 @@
 #   MIN_TABLES       Minimum tables the restored schema must contain. Default 40.
 #   REQUIRED_TABLES  Space-separated tables that must exist and be queryable.
 #   PG_RESTORE/PSQL  Binaries; the tests stub these.
+#   SHA256           Digest command for --quick, resolved from sha256sum or
+#                    shasum -a 256 when unset; the tests stub it.
 #   KEEP_SCRATCH=1   Leave the scratch database behind for inspection.
 #   FLAG_BACKUP_VERIFICATION
 #                    Kill switch. Off (0/false/no/off/disabled) skips both modes
@@ -107,15 +109,23 @@ fi
 
 # ── Quick mode: checksums + TOC, no server ───────────────────────────────────
 
-sha_of() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
-  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
-  else return 2
+# Resolved once, so a host with no digest tool is one line at the top rather
+# than a discovery made silently per file. Overridable for the same reason
+# PG_RESTORE and PSQL are.
+if [[ -z "${SHA256:-}" ]]; then
+  if command -v sha256sum >/dev/null 2>&1; then SHA256="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then SHA256="shasum -a 256"
   fi
+fi
+
+sha_of() {
+  [[ -n "${SHA256:-}" ]] || return 2
+  # shellcheck disable=SC2086 — SHA256 may carry its own flags ("shasum -a 256").
+  $SHA256 "$1" | cut -d' ' -f1
 }
 
 if (( QUICK )); then
-  checked=0; failed=0; unmanifested=0
+  checked=0; failed=0; unmanifested=0; undigested=0
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     checked=$((checked + 1))
@@ -126,12 +136,34 @@ if (( QUICK )); then
     fi
     if [[ -f "$f.sha256" ]]; then
       recorded="$(cut -d' ' -f1 <"$f.sha256")"
+      # A COMPARISON THAT COULD NOT BE MADE IS NOT A COMPARISON THAT PASSED
+      # (round 397, methodology M11).
+      #
+      # `if actual="$(sha_of "$f")"; then` had no else. Every way of failing to
+      # compute the digest — no sha256sum and no shasum on the host, a read
+      # error partway through a dump on a disk that is going, a pipefail out of
+      # the `cut` — fell out of the `if` and straight into the `log "ok"` at the
+      # bottom of the loop, and the summary counted the file as checked. The
+      # one thing this script exists to be is trustworthy about which dumps
+      # were verified, and this is the branch where it said "ok" having
+      # verified nothing but that pg_restore could list the archive.
+      #
+      # Counted separately rather than failed: the archive *was* read, so this
+      # is neither a good dump nor a bad one, it is an unanswered question —
+      # and the same argument the FLAG_BACKUP_VERIFICATION block makes applies,
+      # that a job which pages over its own tooling is a job that gets masked.
+      # So it is greppable, it is in the summary, and it is never "ok".
       if actual="$(sha_of "$f")"; then
         if [[ "$recorded" != "$actual" ]]; then
           log "FAIL $(basename "$f"): sha256 mismatch — the file has changed since it was written"
           failed=$((failed + 1))
           continue
         fi
+      else
+        if [[ -n "${SHA256:-}" ]]; then why="$SHA256 failed"; else why="no sha256sum or shasum on this host"; fi
+        log "NOT CHECKED $(basename "$f"): the archive lists, but its recorded sha256 could not be recomputed — $why"
+        undigested=$((undigested + 1))
+        continue
       fi
     else
       # Not a failure: dumps written before checksums existed have no manifest,
@@ -143,7 +175,7 @@ if (( QUICK )); then
   done < <(find "$BACKUP_ROOT/daily" "$BACKUP_ROOT/weekly" -maxdepth 1 -type f -name 'n409-*.dump' 2>/dev/null | sort -r)
 
   (( checked > 0 )) || die "no dumps found under $BACKUP_ROOT"
-  log "quick verify: $checked checked, $failed failed, $unmanifested without a checksum manifest"
+  log "quick verify: $checked checked, $failed failed, $unmanifested without a checksum manifest, $undigested with a manifest that could not be recomputed"
   (( failed == 0 )) || exit 1
   exit 0
 fi
