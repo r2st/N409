@@ -188,3 +188,62 @@ export function buildAnalytics(calcs: CalcInput[]): ValuationAnalytics {
     count: series.length,
   };
 }
+
+/**
+ * The part of a stored `results` document this module reads, as SQL.
+ *
+ * THE ROUTE SHIPPED THE WHOLE ENGINE RESULT TO READ FIVE SCALARS (R393,
+ * methodology M8). `GET /valuations/:id/analytics` selects one succeeded
+ * calculation per same-company 409A and hands `results` to
+ * {@link buildAnalytics}, which reads `fmv_per_share`, `equity_value`,
+ * `discounts.dlom`, `assumptions.volatility` and the market approach's
+ * `selected_multiple` / `multiples`. Everything else in the document — the
+ * allocation, its breakpoints, the per-class waterfall — travelled the wire
+ * and through the driver's `JSON.parse` to be dropped. A 409A `results` is
+ * 11 kB at ten share classes and 613 kB at the 200 cap (R322 measured them),
+ * and there is one per prior valuation of the company with no ceiling on how
+ * many that is.
+ *
+ * The asymmetry is the tell, and it is R283's question again: `historyFor` in
+ * routes/reports.ts asks the *same* question of the same table through the same
+ * `sameCompanyFilter`, and its LATERAL selects `created_at, fmv_per_share,
+ * inputs` — the columns it reads and no more. Two callers, one question, two
+ * spellings.
+ *
+ * Measured on 24 same-company valuations, five runs each, warm:
+ *
+ *     50 share classes  (52 kB/doc)   1.26 MB -> 4.4 kB, 6.42 -> 2.69 ms
+ *     200 share classes (212 kB/doc)  5.09 MB -> 4.4 kB, 23.9 -> 8.64 ms
+ *
+ * The shape is `jsonb_build_object`, not a column list, **so that
+ * `buildAnalytics` is not touched**: what comes back is a `Results` with the
+ * keys it reads and nothing else, and every rule about what those keys mean —
+ * the median fallback for a run stored before `selected_multiple` existed, the
+ * `> 0` filter, `marketApproach`'s object check — stays in one place, here.
+ * `->` rather than `->>` throughout, so a stored value keeps its JSON type and
+ * `num()` sees exactly what it saw before.
+ *
+ * A missing branch narrows to an explicit null rather than an absent key
+ * (`{"dlom": null}` for a document with no `discounts`), which every reader
+ * above treats identically: `(r.discounts ?? {}).dlom` and `{dlom: null}.dlom`
+ * are both `undefined`/`null` into `num`. A `market` that is not an object
+ * narrows to an object of two nulls, which `marketApproach` accepts and
+ * `multiples`/`selected_multiple` then read as absent — the same empty answer
+ * the object check gave.
+ *
+ * `analyticsResultsSql('r')` — the alias of the `calculations` row being
+ * narrowed. The projection lives beside the reader on purpose: this is the one
+ * pair that has to be kept in step, and R298's `specialtyRunKindOf` is the
+ * precedent for keeping a probe and its rule in one file.
+ */
+export function analyticsResultsSql(alias: string): string {
+  const r = `${alias}.results`;
+  return `jsonb_build_object(
+            'fmv_per_share', ${r}->'fmv_per_share',
+            'equity_value', ${r}->'equity_value',
+            'discounts', jsonb_build_object('dlom', ${r}->'discounts'->'dlom'),
+            'assumptions', jsonb_build_object('volatility', ${r}->'assumptions'->'volatility'),
+            'approaches', jsonb_build_object('market', jsonb_build_object(
+              'selected_multiple', ${r}->'approaches'->'market'->'selected_multiple',
+              'multiples', ${r}->'approaches'->'market'->'multiples')))`;
+}

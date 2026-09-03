@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
-import { buildAnalytics, type CalcInput } from '../domain/valuationAnalytics.js';
+import { analyticsResultsSql, buildAnalytics, type CalcInput } from '../domain/valuationAnalytics.js';
 import { ENGINE_409A_KINDS, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -57,23 +57,36 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: { pool: pg.P
       as_of: string;
       results: Record<string, unknown>;
     }>(
-      `SELECT c.id AS calculation_id, c.valuation_id, v.number,
-              COALESCE(
-                NULLIF(substring(c.inputs->>'valuation_date' from '^\\d{4}-\\d{2}-\\d{2}'), ''),
-                to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
-              ) AS as_of,
-              c.results
+      /*
+       * The narrowing is `analyticsResultsSql`, and the whole reason it is a
+       * jsonb projection rather than a column list is that `buildAnalytics`
+       * below is untouched by it (R393, M8). It reads five scalars and the
+       * comparable-multiple list; this used to hand it the engine's entire
+       * result document, allocation and breakpoints included, once per prior
+       * valuation of the company and with no ceiling on how many that is.
+       *
+       * The narrowing moved inside the LATERAL with `as_of`, so the discarded
+       * bytes are dropped where the row is chosen rather than carried up to
+       * the outer projection. `inputs` stays in there because `as_of` is
+       * extracted from it — in SQL, as before — and never leaves.
+       */
+      `SELECT c.calculation_id, c.valuation_id, v.number, c.as_of, c.results
          FROM valuations v
          JOIN LATERAL (
-           SELECT id, valuation_id, created_at, inputs, results
-             FROM calculations
-            WHERE valuation_id = v.id AND status = 'succeeded' AND results IS NOT NULL
-            ORDER BY created_at DESC
+           SELECT r.id AS calculation_id, r.valuation_id, r.created_at,
+                  COALESCE(
+                    NULLIF(substring(r.inputs->>'valuation_date' from '^\\d{4}-\\d{2}-\\d{2}'), ''),
+                    to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                  ) AS as_of,
+                  ${analyticsResultsSql('r')} AS results
+             FROM calculations r
+            WHERE r.valuation_id = v.id AND r.status = 'succeeded' AND r.results IS NOT NULL
+            ORDER BY r.created_at DESC
             LIMIT 1
          ) c ON true
         WHERE ${scope.clause}
           AND v.kind = ANY($3)
-        ORDER BY as_of ASC, c.created_at ASC`,
+        ORDER BY c.as_of ASC, c.created_at ASC`,
       [...scope.params, ENGINE_409A_KINDS],
     );
 
