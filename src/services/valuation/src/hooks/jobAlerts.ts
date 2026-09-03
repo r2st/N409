@@ -299,6 +299,47 @@ async function announceJobAlerts(deps: {
   if (pending.opened.length === 0 && pending.resolved.length === 0) return tally;
 
   const recipients = await listUserIdsWithRoles(deps.pool, JOB_ALERT_ROLES);
+  /*
+   * AN ANNOUNCEMENT WITH NOBODY TO ANNOUNCE TO (R401, methodology M11).
+   *
+   * `createNotifications` accepts an empty list and writes nothing, and
+   * `deliverJobAlertAnnouncement` stamps the row on the way out — so a scan
+   * that found no recipient marked every announcement delivered, returned
+   * `sent`, and counted `opened`/`resolved`. `announcements_failed` stayed at
+   * zero, which is what `JobAlertAnnouncementsFailing` reads, and the rule's
+   * own note says what that number is for: "an operator who has not been told
+   * a queue is stalled, which is the one failure the job monitor exists to
+   * prevent". Nobody being there to tell is that, exactly, and it was the one
+   * spelling of it the tally called a success.
+   *
+   * And permanently: the row is stamped, so no later scan owes the
+   * announcement again. The outbox, the webhook deliveries and the AI jobs are
+   * watched by this sweep and by nothing else on the estate.
+   *
+   * `listUserIdsWithRoles` drops closed *and* suspended accounts, so this is
+   * not a hypothetical empty database — a deployment whose last administrator
+   * is suspended has an alerting subsystem reporting itself healthy.
+   *
+   * Returned before `announce` rather than counted inside it, which is what
+   * leaves the rows unstamped: this is the one announcement on the platform
+   * that is retried, and the next scan owes it again once somebody is there.
+   * A rate rather than a one-off is also what makes a persisting condition
+   * visible, and a rate is what the rule reads.
+   */
+  if (recipients.length === 0) {
+    const owed = pending.opened.length + pending.resolved.length;
+    tally.failed += owed;
+    deps.log?.error(
+      {
+        alert: true,
+        owed,
+        roles: [...JOB_ALERT_ROLES],
+        sources: [...new Set([...pending.opened, ...pending.resolved].map((a) => a.source))],
+      },
+      'job queue alerts have nobody to announce to — no active account holds an alerting role',
+    );
+    return tally;
+  }
 
   // Opening announcements first: an alert that cleared before it was ever
   // announced owes both, and "recovered" reads as a non-sequitur on its own.
