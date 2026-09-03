@@ -10,6 +10,23 @@ export type CommentKind = (typeof COMMENT_KINDS)[number];
 /** Event types M3 writes to the audit spine. */
 export const OPERATIONS_EVENT_TYPES = {
   commentAdded: 'comment_added',
+  /**
+   * The other half of `comment_added` (R396, methodology M3).
+   *
+   * Deleting a comment is a hard `DELETE`, so the row is the only place the
+   * body, its author and its kind were held, and afterwards there is nothing
+   * to read. The spine kept `comment_added` naming a `comment_id` that resolves
+   * to no row, and said neither that the comment had been withdrawn nor by
+   * whom — an analyst could remove their own internal note and leave a trail
+   * indistinguishable from one where the note is simply not in the page the
+   * reader is holding.
+   *
+   * `board_member_removed` beside `board_member_added` is the same pair, and
+   * `notice` rather than `info` for the same reason it is: an addition is the
+   * ordinary use of the feature and a removal is somebody taking something
+   * back out of the record.
+   */
+  commentRemoved: 'comment_removed',
   emailReceived: 'email_received',
   cloned: 'valuation_cloned',
 } as const;

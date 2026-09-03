@@ -181,7 +181,50 @@ export async function updateComment(
   return rows[0] ?? null;
 }
 
-export async function deleteComment(pool: pg.Pool, id: string): Promise<boolean> {
-  const { rowCount } = await pool.query('DELETE FROM valuation_comments WHERE id = $1', [id]);
-  return (rowCount ?? 0) > 0;
+/**
+ * Withdraw a comment, and say on the spine that it was withdrawn (R396, M3).
+ *
+ * `createComment` records `comment_added` carrying the new row's id. This is a
+ * hard `DELETE` — there is no `deleted_at` on this table — so afterwards the
+ * spine named a `comment_id` that resolves to no row, and nothing said whether
+ * that was a withdrawal or a reader looking at the wrong engagement. An
+ * analyst could take their own internal note back out of the working papers
+ * and leave a trail on which the removal had not happened.
+ *
+ * `board_member_removed` beside `board_member_added` is the pair this follows.
+ *
+ * The row is read under the lock the `DELETE` is about to take, and the event
+ * carries what the row held rather than what the caller passed: the author, the
+ * kind and when it was posted are exactly the facts nothing can answer once the
+ * statement has run — the same reason `deleteOrganization` and
+ * `upsertSignature` read before their writes. Not the body: the spine is not
+ * where a deleted comment's text is restored, and `comment_added` never carried
+ * it either.
+ *
+ * Returns false without writing anything when the row is already gone, which is
+ * the ordinary racing case — two operators on one thread — and not a second
+ * withdrawal to record.
+ */
+export async function deleteComment(pool: pg.Pool, id: string, actor: EventActor): Promise<boolean> {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<CommentRow>(
+      'SELECT * FROM valuation_comments WHERE id = $1 FOR UPDATE',
+      [id],
+    );
+    const comment = rows[0];
+    if (!comment) return false;
+    await client.query('DELETE FROM valuation_comments WHERE id = $1', [id]);
+    await recordEvent(client, {
+      valuationId: comment.valuation_id,
+      type: OPERATIONS_EVENT_TYPES.commentRemoved,
+      actor,
+      payload: {
+        comment_id: comment.id,
+        kind: comment.kind,
+        author_id: comment.author_id,
+        posted_at: comment.created_at,
+      },
+    });
+    return true;
+  });
 }

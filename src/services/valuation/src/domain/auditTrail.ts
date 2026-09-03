@@ -273,6 +273,7 @@ export const EVENT_CATALOG = {
   qa_review_completed: D('QA review completed', 'review', 'critical'),
   changes_requested: D('Changes requested', 'review', 'notice', 'client'),
   comment_added: D('Comment added', 'review', 'info'),
+  comment_removed: D('Comment removed', 'review', 'notice'),
   board_member_added: D('Board member added', 'review', 'notice'),
   board_member_removed: D('Board member removed', 'review', 'notice'),
   board_resolution_generated: D('Board resolution generated', 'review', 'notice', 'client'),

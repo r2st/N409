@@ -85,9 +85,6 @@ export function discardedCalls(text: string, names: ReadonlySet<string>): string
  * `UNGUARDED_DELETES`.
  */
 const ACKNOWLEDGED: Record<string, string> = {
-  'src/routes/comments.ts:deleteComment':
-    'Nothing follows the delete: the route answers 204 and writes no event, so there is no ' +
-    'transition for the boolean to gate.',
   'src/routes/savedViews.ts:deleteSavedView':
     'Same — a saved view is one person’s own list state and its removal is not on any trail.',
   'src/repos/emailDelivery.ts:recordDeliveryEvent':

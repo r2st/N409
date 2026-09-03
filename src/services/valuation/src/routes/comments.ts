@@ -187,7 +187,7 @@ export function registerCommentRoutes(
     const principal = requirePrincipal(req);
     const { commentId } = req.params as { commentId: string };
     const comment = await loadEditable(deps.pool, principal, commentId);
-    const removed = await deleteComment(deps.pool, commentId);
+    const removed = await deleteComment(deps.pool, commentId, actorFor(principal));
     // Worse than the edit above, and the reason this pair is one fix: a
     // withdrawn sticky note stayed *readable* on every other open workspace,
     // and a note is withdrawn precisely when it should stop being read —
