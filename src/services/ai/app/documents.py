@@ -495,9 +495,50 @@ def _xlsx_cell_value(cell: ElementTree.Element, shared: list[str]) -> str:
     v = cell.find(f"{_SSML}v")
     raw = v.text if v is not None and v.text is not None else ""
     if kind == "s":
+        if not shared:
+            # AN ABSENT STRING TABLE AND AN UNUSED ONE ARE NOT THE SAME THING
+            # (round 397, methodology M11).
+            #
+            # `_xlsx_shared_strings` answers `[]` for a workbook with no
+            # `xl/sharedStrings.xml`, and its docstring calls that "the true
+            # answer" because a sheet of numbers has no shared strings. True —
+            # but only until a cell asks for one. A `t="s"` cell reaching an
+            # empty table is the archive saying, in the same breath, that its
+            # text lives in a part that is not there.
+            #
+            # Which is the *exact* loss that docstring measured and raised for
+            # one branch below: every text cell resolves through the fallback
+            # here to "", so the headers and the security class names go and
+            # the share counts stay. Reproduced on the reader as it stood, a
+            # three-row cap table whose string part was missing from the zip
+            # extracted as
+            #
+            #     === Sheet: Cap Table ===
+            #     \t2000000
+            #
+            # — one number, under a heading, with nothing to say what it counts.
+            # Nothing raised, so `extract_texts` counted no failure and
+            # `documents_unreadable` stayed at zero; the corpus asserted a cap
+            # table that reads as complete and says something different from
+            # the file the client uploaded.
+            #
+            # So it takes the same answer as the unparseable table, for the same
+            # reason and by the same route: `extract_texts` degrades it to
+            # `[could not extract text: …]`, warns `document_extract_failed`,
+            # and counts it. Raised from the cell rather than checked up front
+            # because only a cell can tell the two cases apart — a workbook
+            # whose text is all inline, or which has no text at all, still has
+            # no shared strings and is still read in full.
+            raise ValueError(
+                "this workbook's shared string table is missing from the file, so every "
+                "piece of text in it — column headings, security class names — would have "
+                "come out blank while its numbers came out intact"
+            )
         try:
             return shared[int(raw)]
         except (ValueError, IndexError):
+            # A table that is present and does not carry this index: one
+            # malformed cell, not the workbook's whole vocabulary. Stays "".
             return ""
     if kind == "b":
         return "TRUE" if raw == "1" else "FALSE"

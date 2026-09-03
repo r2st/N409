@@ -670,17 +670,36 @@ def test_an_unreadable_string_table_is_declared_and_not_blanked(caplog):
     assert [(r.count, r.total) for r in tally] == [(1, 1)]
 
 
+_ALL_INLINE_SHEET = """<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>Common</t></is></c>
+      <c r="B1"><v>7000000</v></c>
+    </row>
+  </sheetData>
+</worksheet>"""
+
+
 def test_a_workbook_with_no_string_table_is_read_as_it_always_was():
     """The other half of the pair: an absent part is a fact, not a failure.
 
     A sheet whose text is written inline carries no `sharedStrings.xml` at all,
     and refusing that would refuse an ordinary workbook.
+
+    The sheet is all-inline, which is what that sentence describes and what
+    this fixture did not build until R397 (M11). It used `_SHEET1`, whose first
+    two rows are `t="s"` cells, and asserted only that the third — the inline
+    one — survived: the assertion the test was making was that a workbook
+    missing the part its cells reference comes back as its share counts with
+    the headings and the class names silently gone. See
+    `test_a_missing_string_table_is_declared_not_silently_blanked`.
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
         zf.writestr("xl/workbook.xml", _WORKBOOK)
-        zf.writestr("xl/worksheets/sheet1.xml", _SHEET1)
+        zf.writestr("xl/worksheets/sheet1.xml", _ALL_INLINE_SHEET)
     [doc] = extract_texts([_doc(buf.getvalue())])
 
     assert not doc.text.startswith("[could not extract text:")
@@ -735,3 +754,61 @@ def test_an_intact_workbook_logs_nothing_about_its_sheets(caplog):
     with caplog.at_level("WARNING"):
         extract_texts([_doc(_xlsx_bytes())])
     assert not [r for r in caplog.records if getattr(r, "event", None) == "xlsx_sheets_unreadable"]
+
+
+# ── A string table that is not in the file ───────────────────────────────────
+#
+# `_xlsx_shared_strings` answers `[]` for an absent `xl/sharedStrings.xml`,
+# which is the true answer for a workbook of numbers and a lie for one whose
+# cells reference the part. R397 (M11).
+
+
+def _xlsx_without_shared_strings() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        zf.writestr("xl/workbook.xml", _WORKBOOK)
+        zf.writestr("xl/worksheets/sheet1.xml", _SHEET1)
+    return buf.getvalue()
+
+
+def test_a_missing_string_table_is_declared_not_silently_blanked():
+    """Every `t="s"` cell used to resolve to "", so the workbook came back as
+    its share counts with no headings and no class names — a cap table that
+    reads as complete and says something the uploaded file does not."""
+    [doc] = extract_texts([_doc(_xlsx_without_shared_strings())])
+    assert doc.text.startswith("[could not extract text:")
+    assert "shared string table" in doc.text
+    # The numbers must not come back on their own under a sheet heading.
+    assert "2000000" not in doc.text
+    assert "=== Sheet: Cap Table ===" not in doc.text
+
+
+def test_a_missing_string_table_is_counted_and_said_out_loud(caplog):
+    with caplog.at_level(logging.WARNING, logger="documents"):
+        extract_texts([_doc(_xlsx_without_shared_strings())])
+    events = [getattr(r, "event", None) for r in caplog.records]
+    assert "document_extract_failed" in events
+
+
+def test_one_out_of_range_index_costs_only_its_own_cell():
+    """A table that is present and short of one index is a malformed cell, not
+    the workbook's whole vocabulary."""
+    sheet = """<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="s"><v>0</v></c>
+      <c r="B1" t="s"><v>99</v></c>
+    </row>
+  </sheetData>
+</worksheet>"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        zf.writestr("xl/workbook.xml", _WORKBOOK)
+        zf.writestr("xl/sharedStrings.xml", _SHARED_STRINGS)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet)
+    [doc] = extract_texts([_doc(buf.getvalue())])
+    assert "Class" in doc.text
+    assert not doc.text.startswith("[could not extract text:")
