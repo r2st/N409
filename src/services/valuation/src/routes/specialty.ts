@@ -44,7 +44,44 @@ import { invalidBody } from '../domain/validationProblem.js';
  * succeeded calculation, exhibits, QA — picks it up with no special cases.
  */
 
-const RunBody = z
+/**
+ * Bounds on the override map, on the two axes that decide how big it gets:
+ * how many entries, and how long a key may be.
+ *
+ * This is the *last* merge into the specialty engine document — the
+ * questionnaire's answers are assembled first and an override replaces the
+ * assembled key wholesale — and it was the only door onto that document with
+ * no bound of any kind. The other two are bounded and say why: an answer
+ * arrives through {@link IntakeAnswers}, which caps the number of answers and
+ * the length of each because "the portal write endpoint is anonymous"; the
+ * 409A pipeline's equivalent override (`ComputeBody.inputs`) is held to the
+ * hand-entry schema for the same reason its comment gives — the door that
+ * merges last is the one whose bypass counts.
+ *
+ * `z.record(z.unknown())` on its own is bounded by nothing but Fastify's 1 MB
+ * body, and this map does not die with the request. Both arms of the handler
+ * persist it: the merged document is written to `calculations.inputs` (jsonb)
+ * on a succeeded run *and* on a failed one, so a refusal from the engine still
+ * leaves the whole map in the engagement's calculation history, which
+ * `listCalculationSummaries` and every reader of that row then carries.
+ *
+ * 200 keys is far past any real run. The widest specialty request the
+ * assemblers build (`ppa`) has six assembled keys plus the intangible
+ * schedule, and every kind's overrides are a handful of engine keyword names —
+ * which is also why 200 characters is a generous key: the engine's own
+ * keywords are `gross_assets_before_issuance`-sized, and a key longer than
+ * that is not one `**inputs` can bind.
+ *
+ * The value axis is deliberately left open, as `InstrumentParams` leaves it:
+ * the engine, not this schema, is the authority on what a parameter may be,
+ * and the one value with a renderer attached — the PPA intangible schedule,
+ * one PDF table row per asset — is already capped at 50 assets by
+ * `purchase_price_allocation` before it can reach an exhibit.
+ */
+const MAX_SPECIALTY_INPUT_KEYS = 200;
+const MAX_SPECIALTY_INPUT_KEY_CHARS = 200;
+
+export const RunBody = z
   .object({
     /**
      * Analyst refinements merged over the questionnaire-assembled inputs —
@@ -52,7 +89,12 @@ const RunBody = z
      * an SMB method weighting. Shallow merge; an override replaces the
      * assembled key wholesale.
      */
-    inputs: z.record(z.unknown()).default({}),
+    inputs: z
+      .record(z.string().max(MAX_SPECIALTY_INPUT_KEY_CHARS), z.unknown())
+      .refine((v) => Object.keys(v).length <= MAX_SPECIALTY_INPUT_KEYS, {
+        message: `At most ${MAX_SPECIALTY_INPUT_KEYS} run inputs`,
+      })
+      .default({}),
   })
   .strict()
   .default({ inputs: {} });
