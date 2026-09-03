@@ -11938,3 +11938,120 @@
 #            moved; no reader compares it against the grants already measured
 #            under the previous one, which is the `stale_figure` question the
 #            QA gate asks about the report body and nobody asks here.
+#
+# R393 — Performance audit (M8), the eighteenth. Three fixes, no SQL rewrite,
+#            no index, no migration, 8 tests, at `54206882..637ca7bc`. The
+#            R231 diff recipe over R386-R392 found nothing to plan — one new
+#            statement family, all of it single-row `FOR UPDATE` reads and
+#            spine inserts, and no loop — so the round went to the one question
+#            R298 and R322 both answered and nobody had swept for: **which
+#            reads pull a document column to take a scalar off it.** All three
+#            findings are that, and the lens that found each of them was
+#            R283's — read the pair, not the file.
+#
+#            Every answer is unchanged in all three, which is why nothing in
+#            the tree could see any of them. R322's lesson stated again: a
+#            guard over what an endpoint returns cannot see an over-fetch,
+#            because the narrowing happens after the read. All three guards
+#            assert the **bytes the statement returns, as a difference** —
+#            deepen the part nobody reads and the number must not move — and
+#            each was run against its own pre-fix source before being believed.
+#
+#            690809d — the analytics series. `GET /valuations/:id/analytics`
+#            selects the newest succeeded calculation of every same-company
+#            409A and hands `results` to `buildAnalytics`, which reads five
+#            scalars and the comparable-multiple list: `fmv_per_share`,
+#            `equity_value`, `discounts.dlom`, `assumptions.volatility` and the
+#            market approach's `selected_multiple`/`multiples`. It was selecting
+#            the column — the allocation, its breakpoints and the whole
+#            per-class waterfall crossed the wire and went through the driver's
+#            `JSON.parse` once per prior valuation of the company, with no
+#            ceiling on how many that is. The asymmetry is the tell: `historyFor`
+#            in routes/reports.ts asks the *same* question of the same table
+#            through the same `sameCompanyFilter`, and its LATERAL selects the
+#            three columns it reads. Two callers, one question, two spellings,
+#            and the strict one was already right. 24 same-company valuations,
+#            warm: 1.26 MB -> 4.4 kB and 6.42 -> 2.69 ms at fifty share classes;
+#            5.09 MB -> 4.4 kB and 23.9 -> 8.64 ms at two hundred.
+#            `analyticsResultsSql` is a `jsonb_build_object` and not a column
+#            list precisely so `buildAnalytics` is untouched: every rule about
+#            what those keys mean — the median fallback for a run stored before
+#            `selected_multiple` existed, the `> 0` filter, `marketApproach`'s
+#            object check — stays in one place, beside the reader, which is
+#            R298's `specialtyRunKindOf` precedent. `->` throughout rather than
+#            `->>`, so a stored value keeps its JSON type and `num()` sees what
+#            it saw before.
+#
+#            90d56b5 — the cap-table column that is read and overwritten.
+#            `withFreshValidation` replaces `validation` on **every** read, for
+#            the reason set out where it is defined: the column is a cache of a
+#            pure function of `entries` and it goes stale whenever a rule
+#            changes. Both readers were `SELECT *`, so the stored blob crossed
+#            the wire and was parsed on every read of a cap table, to be
+#            overwritten by the next expression — not sometimes discarded,
+#            always. It is not a small blob: one issue object with a prose
+#            message per finding, and `default_liq_pref` fires for every
+#            preferred row stating no explicit multiple, which is the ordinary
+#            shape of an imported sheet (25.7 kB of entries, 8.8 kB of
+#            validation beside it, on 100 rows). 200 monitors carrying 100-row
+#            tables: 27.3 ms / 6.80 MB -> 21.9 ms / 5.08 MB.
+#
+#            637ca7b — the params row read for two figures and a date.
+#            `assembleSnapshot` touches `last_year_revenue_cents`,
+#            `ytd_revenue_cents` and `last_round_date`; `valuation_params`
+#            carries six `jsonb` columns beside them, of which `engine_inputs`
+#            is the whole engine payload including every share class and four
+#            more are study tables. 200 monitors with a fifty-class engine
+#            input: **18.8 ms / 3.71 MB -> 0.3 ms / 0.03 MB**, and
+#            `MONITOR_PAGE_LIMIT` is 500 with `POST /monitors/scan` paging the
+#            whole enabled book through it. This is R298's own fix standing in
+#            the same `Promise.all`: it narrowed `calculations` there and wrote
+#            the argument out on `SnapshotSources.calc`, and the two readers
+#            beside it were the same shape. Three of that fan-out's four reads
+#            are now narrow; `findResolutionsByValuationIds` stays wide because
+#            its row has no document column on it. The wide
+#            `findParamsByValuationIds` remains for the remediation console,
+#            which re-runs the engine per row and wants every column at
+#            `MAX_RERUN` = 25.
+#
+#            Probed and clean, do not re-derive. The report render issues 18
+#            statements with **no duplicate at all**, and nineteen read
+#            endpoints — the valuation detail, package, QA, completeness,
+#            progress, engagement, audit trail, health checks, explanation,
+#            accounting, board, list, documents, calculations, events —
+#            likewise issue no statement twice. `listCalculations` is now the
+#            evidence bundle's alone, so R322's standing NOT TAKEN about it is
+#            closed. `listVersions` already excludes `content`;
+#            `listCalculationResults` already uses the `jsonb_build_object`
+#            narrowing this round reuses; the adopted-run family reaches 0200's
+#            indexes; `assignRoles` is one round trip; `eventNote` is O(1) over
+#            seven declared types; `evidence.ts`'s prompt-version join is over
+#            two eighteen-row dimension tables. Zod was measured rather than
+#            reasoned about: `.max()` on an array is a check that runs after
+#            every element is parsed, so the declared cap does not bound the
+#            parse — but at Fastify's 1 MiB body limit that is 12.7 ms for a
+#            body that will be refused against 6.5 ms for a legitimate
+#            5,000-row cap table, which is below the bar R351 set.
+#
+#            gap: SQL issued from a route file is in no census. The evidence
+#            bundle's own comment says so — `unboundedListCensus` and
+#            `silentCapCensus` both enumerate `src/repos` — and four route-level
+#            multi-row reads have no `LIMIT`: this round's analytics query,
+#            `historyFor`, `evidence.ts`'s prompt versions, and
+#            `GET /branding/tenants` over the whole partners table. Each is
+#            defensible today and none is derived.
+#            gap: the narrowing rule and its reader are two expressions that
+#            have to stay in step, and only `analyticsResultsSql` states that
+#            in prose. Nothing enforces it: a sixth key added to
+#            `buildAnalytics` compiles, reads `undefined` and reports a null
+#            trend. The byte guard cannot see it and the identity guard only
+#            sees it if the fixture happens to carry that key.
+#            gap: `findCapTable` re-derives `validateCapTable(entries)` on
+#            every read, and the monitoring page does it 500 times to take one
+#            number off `summary.fully_diluted_shares`. The validation itself is
+#            cheap (0.35 ms at the 2,000-entry cap) but `entries` is now the
+#            whole remaining cost of that read, and it is read for a figure that
+#            could be a stored derived column if anything kept it honest.
+#            gap: R385's `scrubFilename` item is still open — the whole name is
+#            cleaned before `MAX_FILENAME_CHARS` applies — and nothing censuses
+#            the bound-applied-after-the-walk shape in any tier.
