@@ -164,14 +164,46 @@ export function registerCommentRoutes(
       throw problems.unprocessable('Only sticky notes can be pinned');
 
     const updated = await updateComment(deps.pool, commentId, parsed.data);
+    // The same frame the post above sends, for the same reason (R396, M3).
+    // Three doors *create* a comment and all three broadcast; the two that
+    // change one after the fact broadcast from nowhere, and the thread is the
+    // one surface on this platform that is pushed rather than polled. So an
+    // edit reached only the tab that made it: every other open workspace went
+    // on showing the superseded body, with no tick to re-fetch on and nothing
+    // to say it was stale — until a navigation, which on a page people leave
+    // open all day is measured in hours.
+    //
+    // Carries no body, exactly as the post's frame carries none: consumers
+    // re-fetch the thread through their own RBAC'd list, so a viewer entitled
+    // to the id is not thereby handed the text.
+    deps.hub?.broadcast(comment.valuation_id, 'comment', {
+      comment_id: commentId,
+      kind: comment.kind,
+    });
     return { comment: toPublicComment(updated ?? comment) };
   });
 
   app.delete('/api/v1/comments/:commentId', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { commentId } = req.params as { commentId: string };
-    await loadEditable(deps.pool, principal, commentId);
-    await deleteComment(deps.pool, commentId);
+    const comment = await loadEditable(deps.pool, principal, commentId);
+    const removed = await deleteComment(deps.pool, commentId);
+    // Worse than the edit above, and the reason this pair is one fix: a
+    // withdrawn sticky note stayed *readable* on every other open workspace,
+    // and a note is withdrawn precisely when it should stop being read —
+    // wrong, superseded, or said in front of the wrong audience. The frame is
+    // what removes it; the row being gone does nothing on its own, because
+    // nothing re-asks.
+    //
+    // Gated on the delete having removed a row: two operators deleting the
+    // same comment must not put two ticks on every open thread, and the second
+    // one is reporting nothing that happened.
+    if (removed) {
+      deps.hub?.broadcast(comment.valuation_id, 'comment', {
+        comment_id: commentId,
+        kind: comment.kind,
+      });
+    }
     return reply.status(204).send();
   });
 
