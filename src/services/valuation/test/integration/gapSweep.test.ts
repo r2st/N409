@@ -298,6 +298,65 @@ describe.skipIf(!dbUp)('gap sweep', () => {
     ]);
   });
 
+  /**
+   * The filing survives the roll-forward.
+   *
+   * `kind` and `category` are two axes and only one of them was copied.
+   * `documents.category` is `NOT NULL DEFAULT 'uploads'` (migration 0105), so
+   * every file on a clone arrived uncategorised: the intake checklist counts
+   * `byCategory`, so last year's cap table and annual statements read as
+   * buckets nobody had filled and the client was asked for them again. The
+   * unfiled queue did not catch them either — it wants
+   * `category = 'uploads' AND kind = 'other'`, and these rows keep their real
+   * `kind`. Asserted against a source whose two axes *disagree*
+   * (`income_statement` filed as monthly, and `other` filed as a board
+   * resolution), because a fixture where category is derivable from kind
+   * cannot tell a copied column from a re-derived one.
+   */
+  it('clone carries each document filing, not just its kind', async () => {
+    const id = await createValuation('CloneFiled Co');
+    const filed = [
+      { filename: 'jan-pnl.pdf', kind: 'income_statement', category: 'monthly_income_statements' },
+      { filename: 'cap.xlsx', kind: 'cap_table', category: 'captable_documents' },
+      { filename: 'consent.pdf', kind: 'other', category: 'board_resolutions' },
+    ];
+    for (const doc of filed) {
+      await pool.query(
+        `INSERT INTO documents (id, valuation_id, kind, category, filename, content_type, size_bytes, sha256, storage_path, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, 'application/pdf', 10, $6, $7, $8)`,
+        [
+          newUlid(),
+          id,
+          doc.kind,
+          doc.category,
+          doc.filename,
+          `sha-${doc.filename}`,
+          `${id}/sha__${doc.filename}`,
+          client.id,
+        ],
+      );
+    }
+
+    const cloned = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/clone`,
+      headers: authHeader(ops.token),
+      payload: { roll_forward: true },
+    });
+    expect(cloned.statusCode).toBe(201);
+    const cloneId = cloned.json().valuation.id as string;
+
+    const copied = await pool.query<{ filename: string; kind: string; category: string }>(
+      'SELECT filename, kind, category FROM documents WHERE valuation_id = $1 ORDER BY filename',
+      [cloneId],
+    );
+    expect(copied.rows).toEqual([
+      { filename: 'cap.xlsx', kind: 'cap_table', category: 'captable_documents' },
+      { filename: 'consent.pdf', kind: 'other', category: 'board_resolutions' },
+      { filename: 'jan-pnl.pdf', kind: 'income_statement', category: 'monthly_income_statements' },
+    ]);
+  });
+
   it('new reports merge the active managed template body (gap 6)', async () => {
     // author + activate a managed 409a template
     const created = await app.inject({

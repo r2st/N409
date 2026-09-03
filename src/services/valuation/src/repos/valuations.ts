@@ -1281,6 +1281,25 @@ export async function cloneValuation(
     // engagement. Document rows are duplicated but point at the same
     // content-addressed blob (sha-prefixed storage path), so no file copying.
     //
+    // `category` is copied, and it is the column that makes the copy legible.
+    // `kind` and `category` are two axes (domain/documentCategories.ts):
+    // `kind` is what the extractor does with the file, `category` is which
+    // thing the client was asked for. Only `kind` was carried, and `category`
+    // is `NOT NULL DEFAULT 'uploads'` (migration 0105) — so every file on a
+    // roll-forward arrived uncategorised. The intake checklist counts
+    // `byCategory` (`documentCoverage`), so last year's cap table, annual
+    // statements and projections all read as buckets nobody had filled, and
+    // the client is asked a second time for files that are already on the
+    // engagement. Nor does the unfiled queue catch them: `listUnfiledDocuments`
+    // asks for `category = 'uploads' AND kind = 'other'`, and these rows keep
+    // their real `kind` — so a cloned cap table is missing from the checklist
+    // and absent from the list of things to file, which is the pair of
+    // statements that made it invisible rather than merely wrong.
+    //
+    // `reviewed_at`/`reviewed_by` are deliberately not carried, per migration
+    // 0121: review is "an analyst on *this* engagement has taken the file into
+    // account", and the new engagement's analyst has not.
+    //
     // Both copies are one statement, not one per row: the new ids are minted
     // here and paired to their sources through unnest(), the same batching
     // `insertRecoveryCodes` uses. A roll-forward of an engagement carrying a
@@ -1294,8 +1313,9 @@ export async function cloneValuation(
     if (sourceDocs.length > 0) {
       await client.query(
         `INSERT INTO documents
-           (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by)
-         SELECT n.new_id, $1, d.kind, d.filename, d.content_type, d.size_bytes,
+           (id, valuation_id, kind, category, filename, content_type, size_bytes, sha256,
+            storage_path, uploaded_by)
+         SELECT n.new_id, $1, d.kind, d.category, d.filename, d.content_type, d.size_bytes,
                 d.sha256, d.storage_path, d.uploaded_by
            FROM documents d
            JOIN unnest($2::ulid[], $3::ulid[]) AS n(src_id, new_id) ON n.src_id = d.id`,
