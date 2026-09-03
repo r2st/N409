@@ -3,7 +3,7 @@ import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { MONITOR_EVENT_TYPES, type MonitorSnapshot } from '../domain/monitoring.js';
-import { STATE_GROUPS } from '../domain/operations.js';
+import { STATE_GROUPS, stoppedEngagementReason } from '../domain/operations.js';
 
 export interface MonitorRow {
   id: string;
@@ -186,15 +186,14 @@ const ENABLED_MONITOR_SELECT = `
  */
 export type UnwatchedReason = 'retired' | 'closed';
 
-const CLOSED_STATES: ReadonlySet<string> = new Set(STATE_GROUPS.closed);
-
 export function unwatchedReason(valuation: {
   archived_at: Date | null;
   state: string;
 }): UnwatchedReason | null {
-  if (valuation.archived_at !== null) return 'retired';
-  if (CLOSED_STATES.has(valuation.state)) return 'closed';
-  return null;
+  // `stoppedEngagementReason` is the one predicate — see its note for why the
+  // connector cards and the pay panel ask it too. Named here because at this
+  // door the answer is about the *watch*, and the caller renders those words.
+  return stoppedEngagementReason(valuation);
 }
 
 /**

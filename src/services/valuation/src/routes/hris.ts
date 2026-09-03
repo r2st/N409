@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { stoppedEngagementReason } from '../domain/operations.js';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
@@ -568,7 +569,33 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     const valuation = await loadAuthorized(principal, id);
     const connections = await listConnections(deps.pool, valuation.id);
     const byProvider = new Map(connections.map((c) => [c.provider, c]));
+    /*
+     * Whether the schedule this card describes will actually run (R401,
+     * methodology M11).
+     *
+     * R400 dropped retired and closed engagements out of `findDueConnections`,
+     * and did it there rather than by disabling the connection, because a close
+     * is reversible: restore the engagement and the schedule picks up where it
+     * was. The consequence is that the row keeps saying `connected`, keeps its
+     * cadence, and keeps a `next_sync_at` that stops advancing — and this
+     * endpoint hands all three to a card that reads 'Connected · syncs daily'.
+     *
+     * Nothing else on the page contradicts it: the workspace's retired banner
+     * is gated on `archived_at`, so a called-off engagement carries no banner
+     * at all, and the only outward sign is a next-sync date drifting into the
+     * past on a panel that never says why. An analyst reading the card believes
+     * the cap table in front of them is being kept current by the provider.
+     *
+     * Reported, not disabled — the same reversibility argument the filter
+     * makes — and asked of the shared predicate so this cannot come to disagree
+     * with the sweep's own WHERE clause.
+     */
+    const stopped = stoppedEngagementReason(valuation);
     return {
+      scheduled: stopped === null,
+      // Named only when it is not: a live engagement has no reason, and a null
+      // field invites a caller to render one.
+      ...(stopped === null ? {} : { unscheduled_reason: stopped }),
       providers: HRIS_PROVIDERS.map((provider) => ({
         provider,
         label: HRIS_PROVIDER_LABELS[provider],

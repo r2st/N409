@@ -51,6 +51,27 @@ export function connectorHealth(
   return connection.next_sync_at ? 'retrying' : 'stopped';
 }
 
+/**
+ * The sentence a card carries when the *engagement* stopped, not the connection
+ * (R401).
+ *
+ * The scheduled sync skips a retired or closed engagement rather than disabling
+ * the connection — a close is reversible, and restoring the file resumes the
+ * schedule where it was. So the row keeps saying `connected`, keeps its cadence
+ * and keeps a `next_sync_at` that stops advancing, and the card went on reading
+ * 'Connected · syncs daily'. Nothing else on the page contradicts it: the
+ * workspace's retired banner is gated on `archived_at`, so a called-off
+ * engagement carries no banner at all.
+ *
+ * One sentence for both panels, because R252 is the standing lesson here — the
+ * same connector prose written twice drifted apart in exactly the direction
+ * that mattered.
+ */
+export const SCHEDULE_PAUSED_NOTE: Record<'retired' | 'closed', string> = {
+  retired: 'This engagement has been retired, so scheduled syncing is paused.',
+  closed: 'This engagement has been closed, so scheduled syncing is paused.',
+};
+
 /** The pill's words. The provider name is appended by the caller. */
 export const CONNECTOR_HEALTH_LABEL: Record<ConnectorHealth, string> = {
   'not-configured': 'Not configured on this deployment',

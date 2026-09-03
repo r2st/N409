@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, describeActionFailure } from '../../lib/api';
-import { CONNECTOR_HEALTH_LABEL, cadenceNote, connectorHealth, retryNote } from '../../lib/connectorState';
+import {
+  CONNECTOR_HEALTH_LABEL,
+  SCHEDULE_PAUSED_NOTE,
+  cadenceNote,
+  connectorHealth,
+  retryNote,
+} from '../../lib/connectorState';
 import { describeCallbackOutcome, providerLabel } from '../../lib/integrationCallback';
 import { Button, ErrorNote, LoadError, Select, Spinner, SuccessNote, useRetry } from '../ui';
 
@@ -72,6 +78,9 @@ export function CapTableSyncPanel({
   onApplied: () => void;
 }) {
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  // Why the schedule is not running, when it is the engagement rather than the
+  // connection that stopped it. See `SCHEDULE_PAUSED_NOTE`.
+  const [paused, setPaused] = useState<'retired' | 'closed' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState<string | null>(null);
@@ -81,8 +90,15 @@ export function CapTableSyncPanel({
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ providers: ProviderStatus[] }>(`/valuations/${valuationId}/cap-table/sync`);
+      const r = await api<{
+        providers: ProviderStatus[];
+        scheduled?: boolean;
+        unscheduled_reason?: 'retired' | 'closed';
+      }>(`/valuations/${valuationId}/cap-table/sync`);
       setProviders(r.providers);
+      // An older server sends neither field, and reads as scheduled — which is
+      // what this panel assumed before they existed.
+      setPaused(r.scheduled === false ? (r.unscheduled_reason ?? 'closed') : null);
     } catch {
       setError('Could not load sync providers.');
     }
@@ -224,6 +240,15 @@ export function CapTableSyncPanel({
       </div>
       {callbackNote}
       {error && <ErrorNote>{error}</ErrorNote>}
+      {paused && (
+        <p
+          role="status"
+          className="rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800"
+        >
+          {SCHEDULE_PAUSED_NOTE[paused]} The connections below keep their settings and resume if the
+          engagement is reopened.
+        </p>
+      )}
 
       <div className="space-y-3">
         {providers.map((p) => {

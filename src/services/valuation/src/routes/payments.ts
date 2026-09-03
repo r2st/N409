@@ -58,7 +58,7 @@ import {
   refundState,
   type DisputeStatus,
 } from '../domain/payments.js';
-import { STATE_GROUPS } from '../domain/operations.js';
+import { stoppedEngagementReason } from '../domain/operations.js';
 import { fitsInt4 } from '../domain/int4.js';
 import { createNotifications } from '../repos/notifications.js';
 import {
@@ -304,15 +304,17 @@ export function checkoutAvailableTo(
  */
 export type UnpayableReason = 'retired' | 'closed' | 'settled';
 
-const CLOSED_STATES: ReadonlySet<string> = new Set(STATE_GROUPS.closed);
-
 export function unpayableReason(
   valuation: Pick<ValuationRow, 'archived_at' | 'paid_status' | 'state'>,
 ): UnpayableReason | null {
-  if (valuation.archived_at !== null) return 'retired';
-  if (CLOSED_STATES.has(valuation.state)) return 'closed';
-  if (valuation.paid_status !== 'unpaid') return 'settled';
-  return null;
+  // The first two arms are `stoppedEngagementReason`, which is the same
+  // question the monitor detail endpoint and the connector cards ask — see its
+  // note. `settled` is this door's own third arm and stays behind them: an
+  // engagement that was called off says so rather than reporting the payment
+  // it happens to already have.
+  return (
+    stoppedEngagementReason(valuation) ?? (valuation.paid_status !== 'unpaid' ? 'settled' : null)
+  );
 }
 
 export function payableEngagement(

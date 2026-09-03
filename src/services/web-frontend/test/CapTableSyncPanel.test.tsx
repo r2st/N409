@@ -86,6 +86,36 @@ describe('CapTableSyncPanel (feature 4)', () => {
     expect(screen.getByText('Not configured on this deployment')).toBeInTheDocument();
   });
 
+  /**
+   * The card described a schedule that will not run (R401, methodology M11).
+   *
+   * The sync sweep skips a retired or closed engagement rather than disabling
+   * the connection, so the row keeps `connected`, keeps its cadence and keeps a
+   * `next_sync_at` that stops advancing. Nothing else on the page contradicts
+   * it: the workspace's retired banner is gated on `archived_at`, so a
+   * called-off engagement carries no banner at all.
+   */
+  it('says so when the engagement was called off and nothing is syncing', async () => {
+    mockApi({
+      [`GET /valuations/${VAL_ID}/cap-table/sync`]: () =>
+        jsonResponse({ providers, scheduled: false, unscheduled_reason: 'closed' }),
+    });
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={() => {}} />);
+    await screen.findByText(/scheduled syncing is paused/i);
+    expect(screen.getByRole('status')).toHaveTextContent(/has been closed/i);
+    // The connections stay on the card: they keep their settings and resume.
+    expect(screen.getByText('Carta')).toBeInTheDocument();
+  });
+
+  it('says nothing of the sort while the engagement is live', async () => {
+    // Non-vacuity for the case above: the same providers, the same card, and
+    // the only difference is the flag. An older server sends neither field.
+    mockApi();
+    renderPanel(<CapTableSyncPanel valuationId={VAL_ID} onApplied={() => {}} />);
+    await screen.findByText('Carta');
+    expect(screen.queryByText(/scheduled syncing is paused/i)).not.toBeInTheDocument();
+  });
+
   it('previews conflicts on a sync and can apply them', async () => {
     const user = userEvent.setup();
     const onApplied = vi.fn();

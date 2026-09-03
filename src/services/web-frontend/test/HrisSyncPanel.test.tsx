@@ -81,6 +81,27 @@ describe('HrisSyncPanel (feature 11)', () => {
    * 6 grants imported" is otherwise a sentence that omits the two an auditor
    * would go looking for.
    */
+  /** The cap-table panel's twin — see its note. R401, methodology M11. */
+  it('says so when the engagement was retired and nothing is syncing', async () => {
+    mockApi({
+      [`GET /valuations/${VAL}/hris`]: () =>
+        jsonResponse({ providers, scheduled: false, unscheduled_reason: 'retired' }),
+    });
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={() => {}} />);
+    await screen.findByText(/scheduled syncing is paused/i);
+    expect(screen.getByRole('status')).toHaveTextContent(/has been retired/i);
+    expect(screen.getByText('Rippling')).toBeInTheDocument();
+  });
+
+  it('says nothing of the sort while the engagement is live', async () => {
+    // Non-vacuity: same providers, same card, and an older server sends
+    // neither field.
+    mockApi();
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={() => {}} />);
+    await screen.findByText('Rippling');
+    expect(screen.queryByText(/scheduled syncing is paused/i)).not.toBeInTheDocument();
+  });
+
   it('says how many grants the provider sent that could not be stored', async () => {
     const user = userEvent.setup();
     mockApi({

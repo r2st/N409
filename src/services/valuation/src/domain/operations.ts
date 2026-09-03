@@ -43,6 +43,40 @@ export const STATE_GROUPS = {
   closed: ['timeout', 'cancelled', 'ignored'],
 } as const satisfies Record<string, readonly ValuationState[]>;
 
+/**
+ * The two ways an engagement stops, as one answer, or null while it is live.
+ *
+ * WHY THIS IS ONE PREDICATE (R401, methodology M11). R400 established the pair
+ * across five subsystems: `archived_at` is retirement, the retention sweep's
+ * word for a file withdrawn years later, and `STATE_GROUPS.closed` is how work
+ * actually stops — the week a client goes quiet. Every guard it shipped had to
+ * ask both, and each asked in its own spelling at its own call site.
+ *
+ * That is the arrangement this estate keeps finding one half of. The scheduled
+ * work stops on both counts and the *status* surfaces went on describing a
+ * schedule that will never run again — a monitor reported as an enabled watch,
+ * a connector card reading 'Connected · syncs daily' with a `next_sync_at` in
+ * the past. Those readers each have to ask the same question the sweep's WHERE
+ * clause asks, and a second spelling of it is a second thing to get wrong.
+ *
+ * Retirement is answered first, so a file that is both says the thing that
+ * happened to it last. Reversible either way — `canRestart` puts a cancelled
+ * engagement back to `started` and a restore un-archives one — which is why
+ * every caller reports this rather than acting on it.
+ */
+export type StoppedReason = 'retired' | 'closed';
+
+const CLOSED_STATES: ReadonlySet<string> = new Set(STATE_GROUPS.closed);
+
+export function stoppedEngagementReason(valuation: {
+  archived_at: Date | null;
+  state: string;
+}): StoppedReason | null {
+  if (valuation.archived_at !== null) return 'retired';
+  if (CLOSED_STATES.has(valuation.state)) return 'closed';
+  return null;
+}
+
 export type StateGroup = keyof typeof STATE_GROUPS;
 export const STATE_GROUP_KEYS = Object.keys(STATE_GROUPS) as StateGroup[];
 
