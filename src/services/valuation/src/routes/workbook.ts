@@ -18,6 +18,33 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
 
+/**
+ * The magnitude a workbook cell may carry.
+ *
+ * `finite()` alone is the check every other money door on this service pairs
+ * with a range — `comparables`' `Money` is `finite().min(-1e15).max(1e15)`, the
+ * engine-inputs schemas the same — and this one had only the finiteness half.
+ * The gap is not about storage: `workbook_cells.value` is an unconstrained
+ * `numeric` and takes 1e308 happily. It is about the rows computed *from* it.
+ *
+ * `computeWorkbook` recomputes every derived row on each read, and its `sub`,
+ * `sum` and `ratio` helpers are plain double arithmetic that propagate `null`
+ * for a missing operand and nothing at all for an overflowing one. Revenue of
+ * 1e308 against a cost of -1e308 makes gross profit `Infinity`, and `Infinity`
+ * has no JSON spelling: `JSON.stringify` writes `null`, which is the same wire
+ * value a cell nobody has filled in sends. So the row does not read as wrong —
+ * it reads as *not computable yet*, the state the whole sheet is designed to
+ * degrade to, and every row downstream of it blanks the same way. The anomaly
+ * detector sees the `Infinity` and the analyst sees an empty cell.
+ *
+ * 1e15 is the estate's figure for the same question and is four orders of
+ * magnitude past the largest enterprise value anyone has measured. Every input
+ * row on the four sheets is a currency amount, a count, a multiple or a rate,
+ * so one magnitude bound covers all of them without being a second opinion
+ * about any.
+ */
+const MAX_CELL_VALUE = 1e15;
+
 const PatchBody = z
   .object({
     cells: z
@@ -28,7 +55,7 @@ const PatchBody = z
             row_key: z.string().min(1).max(100),
             column_key: z.string().min(1).max(100),
             // finite input value, or null to clear the cell
-            value: z.number().finite().nullable(),
+            value: z.number().finite().min(-MAX_CELL_VALUE).max(MAX_CELL_VALUE).nullable(),
           })
           .strict(),
       )
