@@ -9,6 +9,7 @@ import {
 } from '../events/integrationEvents.js';
 import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { HrisProvider, TokenSet } from '../clients/hris.js';
+import { STATE_GROUPS } from '../domain/operations.js';
 
 export type SyncFrequency = 'manual' | 'daily' | 'weekly';
 
@@ -530,15 +531,32 @@ export async function revokeConnection(
  *
  * A retirement is reversible (R90), so the connection is skipped rather than
  * disabled: restore the engagement and the schedule picks up where it was.
+ *
+ * AND THE OTHER WAY THE ENGAGEMENT STOPS (round 400, methodology M3).
+ * `archived_at` is retirement — the retention sweep's word for a file
+ * withdrawn years later. `cancelled`, `timeout` and `ignored` are the three
+ * terminal states of `WORKFLOW_TRANSITIONS`, reached the week a client goes
+ * quiet, and they are how work actually stops. Closing a valuation moves
+ * `state` and nothing else: it does not touch the connection, whose
+ * `next_sync_at` keeps rolling forward on its own cadence. So this went on
+ * calling the provider on a schedule for a file that had been called off —
+ * telling a third party we are working an engagement nobody is working, and
+ * applying the client's cap table to it — with no end condition, because
+ * nothing was ever going to disable the connection.
+ *
+ * Skipped rather than disabled for the reason retirement is: a close is
+ * reversible too (`canRestart` puts a cancelled engagement back to `started`),
+ * and the schedule should pick up where it was.
  */
 export async function findDueConnections(pool: pg.Pool, limit = 25): Promise<HrisConnectionRow[]> {
   const { rows } = await pool.query<HrisConnectionRow>(
     `SELECT c.* FROM hris_connections c
        JOIN valuations v ON v.id = c.valuation_id AND v.archived_at IS NULL
+                         AND v.state <> ALL($2::valuation_state[])
      WHERE c.status IN ('connected', 'error') AND c.sync_frequency <> 'manual'
        AND next_sync_at IS NOT NULL AND next_sync_at <= now()
      ORDER BY next_sync_at ASC LIMIT $1`,
-    [limit],
+    [limit, [...STATE_GROUPS.closed]],
   );
   return rows.map((r) => openConnectionTokens(r));
 }
