@@ -687,6 +687,38 @@ def _xlsx_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
                     )
                 )
             ]
+        if not sheets:
+            # A ZIP WITH NO WORKSHEET IN IT IS NOT AN EMPTY WORKBOOK
+            # (round 397, methodology M11).
+            #
+            # `extract_texts` routes on the magic number, and `PK\x03\x04` is
+            # the magic number of every OOXML package — so a `.docx` and a
+            # plain `.zip`, both of which `documents/fileType.ts` accepts as
+            # uploads, arrive at this reader. Neither carries `xl/workbook.xml`
+            # and neither carries `xl/worksheets/`, so the walk below opened
+            # nothing, appended nothing, and returned "".
+            #
+            # Which is the one answer this module is careful never to give. ""
+            # is *a document that was blank*, and it is indistinguishable from
+            # one in both places it lands: the corpus, where the model reads a
+            # set of board minutes as a file with nothing in it, and the
+            # per-document summary the analyst reads. Nothing raised, so
+            # `extract_texts` counted no failure and `documents_unreadable`
+            # stayed at zero — a firm whose clients send their minutes as .docx
+            # had every one of them drop out of the corpus with no line
+            # anywhere saying so.
+            #
+            # Not a refusal of .docx — supporting it is a different change —
+            # but the difference between "we could not read this" and "there
+            # was nothing to read", which is the whole of what a degrade owes
+            # its readers. A truncated .xlsx that lost both its workbook part
+            # and its worksheets reaches here too, and the sentence is true of
+            # it as well.
+            raise ValueError(
+                "this file is a zip archive with no spreadsheet in it — Word documents, "
+                "presentations and plain .zip files are packaged the same way as .xlsx "
+                "and cannot be read as one; upload the workbook, a PDF, or a CSV"
+            )
         blocks: list[str] = []
         size = 0
         opened = sheets[:MAX_XLSX_SHEETS]

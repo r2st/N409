@@ -812,3 +812,60 @@ def test_one_out_of_range_index_costs_only_its_own_cell():
     [doc] = extract_texts([_doc(buf.getvalue())])
     assert "Class" in doc.text
     assert not doc.text.startswith("[could not extract text:")
+
+
+# ── A zip that is not a workbook ─────────────────────────────────────────────
+#
+# `extract_texts` routes on the magic number, and every OOXML package shares
+# `PK\x03\x04`. `.docx` and `.zip` are both accepted upload extensions, so both
+# reach this reader. R397 (M11).
+
+
+def _zip_of(parts: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, body in parts.items():
+            zf.writestr(name, body)
+    return buf.getvalue()
+
+
+def test_a_word_document_is_declared_unreadable_not_read_as_blank():
+    """A .docx has no `xl/` parts at all, so the walk opened nothing and
+    returned "" — a set of board minutes reaching the model as a file with
+    nothing in it."""
+    docx = _zip_of(
+        {
+            "[Content_Types].xml": "<Types/>",
+            "word/document.xml": '<w:document xmlns:w="x"><w:body><w:p><w:t>Board minutes</w:t>'
+            "</w:p></w:body></w:document>",
+        }
+    )
+    [doc] = extract_texts([_doc(docx, filename="minutes.docx")])
+    assert doc.text.startswith("[could not extract text:")
+    assert "zip archive with no spreadsheet in it" in doc.text
+
+
+def test_a_plain_zip_is_declared_unreadable_not_read_as_blank():
+    [doc] = extract_texts([_doc(_zip_of({"readme.txt": "hi"}), filename="documents.zip")])
+    assert doc.text.startswith("[could not extract text:")
+
+
+def test_an_unreadable_zip_is_counted_and_said_out_loud(caplog):
+    with caplog.at_level(logging.WARNING, logger="documents"):
+        extract_texts([_doc(_zip_of({"readme.txt": "hi"}), filename="documents.zip")])
+    tally = [r for r in caplog.records if getattr(r, "event", None) == "documents_unreadable"]
+    assert [(r.count, r.total) for r in tally] == [(1, 1)]
+
+
+def test_a_workbook_that_lost_its_index_still_reads_its_worksheets():
+    """The numbered fallback is untouched: a damaged workbook whose parts are
+    there must not be caught by the refusal above."""
+    damaged = _zip_of(
+        {
+            "xl/sharedStrings.xml": _SHARED_STRINGS,
+            "xl/worksheets/sheet1.xml": _SHEET1,
+        }
+    )
+    [doc] = extract_texts([_doc(damaged)])
+    assert "=== Sheet: Sheet1 ===" in doc.text
+    assert "Series A\t2000000" in doc.text
