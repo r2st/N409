@@ -61,7 +61,12 @@ function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Report templates are operations-only');
 }
 
-function serialize(t: ReportTemplateRow) {
+/**
+ * Widened to the summary the browse path returns, so the list and the four
+ * single-template routes keep one serialiser (R398). Nothing here reads
+ * `body`; a caller that needs it goes to `GET /report-templates/:id`.
+ */
+function serialize<T extends Pick<ReportTemplateRow, 'name' | 'version'>>(t: T) {
   return { ...t, label: templateLabel(t) };
 }
 

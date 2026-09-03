@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { TemplatesPage } from '../src/pages/TemplatesPage';
-import type { ReportTemplate } from '../src/lib/types';
+import type { ReportTemplate, ReportTemplateSummary } from '../src/lib/types';
 
 const template = (over: Partial<ReportTemplate>): ReportTemplate => ({
   id: '01JTEMPLATE000000000000001',
@@ -47,7 +47,27 @@ const problem = (status: number, detail: string) =>
     headers: { 'content-type': 'application/problem+json' },
   });
 
-function mockApi(onWrite?: (path: string, init: RequestInit) => Response) {
+/**
+ * THE LIST CARRIES NO BODY, AND SAYING SO HERE IS THE GUARD (R398, M8).
+ *
+ * `GET /report-templates` stopped sending it — a template body is the report
+ * skeleton, capped at a million characters, and a page of 200 versions was that
+ * many copies of it over the wire to draw a table of labels and timestamps. The
+ * page therefore has to fetch the one body it reads, and the only way a test
+ * can see the difference is to serve the list the way the route now does: with
+ * the field absent. Anything that goes back to reading `t.body` off a list row
+ * opens an empty editor here.
+ */
+const summaries: ReportTemplateSummary[] = TEMPLATES.map(({ body: _body, ...rest }) => rest);
+
+/** Detail fetches this run made, so a test can assert the body came from one. */
+let detailFetches: string[] = [];
+
+function mockApi(
+  onWrite?: (path: string, init: RequestInit) => Response,
+  onDetail?: (id: string) => Response,
+) {
+  detailFetches = [];
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
     const method = init?.method ?? 'GET';
@@ -55,7 +75,16 @@ function mockApi(onWrite?: (path: string, init: RequestInit) => Response) {
       if (onWrite) return onWrite(path, init!);
       return jsonResponse({ ok: true });
     }
-    if (path.includes('/report-templates')) return jsonResponse({ templates: TEMPLATES });
+    const detail = /\/report-templates\/([^/?]+)$/.exec(path);
+    if (detail) {
+      const id = detail[1]!;
+      detailFetches.push(id);
+      if (onDetail) return onDetail(id);
+      const found = TEMPLATES.find((t) => t.id === id);
+      if (!found) return problem(404, 'No such template');
+      return jsonResponse({ template: found });
+    }
+    if (path.includes('/report-templates')) return jsonResponse({ templates: summaries });
     throw new Error(`unexpected fetch ${path}`);
   });
 }
@@ -236,6 +265,91 @@ describe('TemplatesPage', () => {
     expect(await screen.findByDisplayValue('# draft body')).toBeInTheDocument();
     await userEvent.click(draft().getByRole('button', { name: 'Close' }));
     expect(screen.queryByDisplayValue('# draft body')).not.toBeInTheDocument();
+  });
+
+  /*
+   * R398, methodology M8 — the three tests the narrowing is actually about.
+   *
+   * The list stopped carrying `body`, so the editor's contents now come from a
+   * request that can be slow and can fail. Each of those is a state the screen
+   * has to be able to be in truthfully: the body arrives from the detail route
+   * and not from the row; the button says so while it is in flight; and a
+   * refusal is said out loud rather than opening an empty box, which would read
+   * as a template whose body is blank and would save that blankness over the
+   * draft on the next press.
+   */
+  it('fetches the body from the detail route rather than reading it off the row', async () => {
+    mockApi();
+    renderPage();
+    await screen.findByText('409a.v54');
+    expect(detailFetches).toEqual([]);
+
+    await userEvent.click(within(rowFor('409a.v55')).getByRole('button', { name: 'Edit' }));
+    expect(await screen.findByDisplayValue('# draft body')).toBeInTheDocument();
+    // Exactly the row that was pressed, and only it: the list of 200 versions
+    // is what this round stopped paying for.
+    expect(detailFetches).toEqual(['t-draft']);
+  });
+
+  it('says the body is on its way, and does not open a second editor while it is', async () => {
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockApi(undefined, (id) => {
+      const found = TEMPLATES.find((t) => t.id === id)!;
+      return jsonResponse({ template: found });
+    });
+    // Hold the detail response open by delaying the page's own fetch call.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const passthrough = fetchSpy.getMockImplementation()!;
+    fetchSpy.mockImplementation(async (url, init) => {
+      if (/\/report-templates\/[^/?]+$/.test(String(url)) && (init?.method ?? 'GET') === 'GET') {
+        await held;
+      }
+      return passthrough(url, init);
+    });
+
+    renderPage();
+    await screen.findByText('409a.v54');
+    await userEvent.click(within(rowFor('409a.v55')).getByRole('button', { name: 'Edit' }));
+
+    expect(await within(rowFor('409a.v55')).findByRole('button', { name: 'Opening…' })).toBeDisabled();
+    // Every other row's Edit is held too, so a second press cannot land a
+    // different template's body in an editor the first press opened.
+    expect(within(rowFor('409a.v54')).queryByRole('button', { name: 'Edit' })).toBeNull();
+
+    release!();
+    expect(await screen.findByDisplayValue('# draft body')).toBeInTheDocument();
+  });
+
+  it('says so when the body could not be fetched, rather than opening an empty editor', async () => {
+    mockApi(undefined, () => problem(503, 'The template store is unavailable.'));
+    renderPage();
+    await screen.findByText('409a.v54');
+
+    await userEvent.click(within(rowFor('409a.v55')).getByRole('button', { name: 'Edit' }));
+
+    // The server's own sentence, because this is a GET and `describeLoadFailure`
+    // prefers a `detail` the server wrote over the page's fallback.
+    expect(await screen.findByText(/The template store is unavailable\./i)).toBeInTheDocument();
+    // The one thing that must not happen: an editor holding "" that the next
+    // Save draft would write over the draft's real body.
+    expect(screen.queryByRole('textbox', { name: /Body of the 409a template/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Save draft/i })).toBeNull();
+    // And the row is pressable again, so the operator can retry.
+    expect(within(rowFor('409a.v55')).getByRole('button', { name: 'Edit' })).toBeEnabled();
+  });
+
+  it('falls back to its own sentence when the refusal carried none', async () => {
+    mockApi(undefined, () => new Response('', { status: 502 }));
+    renderPage();
+    await screen.findByText('409a.v54');
+
+    await userEvent.click(within(rowFor('409a.v55')).getByRole('button', { name: 'Edit' }));
+
+    expect(await screen.findByText(/Could not open that template for editing\./i)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /Body of the 409a template/i })).toBeNull();
   });
 
   it('creates a new version with the name and the selected kind', async () => {

@@ -563,6 +563,18 @@ export interface ReportTemplate {
   updated_at: string;
 }
 
+/**
+ * A row as `GET /report-templates` returns it (R398).
+ *
+ * The browse list does not carry `body` — a template body is the report
+ * skeleton and the create route accepts a million characters of it, so a page
+ * of 200 versions was up to 200 MB over the wire to draw a table of labels and
+ * timestamps. The one body the page reads is the draft whose Edit button was
+ * pressed, and `GET /report-templates/:id` is where that comes from. Stated as
+ * a type so the omission is a compile error rather than an `undefined`.
+ */
+export type ReportTemplateSummary = Omit<ReportTemplate, 'body'>;
+
 export interface AppNotification {
   id: string;
   valuation_id: string | null;

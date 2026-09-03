@@ -58,10 +58,33 @@ export const TEMPLATE_PAGE_LIMIT = 200;
  * {@link createTemplateVersion}, which takes `max(version)` in SQL under the
  * name lock. This is the browse path only.
  */
+/**
+ * Every column but the body (R398, methodology M8).
+ *
+ * The cap above is the reason this exists and was not the whole answer. A
+ * template body is the report skeleton and the create route accepts a million
+ * characters of it, so a page of this list is up to 200 MB of document — read
+ * off the table, assembled by the driver, serialised to JSON and sent to a
+ * browser that draws a five-column table of labels, statuses and timestamps.
+ *
+ * `TemplatesPage` reads exactly one body: the row whose Edit button was
+ * pressed, which is a draft, one at a time, and which has `GET
+ * /report-templates/:id` to fetch it from. So this is not a body the list
+ * declines to send early — it is a body no caller of the list ever read.
+ *
+ * Spelled out rather than `SELECT *` minus one, because there is no such SQL,
+ * and the type below is what carries the omission into the compiler.
+ */
+const TEMPLATE_SUMMARY_COLUMNS = `id, name, version, kind, status, notes,
+       created_by, created_at, updated_at`;
+
+/** A row as the browse path returns it: everything the page draws, no body. */
+export type ReportTemplateSummary = Omit<ReportTemplateRow, 'body'>;
+
 export async function listTemplates(
   pool: pg.Pool,
   filters: { name?: string; kind?: ValuationKind; status?: ReportTemplateStatus; limit?: number } = {},
-): Promise<{ templates: ReportTemplateRow[]; truncated: boolean }> {
+): Promise<{ templates: ReportTemplateSummary[]; truncated: boolean }> {
   const limit = Math.min(Math.max(filters.limit ?? TEMPLATE_PAGE_LIMIT, 1), TEMPLATE_PAGE_LIMIT);
   const where: string[] = [];
   const params: unknown[] = [];
@@ -74,8 +97,9 @@ export async function listTemplates(
   if (filters.status) add('status = ?', filters.status);
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   params.push(limit + 1);
-  const { rows } = await pool.query<ReportTemplateRow>(
-    `SELECT * FROM report_templates ${whereSql} ORDER BY name ASC, version DESC LIMIT $${params.length}`,
+  const { rows } = await pool.query<ReportTemplateSummary>(
+    `SELECT ${TEMPLATE_SUMMARY_COLUMNS} FROM report_templates ${whereSql}
+      ORDER BY name ASC, version DESC LIMIT $${params.length}`,
     params,
   );
   return { templates: rows.slice(0, limit), truncated: rows.length > limit };

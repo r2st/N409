@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, describeActionFailure } from '../lib/api';
+import { api, ApiError, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime, KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS } from '../lib/types';
-import type { ReportTemplate } from '../lib/types';
+import type { ReportTemplate, ReportTemplateSummary } from '../lib/types';
 import {
   Button,
   EmptyState,
@@ -36,7 +36,7 @@ function StatusPill({ status }: { status: ReportTemplate['status'] }) {
 }
 
 export function TemplatesPage() {
-  const [templates, setTemplates] = useState<ReportTemplate[] | null>(null);
+  const [templates, setTemplates] = useState<ReportTemplateSummary[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { token, retryProps } = useRetry(() => setError(null));
@@ -44,11 +44,13 @@ export function TemplatesPage() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', kind: '409a', body: '' });
   const [editing, setEditing] = useState<{ id: string; body: string } | null>(null);
+  /** The row whose body is being fetched, so its own button can say so. */
+  const [opening, setOpening] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await api<{ templates: ReportTemplate[]; truncated: boolean }>('/report-templates');
+      const data = await api<{ templates: ReportTemplateSummary[]; truncated: boolean }>('/report-templates');
       setTemplates(data.templates);
       // The page groups versions under `names`, which is derived from this
       // list: past the cap a whole template name disappears rather than one of
@@ -83,6 +85,39 @@ export function TemplatesPage() {
       setActionError(describeActionFailure(err, operation));
     } finally {
       setBusy(false);
+    }
+  };
+
+  /*
+   * THE BODY IS FETCHED, NOT CARRIED (R398, methodology M8).
+   *
+   * `GET /report-templates` stopped sending `body` because this page is the
+   * only caller and it reads exactly one — the draft whose Edit button was
+   * pressed. So opening the editor is a request, and a request can fail: the
+   * failure goes to `actionError` beside the other four, rather than opening an
+   * empty box that would read as a template with no body in it and save that
+   * emptiness over the draft on the next press.
+   *
+   * Not routed through `run`, which reloads the list on success. Nothing about
+   * the list changed by opening an editor, and the reload would drop the
+   * `editing` state it just set.
+   */
+  const toggleEditor = async (id: string) => {
+    if (editing?.id === id) {
+      setEditing(null);
+      return;
+    }
+    setActionError(null);
+    setOpening(id);
+    try {
+      const { template } = await api<{ template: ReportTemplate }>(`/report-templates/${id}`);
+      setEditing({ id, body: template.body });
+    } catch (err) {
+      // The read-side helper: this is a GET, and `describeActionFailure`'s
+      // prose — "Nothing was changed" — is a claim about a write.
+      setActionError(describeLoadFailure(err, 'Could not open that template for editing.'));
+    } finally {
+      setOpening(null);
     }
   };
 
@@ -232,12 +267,14 @@ export function TemplatesPage() {
                             <>
                               <Button
                                 variant="secondary"
-                                disabled={busy}
-                                onClick={() =>
-                                  setEditing(editing?.id === t.id ? null : { id: t.id, body: t.body })
-                                }
+                                disabled={busy || opening !== null}
+                                onClick={() => void toggleEditor(t.id)}
                               >
-                                {editing?.id === t.id ? 'Close' : 'Edit'}
+                                {opening === t.id
+                                  ? 'Opening…'
+                                  : editing?.id === t.id
+                                    ? 'Close'
+                                    : 'Edit'}
                               </Button>
                               <Button
                                 disabled={busy}
