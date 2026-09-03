@@ -164,6 +164,9 @@ function toSummary(post: BlogPostRow) {
   return rest;
 }
 
+/** What `GET /blog/posts` sends, and what its cache entry now holds. */
+type BlogPostSummary = ReturnType<typeof toSummary>;
+
 export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   // Read-through cache, same reasoning as the help centre: an index page for
   // anonymous traffic, over content that changes a few times a month. Any
@@ -179,11 +182,33 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   // and revalidation costs one conditional round trip, not a re-download.
   const PUBLIC_REVALIDATE = { cacheControl: 'public, no-cache' };
 
+  /*
+   * THE CACHE HOLDS WHAT THE ROUTE SENDS (R398, methodology M8).
+   *
+   * It held the rows and mapped them per request, and the map is not a
+   * projection. `toSummary` drops `body_html` and then keeps `read_minutes`,
+   * which is `readMinutes(post.body_html)` — a character-by-character walk of
+   * the whole body, for every post in the index, on every request.
+   *
+   * That is 7.4 ms of event loop for 200 thirteen-kilobyte posts and 24.4 ms at
+   * forty-three, on an endpoint that is anonymous, is the marketing site's
+   * index, and shares its loop with the API. The answer is the same for sixty
+   * seconds by construction — the TTL is what says so, and every write clears
+   * the entry — so it is computed once per entry rather than once per caller.
+   *
+   * The bodies come out of the cache with it. They were read from the table to
+   * be counted and then discarded, and the entry held all 200 of them in this
+   * process for the whole TTL to send none.
+   *
+   * `listPosts` still reads them, and that is not an oversight: `read_minutes`
+   * is derived from the body, and the alternative is a word count in SQL that
+   * would have to restate what counts as a tag and what counts as a word.
+   */
   app.get('/api/v1/blog/posts', async (req, reply) => {
-    const posts = (await cache.getOrLoad('list:published', () =>
-      listPosts(deps.pool, { includeDrafts: false }),
-    )) as BlogPostRow[];
-    return conditionalJson(req, reply, { posts: posts.map(toSummary) }, PUBLIC_REVALIDATE);
+    const posts = (await cache.getOrLoad('list:published', async () =>
+      (await listPosts(deps.pool, { includeDrafts: false })).map(toSummary),
+    )) as BlogPostSummary[];
+    return conditionalJson(req, reply, { posts }, PUBLIC_REVALIDATE);
   });
 
   app.get('/api/v1/blog/posts/:slug', async (req, reply) => {
