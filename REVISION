@@ -12055,3 +12055,98 @@
 #            gap: R385's `scrubFilename` item is still open — the whole name is
 #            cleaned before `MAX_FILENAME_CHARS` applies — and nothing censuses
 #            the bound-applied-after-the-walk shape in any tier.
+
+# R394 — Input validation & boundary (M19), at `692e2c4..49276104`. Two
+#            findings, and they are the same sentence about two different
+#            axes: a schema stated a bound, and the layer under it had a
+#            different opinion nobody had compared it with.
+#
+#            **Three schemas declared a body the transport refuses.**
+#            `buildApp` sets no `bodyLimit`, so every one of the valuation
+#            service's ~430 routes is bounded by Fastify's 1 MiB default. That
+#            is the right ceiling for almost all of them. Three say otherwise
+#            in their own zod: `reports.PutBody` is 50 sections of 100,000
+#            characters of HTML (5 MB, and `reportScale.test.ts` builds exactly
+#            that body and asserts it renders, so it is the editor's stated
+#            ceiling rather than a theoretical one), `capTable.ImportBody.csv`
+#            is `z.string().max(2_000_000)`, and a report template's `body` is
+#            `z.string().max(1_000_000)`, which crosses a megabyte once JSON
+#            escaping and the fields beside it are counted. Measured: a
+#            30-section report — 3 MB, comfortably inside its schema — was
+#            answered 413 before the handler ran. The refusal comes from the
+#            content-type parser, ahead of the handler and ahead of the schema,
+#            so it names no field and quotes no limit: an analyst who has spent
+#            an afternoon on a long report is told "Request body is too large"
+#            about a body their editor believes is legal, with nothing to
+#            shorten it to. This is R242's cross-tier shape — two ceilings, each
+#            sound alone, with nothing stating the relationship — turned around
+#            to face the client, which is the direction that round did not look.
+#            Set per route rather than on `Fastify({ … })`: a service-wide 8 MiB
+#            would let all ~430 routes buffer eight megabytes ahead of their own
+#            `preHandler` authentication, which is a far larger change than the
+#            three schemas it would be written for. The new test's last case is
+#            that other half — an ordinary route must still meet the default.
+#
+#            **A workbook cell magnitude the derived row cannot report.**
+#            `workbook.PatchBody.value` was `z.number().finite()` and nothing
+#            else — the finiteness half of the check every other money door on
+#            this service pairs with a range (`comparables`' `Money` is
+#            `finite().min(-1e15).max(1e15)`). Storage was never the gap:
+#            `workbook_cells.value` is an unconstrained `numeric` and takes
+#            1e308 happily. The rows computed *from* it are. `computeWorkbook`
+#            re-derives every non-input row on each read out of plain double
+#            arithmetic — `sub`, `sum`, `ratio` — which propagate `null` for a
+#            missing operand and nothing at all for an overflowing one. Revenue
+#            of 1e308 against a cost of -1e308 makes gross profit `Infinity`,
+#            and `Infinity` has no JSON spelling: `JSON.stringify` writes
+#            `null`, which is the wire value an unfilled cell sends. So the row
+#            does not read as wrong — it reads as *not computable yet*, the
+#            state the sheet is designed to degrade to, and every row
+#            downstream blanks the same way, while `detectFinancialAnomalies`
+#            is handed the `Infinity`. 1e15 is the estate's own figure and four
+#            orders past the largest enterprise value anyone has measured;
+#            every input row on the four sheets is a currency amount, a count,
+#            a multiple or a rate, so one bound covers all of them.
+#
+#            Probed and clean, do not re-derive. The route-parameter hook
+#            (`plugins/params.ts`) covers all ~190 id casts; no route parses a
+#            request with a throwing `.parse(req.…)`; every `z.number()` and
+#            `z.coerce.number()` in `routes/` carries a range except the three
+#            named above and `overwrites`' union, which `validateOverwriteValue`
+#            range-checks against the field's own policy; every `z.array(` in
+#            `routes/` and `domain/` carries a `.max(` except four response
+#            schemas. The `?assignee=`/`?reviewer=` query filters take a
+#            non-ULID string, but Postgres smashes the `ulid` domain to `text`
+#            for operator resolution, so the CHECK that answers 23514 on an
+#            *INSERT* does not run on a comparison — the read filters return an
+#            empty page, not a 500. The label census R387 left open was run by
+#            hand over all four exhibit modules: every `label(`, `mapped(` and
+#            `*_LABELS[` site is either escaped at the point of use or fed a
+#            value `str()` has already escaped. `parseUserNameFilter`'s regex
+#            has no nested quantifier. The AI tier's `recency` is validated
+#            against `RECENCY_FILTERS` at the route before dispatch, and its
+#            `company_names`/`person_names` are bounded downstream by
+#            `MAX_KNOWN_ENTITIES`/`MAX_ENTITY_CHARS`. The engine's specialty
+#            divisions (`esop`, `emi_csop`, `smb`) each refuse a non-positive
+#            denominator before dividing, and `sensitivity` bounds `span`,
+#            `steps`, `parameters` and `two_way` at its own door.
+#
+#            gap: `specialty.RunBody.inputs` is `z.record(z.unknown())` — no
+#            key count, no key length — and it is spread *last* over the
+#            server-assembled engine payload and persisted wholesale to
+#            `calculations.inputs` on both the succeeded and the failed arm.
+#            `debt.ts`'s `InstrumentParams` is the same map with a bound and a
+#            paragraph saying why; this is its unbounded twin, and the only
+#            thing holding it is the 1 MiB body.
+#            gap: `capTable.ImportBody.rows` is still
+#            `z.array(z.record(z.string(), z.unknown())).max(2000)` — the row
+#            count is bounded and the per-row key set is not — and this round
+#            raised the body that bounds it from 1 MiB to 4 MiB.
+#            gap: the label census is still hand-run. A source scan over the
+#            exhibit modules — no `label(` outside `esc(`, `mapped(` or an
+#            already-escaped argument, no bare `*_LABELS[` — remains the guard
+#            R387 asked for and nobody has left behind.
+#            gap: nothing derives "the largest body this route's schema
+#            accepts" from the schema. `routes/bodyLimits.ts` names three
+#            routes by hand, and the fourth one added tomorrow will meet the
+#            same 413 for the same reason.
