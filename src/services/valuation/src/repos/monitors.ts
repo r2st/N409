@@ -3,6 +3,7 @@ import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { MONITOR_EVENT_TYPES, type MonitorSnapshot } from '../domain/monitoring.js';
+import { STATE_GROUPS } from '../domain/operations.js';
 
 export interface MonitorRow {
   id: string;
@@ -127,12 +128,31 @@ export const MONITOR_PAGE_LIMIT = 500;
  * Filtering the read rather than disabling the monitor on archive keeps the
  * decision reversible — un-archiving an engagement resumes the watch it was
  * set up with, instead of silently having turned it off.
+ *
+ * AND A CLOSED ENGAGEMENT IS THE REACHABLE HALF OF THAT (round 400,
+ * methodology M3). Archiving is the retention sweep's word for a file
+ * withdrawn years later. `cancelled`, `timeout` and `ignored` are the three
+ * terminal states of `WORKFLOW_TRANSITIONS`, and `cancelled` is a legal move
+ * out of every monitorable state but `published` — `completed`, `paid`,
+ * `review`, `reviewed`, `drafted`, `draft_changes`, `draft_accepted`. So the
+ * ordinary story is: ops enable the watch on a drafted engagement, the client
+ * goes quiet, ops cancel it, and closing moves `state` and nothing else — the
+ * monitor is still enabled, because nothing disables one.
+ *
+ * The scan then went on evaluating it and mailing the assigned reviewer
+ * "Consider a fresh valuation" about work that had been called off, on every
+ * tick, with a one-click roll-forward beside it. Same defect, same paragraph,
+ * one axis over — and this half needs no retention policy to have run.
+ *
+ * Reversible for the same reason: `canRestart` puts a cancelled engagement
+ * back to `started`, and the watch resumes rather than having been turned off.
  */
 const ENABLED_MONITOR_SELECT = `
   SELECT m.*, v.company_name, v.kind, v.user_id
     FROM valuation_monitors m
     JOIN valuations v ON v.id = m.valuation_id
-   WHERE m.enabled = true AND v.archived_at IS NULL`;
+   WHERE m.enabled = true AND v.archived_at IS NULL
+     AND v.state <> ALL(ARRAY[${STATE_GROUPS.closed.map((s) => `'${s}'`).join(', ')}]::valuation_state[])`;
 
 /**
  * Every enabled monitor, newest first — a page of them.

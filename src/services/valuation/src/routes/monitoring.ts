@@ -55,6 +55,7 @@ import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { calendarDate } from '../domain/calendarDate.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { STATE_GROUPS } from '../domain/operations.js';
 import { specialtyRunKind } from '../domain/specialty.js';
 import { invalidQuery } from '../domain/validationProblem.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
@@ -66,6 +67,13 @@ import type { SupportEmailSource } from '../hooks/autoEmails.js';
  * cap-table change, 12-month expiry), emails newly-fired alerts, and offers a
  * one-click roll-forward into a fresh valuation.
  */
+
+/**
+ * The three terminal states, as the monitor's own refusal. Never overlaps
+ * {@link MONITORABLE_STATES} — this is about the `hasCalc` escape hatch below
+ * it, which lets any state through once a calculation has succeeded.
+ */
+const CLOSED_STATES: ReadonlySet<string> = new Set(STATE_GROUPS.closed);
 
 const MONITORABLE_STATES = new Set([
   'completed',
@@ -388,6 +396,17 @@ export function registerMonitoringRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
     refuseIfRetired(valuation, 'accepting monitoring changes');
+    // Ahead of the `hasCalc` escape hatch, which is what makes this reachable:
+    // a closed engagement is not in MONITORABLE_STATES, but a cancelled one
+    // that got as far as a calculation passes the second half of the test and
+    // would be watched. `ENABLED_MONITOR_SELECT` refuses to scan it, so the
+    // monitor would sit enabled on the dashboard and never run — a control
+    // that reports a state it is not in.
+    if (CLOSED_STATES.has(valuation.state)) {
+      throw problems.conflict(
+        'This engagement has been closed — a closed engagement is not monitored. Restart it first.',
+      );
+    }
     const hasCalc = (await latestSucceededCalculation(deps.pool, id)) !== null;
     if (!MONITORABLE_STATES.has(valuation.state) && !hasCalc) {
       throw problems.conflict('Only a completed valuation can be monitored');
