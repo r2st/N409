@@ -14,6 +14,7 @@ import {
 import { OPERATIONS_EVENT_TYPES, STATE_GROUPS, stateGroupOf, type StateGroup } from '../domain/operations.js';
 import { namedBucket, namedBucketsFor, NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { recordEvent, type EventActor } from '../events/record.js';
+import { creditClocksForReopen, isReopening } from './slaCredit.js';
 import type { ValuationScope } from '../auth/rbac.js';
 import { publicPartnerNameSql } from './branding.js';
 
@@ -1715,11 +1716,41 @@ export async function patchValuation(
         payload: { changes },
       });
       if (newState && newState !== current.state) {
+        /*
+         * A reopening credits back the SLA time the closure ran through — see
+         * `creditClocksForReopen`, which holds the argument. Here rather than
+         * in `applyValuationState` because this is the one statement in the
+         * service that writes `state`, and in the same transaction as the write
+         * for the reason the retirement repair is in the restore's: a clock
+         * repaired by a second statement after the commit is one a crash skips,
+         * and the engagement is on the board and in the sweep from the moment
+         * the state lands.
+         *
+         * The credit is named in the transition's own payload. It is a write
+         * nobody asked for, on two other tables, and the stage trail beside it
+         * deliberately keeps the original `entered_at` — so without this line
+         * the two disagree and the spine says only that the file was restarted.
+         */
+        const credited = isReopening(current.state, newState)
+          ? await creditClocksForReopen(client, current.id, current.state)
+          : null;
         await recordEvent(client, {
           valuationId: current.id,
           type: EVENT_TYPES.stateChanged,
           actor,
-          payload: { from: current.state, to: newState },
+          payload: {
+            from: current.state,
+            to: newState,
+            ...(credited
+              ? {
+                  sla_credited: {
+                    stage: credited.stage,
+                    tasks: credited.tasks,
+                    credited_seconds: credited.creditedSeconds,
+                  },
+                }
+              : {}),
+          },
         });
       }
       return rows[0]!;
