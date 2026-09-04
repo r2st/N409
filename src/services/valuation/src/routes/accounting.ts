@@ -30,7 +30,8 @@ import {
   type AccountingConnectionRow,
 } from '../repos/accountingConnections.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
+import { applyEngineInputsWithin, lockParams, patchParamsWithin } from '../repos/params.js';
+import { withTransaction } from '../db/pool.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { integrationActorStillAuthorized } from '../domain/integrationActor.js';
@@ -578,56 +579,73 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       if (financials.prior_year_revenue_cents !== null) {
         paramsPatch.last_year_revenue_cents = financials.prior_year_revenue_cents;
       }
-      const current = await findParams(deps.pool, valuation.id);
-      if (Object.keys(paramsPatch).length > 0 && current) {
-        await patchParams(deps.pool, current, paramsPatch, actor);
-      }
 
-      /**
-       * The balance sheet is not just a record — it is the asset approach's
-       * two required inputs. `approaches.asset_value` refuses to run without
-       * `inputs.asset.total_assets` and `inputs.asset.total_liabilities`, and
-       * until now the only way to supply them was to type them in from a PDF
-       * the client had uploaded. Pulling them from the ledger is the whole
-       * point of connecting the software.
+      /*
+       * The two halves of the import, in one transaction (R411, methodology M4).
        *
-       * Merged into the existing `asset` object rather than assigned over it:
-       * `applyEngineInputs` concatenates with jsonb `||`, which replaces a key
-       * wholesale, so writing `{ asset: {…} }` would silently drop whatever an
-       * analyst had already set beside these two.
+       * Revenue lands in `valuation_params` columns and the balance sheet lands
+       * in `engine_inputs`, through two repos that each opened their own
+       * transaction — so the failure this handler's own catch describes was a
+       * *committed* state, not a rolled-back one: "a failure here leaves the
+       * engagement holding the ledger's revenue figures without the balance
+       * sheet they were pulled beside… a run against that state concludes from
+       * half an import." R404 bound the volatility adoption's three writes for
+       * exactly this reason, and `applyEngineInputsWithin` / `patchParamsWithin`
+       * are the doors it opened. This is the same shape one connector over.
        *
-       * Cents to currency units, because the engine works in the latter — the
-       * `_cents` suffix stops at the boundary of this service.
+       * The error is still recorded on the connection and still answered 500,
+       * because the analyst still has to be told the import did not land. What
+       * changes is that "did not land" is now true of the whole of it.
        */
-      const engineInputs: Record<string, unknown> = { accounting_import: financials };
       const sheet = financials.balance_sheet;
-      if (sheet && sheet.total_assets_cents !== null && sheet.total_liabilities_cents !== null) {
-        const existing = ((current?.engine_inputs as Record<string, unknown> | undefined)?.asset ??
-          {}) as Record<string, unknown>;
-        engineInputs.asset = {
-          ...existing,
-          total_assets: sheet.total_assets_cents / 100,
-          total_liabilities: sheet.total_liabilities_cents / 100,
-        };
-      }
       try {
-        await applyEngineInputs(deps.pool, valuation.id, engineInputs, actor);
+        await withTransaction(deps.pool, async (client) => {
+          /*
+           * Read under the row lock, inside the transaction that writes.
+           *
+           * The balance sheet is not just a record — it is the asset approach's
+           * two required inputs. `approaches.asset_value` refuses to run without
+           * `inputs.asset.total_assets` and `inputs.asset.total_liabilities`,
+           * and pulling them from the ledger is the whole point of connecting
+           * the software.
+           *
+           * Merged into the existing `asset` object rather than assigned over
+           * it: `applyEngineInputs` concatenates with jsonb `||`, which replaces
+           * a key wholesale, so writing `{ asset: {…} }` would silently drop
+           * whatever an analyst had already set beside these two. That copy is a
+           * read-modify-write, and it used to read a row fetched before the
+           * patch above — wide enough for a concurrent `PATCH /params` to be
+           * reverted by keys the ledger never mentioned. `lockParams` is
+           * `findParams` under the same `FOR UPDATE` `patchParamsWithin` takes.
+           *
+           * Cents to currency units, because the engine works in the latter —
+           * the `_cents` suffix stops at the boundary of this service.
+           */
+          const current = await lockParams(client, valuation.id);
+          if (Object.keys(paramsPatch).length > 0 && current) {
+            await patchParamsWithin(client, current, paramsPatch, actor);
+          }
+          const engineInputs: Record<string, unknown> = { accounting_import: financials };
+          if (sheet && sheet.total_assets_cents !== null && sheet.total_liabilities_cents !== null) {
+            const existing = ((current?.engine_inputs as Record<string, unknown> | undefined)
+              ?.asset ?? {}) as Record<string, unknown>;
+            engineInputs.asset = {
+              ...existing,
+              total_assets: sheet.total_assets_cents / 100,
+              total_liabilities: sheet.total_liabilities_cents / 100,
+            };
+          }
+          await applyEngineInputsWithin(client, valuation.id, engineInputs, actor);
+        });
       } catch (err) {
         /*
          * The apply half of the import (round 186, methodology M5).
          *
-         * `patchParams` above has already committed — the two writes go to
-         * different columns through different repos, each opening its own
-         * transaction — so a failure here leaves the engagement holding the
-         * ledger's revenue figures without the balance sheet they were pulled
-         * beside. The asset approach reads `inputs.asset.total_assets`; a run
-         * against that state concludes from half an import.
-         *
-         * That is the state on the row. What was on the *screen* was worse:
+         * What was on the *screen* used to be worse than the half-written row:
          * `recordImport` never ran, so the connection went on reporting its
          * last successful import, with no error and no hint that anything had
-         * been half-applied. The analyst's next move is to press Import again
-         * and get the same silence.
+         * failed. The analyst's next move is to press Import again and get the
+         * same silence.
          *
          * Recorded on the connection, like the fetch failure above, and the
          * request is answered with a 500 rather than the fetch handler's 422:
@@ -644,7 +662,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
         });
         req.log.error(
           { err, provider, connectionId: connection.id, valuationId: valuation.id, alert: true },
-          'accounting import applied partway and could not be completed',
+          'accounting import could not be applied to this engagement',
         );
         throw err;
       }

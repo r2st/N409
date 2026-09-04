@@ -518,6 +518,55 @@ describe.skipIf(!dbUp)('accounting routes', () => {
       expect(asset.total_assets).toBe(900_000);
     });
 
+    /**
+     * The two halves of an import are one write or neither (R411, M4).
+     *
+     * Revenue goes into `valuation_params` columns and the balance sheet into
+     * `engine_inputs`, and they used to be two transactions run in order. The
+     * handler's own catch described the result: a failure on the second left
+     * the engagement holding the ledger's revenue without the balance sheet
+     * pulled beside it, and `approaches.asset_value` values on the half that
+     * did land. The request answered 500 — "the import failed" — about a row
+     * the import had already moved.
+     *
+     * Failed at the table, the idiom the callback's store-fails test uses
+     * above: there is no provider payload that makes the second write fail on
+     * its own, since `storableProviderText` already refuses the characters the
+     * driver would, and the faults this is for are a pool that ran out or a
+     * replica in recovery. A `NOT VALID` check on the key only the second write
+     * adds is the same thing to the handler.
+     */
+    it('rolls the revenue back when the balance sheet cannot be written (R411)', async () => {
+      const id = await createValuation('Atomic Import Co');
+      await connect(id);
+      await pool.query(
+        `ALTER TABLE valuation_params ADD CONSTRAINT r411_apply_fails
+           CHECK (NOT (engine_inputs ? 'accounting_import')) NOT VALID`,
+      );
+      let res;
+      try {
+        res = await app.inject({
+          method: 'POST',
+          url: importUrl(id),
+          headers: authHeader(client.token),
+        });
+      } finally {
+        await pool.query('ALTER TABLE valuation_params DROP CONSTRAINT r411_apply_fails');
+      }
+
+      expect(res.statusCode).toBe(500);
+      // Neither half is on the row: not the balance sheet that failed, and not
+      // the revenue that used to commit ahead of it.
+      const params = await findParams(pool, id);
+      expect(params!.ytd_revenue_cents).toBeNull();
+      expect(params!.revenue_status).toBeNull();
+      expect((params!.engine_inputs as Record<string, unknown>).accounting_import).toBeUndefined();
+      // And the connection says so, rather than reporting a successful import.
+      const connection = await findConnection(pool, id, 'xero');
+      expect(connection!.last_import_at).toBeNull();
+      expect(connection!.last_error).toMatch(/failed while applying/i);
+    });
+
     it('renews a spent access token before importing (R252)', async () => {
       // Xero's access token lasts thirty minutes and QuickBooks' an hour, so
       // every import but the first after a connect was a 401 — with the

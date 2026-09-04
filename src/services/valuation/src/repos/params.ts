@@ -213,6 +213,32 @@ export async function findParams(pool: pg.Pool, valuationId: string): Promise<Va
 }
 
 /**
+ * {@link findParams} under the row lock `patchParamsWithin` takes, for a caller
+ * that has to *read* the row before it decides what to write to it.
+ *
+ * The accounting import is the caller. It composes `engine_inputs.asset` by
+ * spreading the block already stored — `applyEngineInputs` merges with jsonb
+ * `||`, which replaces a top-level key wholesale, so the keys an analyst set
+ * beside `total_assets` survive only because the import copies them forward.
+ * Copying them forward from a row read before the write is a read-modify-write
+ * across a gap, and the gap is the rest of the import: a `PATCH /params` that
+ * lands inside it is reverted by figures the analyst never asked to be
+ * reverted by. Reading under `FOR UPDATE`, inside the transaction that then
+ * writes, closes it — a concurrent editor either committed before this read or
+ * waits behind it.
+ */
+export async function lockParams(
+  client: pg.PoolClient,
+  valuationId: string,
+): Promise<ValuationParamsRow | null> {
+  const { rows } = await client.query<ValuationParamsRow>(
+    'SELECT * FROM valuation_params WHERE valuation_id = $1 FOR UPDATE',
+    [valuationId],
+  );
+  return rows[0] ? hydrated(rows[0]) : null;
+}
+
+/**
  * The three columns the monitoring snapshot reads, and nothing else.
  *
  * THE PAGE READ A WHOLE PARAMS ROW TO TAKE TWO REVENUE FIGURES AND A DATE
