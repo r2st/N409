@@ -333,3 +333,94 @@ describe('cell contents', async () => {
     expect(sheets[0]!.rows[0]).toEqual({ alpha: '7', beta: '8' });
   });
 });
+
+/**
+ * What the positional guess counts from (R429, methodology M5).
+ *
+ * The fallback above is right for the file it was written for — a simple
+ * workbook with no relationships part — and it is reached by damaged ones too,
+ * which is where the index it counted from mattered. `sheets.length + 1` is
+ * the number of sheets *paired so far*; it equals the sheet's position only
+ * while nothing is missing, and something missing is the whole reason this
+ * branch runs.
+ *
+ * Both endings are silent. A part that is skipped leaves a picker one tab
+ * short of the workbook the analyst is looking at, which reads as a workbook
+ * with one tab fewer; a part that is paired with the wrong `<sheet>` puts one
+ * tab's name over another's rows, and the analyst then picks "Cap Table" and
+ * imports the P&L. The route only speaks up when nothing pairs at all.
+ */
+describe('a workbook whose parts and declarations do not line up', () => {
+  const labelled = (label: string) =>
+    `<?xml version="1.0"?><worksheet><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t>Holder</t></is></c><c r="B1" t="inlineStr"><is><t>Shares</t></is></c></row>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>${label}</t></is></c><c r="B2"><v>1</v></c></row>
+    </sheetData></worksheet>`;
+
+  const threeTabs = `<?xml version="1.0"?><workbook><sheets>
+      <sheet name="Cap Table" sheetId="1" r:id="rId1"/>
+      <sheet name="Budget" sheetId="2" r:id="rId2"/>
+      <sheet name="P&amp;L" sheetId="3" r:id="rId3"/>
+    </sheets></workbook>`;
+
+  it('keeps a later sheet whose part is present when an earlier one is missing', async () => {
+    const buf = await build({
+      workbook: threeTabs,
+      sheets: [
+        { path: 'xl/worksheets/sheet1.xml', data: labelled('CAP-TABLE') },
+        { path: 'xl/worksheets/sheet3.xml', data: labelled('PROFIT-AND-LOSS') },
+      ],
+    });
+    const sheets = readXlsx(buf);
+    // Counting from the paired total looked for sheet2.xml twice and dropped
+    // the P&L entirely — a workbook read as having one tab.
+    expect(sheets.map((s) => s.name)).toEqual(['Cap Table', 'P&L']);
+    expect(sheets[1]!.rows[0]!.Holder).toBe('PROFIT-AND-LOSS');
+  });
+
+  it('does not slide a tab name onto another tab’s rows', async () => {
+    const buf = await build({
+      workbook: threeTabs,
+      sheets: [{ path: 'xl/worksheets/sheet2.xml', data: labelled('BUDGET-ROW') }],
+    });
+    const sheets = readXlsx(buf);
+    expect(sheets).toHaveLength(1);
+    // The one part in the package is the second tab's, and it is named as such.
+    expect(sheets[0]!.name).toBe('Budget');
+    expect(sheets[0]!.rows[0]!.Holder).toBe('BUDGET-ROW');
+  });
+
+  it('lets a stated pairing outrank a positional guess for the same part', async () => {
+    const buf = await build({
+      workbook: `<?xml version="1.0"?><workbook><sheets>
+          <sheet name="Guessed" sheetId="1"/>
+          <sheet name="Cap Table" sheetId="2" r:id="rId1"/>
+        </sheets></workbook>`,
+      // The relationship names the part the first sheet would otherwise guess.
+      rels: `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`,
+      sheets: [{ path: 'xl/worksheets/sheet1.xml', data: labelled('THE-ONE-PART') }],
+    });
+    const sheets = readXlsx(buf);
+    // One part, one tab — not the same rows twice under two names, one wrong.
+    expect(sheets.map((s) => s.name)).toEqual(['Cap Table']);
+    expect(sheets[0]!.rows[0]!.Holder).toBe('THE-ONE-PART');
+  });
+
+  it('still reads an intact workbook with no relationships part at all', async () => {
+    const buf = await build({
+      workbook: `<?xml version="1.0"?><workbook><sheets>
+          <sheet name="First" sheetId="1"/>
+          <sheet name="Second" sheetId="2"/>
+        </sheets></workbook>`,
+      sheets: [
+        { path: 'xl/worksheets/sheet1.xml', data: labelled('ONE') },
+        { path: 'xl/worksheets/sheet2.xml', data: labelled('TWO') },
+      ],
+    });
+    const sheets = readXlsx(buf);
+    expect(sheets.map((s) => [s.name, s.rows[0]!.Holder])).toEqual([
+      ['First', 'ONE'],
+      ['Second', 'TWO'],
+    ]);
+  });
+});

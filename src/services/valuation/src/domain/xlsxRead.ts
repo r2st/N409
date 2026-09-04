@@ -425,6 +425,34 @@ function parseDateStyles(part: Buffer | undefined): boolean[] {
  * Sheet name → part path, in workbook order. The `r:id` on each `<sheet>` is
  * resolved through the workbook relationships part; sheet order in the XML is
  * not guaranteed to match `worksheets/sheetN.xml` numbering.
+ *
+ * THE POSITION THE GUESS COUNTS FROM (R429, methodology M5). When a `<sheet>`
+ * carries no resolvable `r:id` — no relationships part at all, which is a
+ * simple workbook, or a damaged one — the path is guessed as the Nth
+ * worksheet. `N` was `sheets.length + 1`: the number of sheets *paired so far*,
+ * not the position of the sheet being read. Those two are the same number only
+ * while nothing is missing, and this fallback exists precisely for files where
+ * something is.
+ *
+ * So a workbook declaring `Cap Table`, `Budget`, `P&L` whose package holds
+ * `sheet1.xml` and `sheet3.xml` — a partial download, a repair, an exporter
+ * that skipped a tab — paired `Cap Table` and then looked for `sheet2.xml`
+ * twice, and the P&L was dropped without a word. The route above only speaks
+ * up when *nothing* pairs; a picker one tab short is indistinguishable from a
+ * workbook that has one tab fewer. Reorder the missing part and it is worse
+ * than a loss: the name of one tab arrives over the rows of another, which is
+ * the failure R390 fixed in the AI tier's reader ("confidently pulled share
+ * classes out of a P&L") standing here in the tier where an analyst then picks
+ * a tab by its name and imports it as the cap table.
+ *
+ * Counting from the declared position makes the guess mean what it says — the
+ * Nth sheet of the workbook is `sheetN.xml` — and it is unchanged for every
+ * intact file, where the two counts agree.
+ *
+ * The second half is the same rule from the other side: a guessed path that
+ * another `<sheet>` has already claimed through a *relationship* is not this
+ * sheet's, and taking it would put one part's rows under two tab names, one of
+ * them wrong. It is dropped rather than duplicated.
  */
 function parseSheetIndex(parts: Map<string, Buffer>): Array<{ name: string; path: string }> {
   const workbook = parts.get('xl/workbook.xml');
@@ -438,9 +466,13 @@ function parseSheetIndex(parts: Map<string, Buffer>): Array<{ name: string; path
     if (id && target) rels.set(id, target);
   }
 
-  const sheets: Array<{ name: string; path: string }> = [];
+  // Two passes, because a stated pairing outranks a positional one wherever the
+  // two collide — and a one-pass walk decides that by which tab happens to come
+  // first in the XML.
+  const declared: Array<{ name: string; path: string; stated: boolean }> = [];
   for (const { tag } of elements(workbook.toString('utf8'), 'sheet')) {
-    const name = attr(tag, 'name') ?? `Sheet${sheets.length + 1}`;
+    const position = declared.length + 1;
+    const name = attr(tag, 'name') ?? `Sheet${position}`;
     const rid = attr(tag, 'r:id') ?? attr(tag, 'id');
     const target = rid ? rels.get(rid) : undefined;
     // Targets are relative to xl/ unless rooted at the package root.
@@ -448,8 +480,21 @@ function parseSheetIndex(parts: Map<string, Buffer>): Array<{ name: string; path
       ? target.startsWith('/')
         ? target.slice(1)
         : `xl/${target.replace(/^\.\//, '')}`
-      : `xl/worksheets/sheet${sheets.length + 1}.xml`;
-    if (parts.has(path)) sheets.push({ name, path });
+      : `xl/worksheets/sheet${position}.xml`;
+    declared.push({ name, path, stated: target !== undefined });
+  }
+
+  const claimed = new Set(declared.filter((d) => d.stated).map((d) => d.path));
+  const sheets: Array<{ name: string; path: string }> = [];
+  const taken = new Set<string>();
+  for (const { name, path, stated } of declared) {
+    if (!parts.has(path)) continue;
+    // One part cannot be two tabs: a guess never takes a path a relationship
+    // names, and no path is emitted twice under two names.
+    if (!stated && claimed.has(path)) continue;
+    if (taken.has(path)) continue;
+    taken.add(path);
+    sheets.push({ name, path });
   }
   return sheets;
 }
