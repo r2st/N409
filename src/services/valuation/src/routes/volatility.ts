@@ -4,12 +4,13 @@ import { z } from 'zod';
 import type { AdminEventType } from '../domain/auditTrail.js';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
+import { withTransaction } from '../db/pool.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { applyEngineInputs, findParams, type ValuationParamsRow } from '../repos/params.js';
+import { applyEngineInputsWithin, findParams, type ValuationParamsRow } from '../repos/params.js';
 import { listComparableItems } from '../repos/comparableItems.js';
-import { upsertOverwrite } from '../repos/overwrites.js';
+import { upsertOverwriteWithin } from '../repos/overwrites.js';
 import { OVERWRITE_FIELDS_BY_KEY, validateOverwriteValue } from '../domain/overwrites.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import {
@@ -541,56 +542,94 @@ export function registerVolatilityRoutes(
       }
 
       const before = appliedVolatility(await findParams(deps.pool, valuation.id));
-      await upsertOverwrite(deps.pool, {
-        valuationId: valuation.id,
-        def,
-        value: estimate.recommended,
-        reason:
-          estimate.method === 'manual'
-            ? `Analyst-selected volatility recorded against the peer set (estimate ${estimate.id})`
-            : `Median of ${measuredCount(estimate)} guideline companies, ` +
-              `${isoDate(estimate.window_start)} to ` +
-              `${isoDate(estimate.window_end)} (estimate ${estimate.id})`,
-        originalValue: before,
-        actor: { actorType: 'human', actorId: principal.id },
-      });
 
       /*
-       * The half of "adopt" that reaches the engine.
+       * THE THREE WRITES OF AN ADOPTION ARE ONE DECISION (R404, methodology
+       * M5).
        *
-       * `upsertOverwrite` above writes the override registry — the audit
-       * trail, the "was 0.65, now 0.64" on the overwrites tab, and the
-       * `applied_volatility` this route and the panel both answer with. What
-       * it does not do is change what the calculation runs on: nothing merges
-       * the `overwrites` table into the engine payload. `buildEngineInputs`
-       * (routes/calculations.ts) assembles the run from the stored extraction,
-       * `valuation_params.engine_inputs`, the peer set and the caller's own
-       * body, and never reads an override.
+       * They were three statements on the pool, each in its own transaction,
+       * run in order with nothing holding them together — and the note below
+       * already spells out what any two of them disagreeing looks like:
+       * "adopting a derived sigma moved a number on the volatility screen and
+       * moved nothing else… The screen said 64.0% was applied; the allocation
+       * ran on 65.0%." That was the bug this route was written to close, and a
+       * failure part-way re-opened it exactly:
        *
-       * So adopting a derived sigma moved a number on the volatility screen
-       * and moved nothing else. A recalculation — the one this route's
-       * `recalculation_required` tells the analyst to run — re-read
-       * `engine_inputs.volatility`, found the figure that was there before the
-       * adoption, and concluded the same FMV per share it had already
-       * concluded. The screen said 64.0% was applied; the allocation ran on
-       * 65.0%, and `results.assumptions.volatility` (what the report summary
-       * and Exhibit F actually print) agreed with the allocation. The only
-       * surface that carried the adopted figure was the one that recorded it.
+       *   * `upsertOverwrite` alone — the overwrites tab reports 64.0% imposed
+       *     with a reason naming this estimate, and `engine_inputs.volatility`
+       *     is still 65.0%, so the next calculation concludes the same FMV it
+       *     already had;
+       *   * that and `applyEngineInputs` — the engine now runs the adopted
+       *     figure while `applied_at` still names the previously adopted
+       *     estimate, which is the disagreement
+       *     `markVolatilityEstimateApplied` documents at length.
        *
-       * Written where the engine reads it, with the same `||` merge the
-       * extraction auto-apply uses. No `expectedVersion`: like that path, this
-       * is applying a figure the caller just derived on this engagement rather
-       * than saving a form somebody has been looking at, and the field it
-       * touches is the one the adopted estimate is about.
+       * And the caller is told none of it. A 500 answers "the adoption failed",
+       * which is the one thing that is not true of any of these states, and the
+       * analyst's obvious next move — press Adopt again — reads `before` from
+       * the params the failed attempt already moved, so
+       * `recalculation_required` below comes back `false` for an engagement
+       * whose stored results were struck on the old sigma.
+       *
+       * One transaction, so the three land together or not at all and the 500
+       * means what it says. The `…_applied` admin event stays outside it, with
+       * the other sixty-odd `recordAdminEvent` call sites: no route in this
+       * estate contains that failure, and diverging here would be worse than
+       * the convention.
        */
-      await applyEngineInputs(
-        deps.pool,
-        valuation.id,
-        { volatility: estimate.recommended },
-        { actorType: 'human', actorId: principal.id, source: 'api' },
-      );
+      const applied = await withTransaction(deps.pool, async (client) => {
+        await upsertOverwriteWithin(client, {
+          valuationId: valuation.id,
+          def,
+          value: estimate.recommended,
+          reason:
+            estimate.method === 'manual'
+              ? `Analyst-selected volatility recorded against the peer set (estimate ${estimate.id})`
+              : `Median of ${measuredCount(estimate)} guideline companies, ` +
+                `${isoDate(estimate.window_start)} to ` +
+                `${isoDate(estimate.window_end)} (estimate ${estimate.id})`,
+          originalValue: before,
+          actor: { actorType: 'human', actorId: principal.id },
+        });
 
-      const applied = await markVolatilityEstimateApplied(deps.pool, valuation.id, estimateId, principal.id);
+        /*
+         * The half of "adopt" that reaches the engine.
+         *
+         * `upsertOverwrite` above writes the override registry — the audit
+         * trail, the "was 0.65, now 0.64" on the overwrites tab, and the
+         * `applied_volatility` this route and the panel both answer with. What
+         * it does not do is change what the calculation runs on: nothing merges
+         * the `overwrites` table into the engine payload. `buildEngineInputs`
+         * (routes/calculations.ts) assembles the run from the stored extraction,
+         * `valuation_params.engine_inputs`, the peer set and the caller's own
+         * body, and never reads an override.
+         *
+         * So adopting a derived sigma moved a number on the volatility screen
+         * and moved nothing else. A recalculation — the one this route's
+         * `recalculation_required` tells the analyst to run — re-read
+         * `engine_inputs.volatility`, found the figure that was there before the
+         * adoption, and concluded the same FMV per share it had already
+         * concluded. The screen said 64.0% was applied; the allocation ran on
+         * 65.0%, and `results.assumptions.volatility` (what the report summary
+         * and Exhibit F actually print) agreed with the allocation. The only
+         * surface that carried the adopted figure was the one that recorded it.
+         *
+         * Written where the engine reads it, with the same `||` merge the
+         * extraction auto-apply uses. No `expectedVersion`: like that path, this
+         * is applying a figure the caller just derived on this engagement rather
+         * than saving a form somebody has been looking at, and the field it
+         * touches is the one the adopted estimate is about.
+         */
+        await applyEngineInputsWithin(
+          client,
+          valuation.id,
+          { volatility: estimate.recommended },
+          { actorType: 'human', actorId: principal.id, source: 'api' },
+        );
+
+        return markVolatilityEstimateApplied(client, valuation.id, estimateId, principal.id);
+      });
+
       await audit(valuation, principal, 'volatility_applied', {
         estimate_id: estimateId,
         from: before,

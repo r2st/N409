@@ -304,38 +304,60 @@ export async function applyEngineInputs(
   actor: EventActor,
   options: { expectedVersion?: number } = {},
 ): Promise<ValuationParamsRow> {
+  return withTransaction(pool, (client) =>
+    applyEngineInputsWithin(client, valuationId, inputs, actor, options),
+  );
+}
+
+/**
+ * The body of {@link applyEngineInputs}, on a transaction the caller already
+ * holds.
+ *
+ * Every "adopt this derived figure" route is two or three writes — the engine
+ * input this makes, the registry row beside it, and the `applied_at` that names
+ * which run the engagement is carrying — and the estate has already written
+ * down what happens when they disagree (`markVolatilityEstimateApplied`,
+ * `markRollforwardRunApplied`). They disagree if any of them can land without
+ * the others, so the routes bind them into one transaction and this is the door
+ * that lets them.
+ */
+export async function applyEngineInputsWithin(
+  client: pg.PoolClient,
+  valuationId: string,
+  inputs: Record<string, unknown>,
+  actor: EventActor,
+  options: { expectedVersion?: number } = {},
+): Promise<ValuationParamsRow> {
   const { expectedVersion } = options;
-  return withTransaction(pool, async (client) => {
-    const { rows } = await client.query<ValuationParamsRow>(
-      `UPDATE valuation_params
-       SET engine_inputs = engine_inputs || $2::jsonb, updated_at = now(), version = version + 1
-       WHERE valuation_id = $1${expectedVersion === undefined ? '' : ' AND version = $3'}
-       RETURNING *`,
-      expectedVersion === undefined
-        ? [valuationId, JSON.stringify(inputs)]
-        : [valuationId, JSON.stringify(inputs), expectedVersion],
+  const { rows } = await client.query<ValuationParamsRow>(
+    `UPDATE valuation_params
+     SET engine_inputs = engine_inputs || $2::jsonb, updated_at = now(), version = version + 1
+     WHERE valuation_id = $1${expectedVersion === undefined ? '' : ' AND version = $3'}
+     RETURNING *`,
+    expectedVersion === undefined
+      ? [valuationId, JSON.stringify(inputs)]
+      : [valuationId, JSON.stringify(inputs), expectedVersion],
+  );
+  // Without a version condition the WHERE is the primary key of a row the
+  // route just loaded, so zero rows can only mean the condition failed.
+  if (rows.length === 0) {
+    const { rows: live } = await client.query<{ version: number }>(
+      'SELECT version FROM valuation_params WHERE valuation_id = $1',
+      [valuationId],
     );
-    // Without a version condition the WHERE is the primary key of a row the
-    // route just loaded, so zero rows can only mean the condition failed.
-    if (rows.length === 0) {
-      const { rows: live } = await client.query<{ version: number }>(
-        'SELECT version FROM valuation_params WHERE valuation_id = $1',
-        [valuationId],
-      );
-      if (expectedVersion !== undefined) staleParamsWrite(live[0]?.version, expectedVersion);
-      throw problems.notFound(
-        'This valuation’s parameters no longer exist — the valuation was deleted while this save ' +
-          'was in flight. Nothing was saved.',
-      );
-    }
-    await recordEvent(client, {
-      valuationId,
-      type: PIPELINE_EVENT_TYPES.paramsUpdated,
-      actor,
-      payload: { engine_inputs_applied: inputs },
-    });
-    return hydrated(rows[0]!);
+    if (expectedVersion !== undefined) staleParamsWrite(live[0]?.version, expectedVersion);
+    throw problems.notFound(
+      'This valuation’s parameters no longer exist — the valuation was deleted while this save ' +
+        'was in flight. Nothing was saved.',
+    );
+  }
+  await recordEvent(client, {
+    valuationId,
+    type: PIPELINE_EVENT_TYPES.paramsUpdated,
+    actor,
+    payload: { engine_inputs_applied: inputs },
   });
+  return hydrated(rows[0]!);
 }
 
 export interface PatchParamsOptions {

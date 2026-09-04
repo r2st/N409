@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import type { Queryable } from '../db/pool.js';
 import { newUlid } from '@n409/shared';
 
 /**
@@ -192,7 +193,7 @@ export async function findCurrentVolatilityEstimate(
 }
 
 export async function findVolatilityEstimate(
-  pool: pg.Pool,
+  pool: Queryable,
   valuationId: string,
   id: string,
 ): Promise<VolatilityEstimateRow | null> {
@@ -281,7 +282,7 @@ export async function insertVolatilityEstimate(
  * lives.
  */
 export async function markVolatilityEstimateApplied(
-  pool: pg.Pool,
+  pool: Queryable,
   valuationId: string,
   id: string,
   appliedBy: string | null,
