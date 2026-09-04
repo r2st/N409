@@ -76,7 +76,8 @@ export function AdminDocumentsPage() {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  /** Returns the listing as well as storing it, so `apply` can restore against it. */
+  const load = useCallback(async (): Promise<TriageListing | null> => {
     try {
       setError(null);
       const listing = await api<TriageListing>('/admin/documents/triage');
@@ -85,12 +86,14 @@ export function AdminDocumentsPage() {
       // been filed is gone from the queue, and carrying a stale selection
       // forward would re-submit a decision that has already been made.
       setChoices({});
+      return listing;
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 403
           ? 'Document triage is operations-only.'
           : 'Could not load the triage queue.',
       );
+      return null;
     }
   }, []);
 
@@ -115,24 +118,49 @@ export function AdminDocumentsPage() {
     setBusy(true);
     setNote(null);
     try {
+      const picked = Object.fromEntries(chosen);
       const result = await api<{
         succeeded: number;
         failed: number;
-        results: Array<{ error?: string }>;
+        results: Array<{ document_id: string; ok: boolean; error?: string }>;
       }>('/admin/documents/triage', {
         method: 'POST',
         body: {
           assignments: chosen.map(([document_id, category]) => ({ document_id, category })),
         },
       });
+      const listing = await load();
+      /*
+       * THE FAILED ROWS KEEP THEIR CATEGORY (R422, methodology M5).
+       *
+       * The route answers per row and names each document it could not file.
+       * This handler read the response for two numbers and one message, and
+       * `load` then cleared every choice — including the choices for the rows
+       * that did *not* land. Filing two hundred documents and losing nine of
+       * them to a transient write meant re-reading nine filenames and re-picking
+       * nine categories, with nothing on the page saying which nine.
+       *
+       * Restored only for documents still in the queue: the reset in `load` is
+       * right about the ones that were filed, and a row refused because someone
+       * else triaged it has already left the list.
+       */
+      const stillListed = new Set((listing?.documents ?? []).map((d) => d.id));
+      const retained: Array<[string, string]> = [];
+      for (const r of result.results) {
+        const category = picked[r.document_id];
+        if (!r.ok && category && stillListed.has(r.document_id)) retained.push([r.document_id, category]);
+      }
+      if (retained.length > 0) setChoices(Object.fromEntries(retained));
       setNote(
         result.failed === 0
           ? `Filed ${result.succeeded} document${result.succeeded === 1 ? '' : 's'}.`
           : `${result.succeeded} filed, ${result.failed} failed (${
               result.results.find((r) => r.error)?.error ?? 'see log'
-            }).`,
+            }).` +
+              (retained.length > 0
+                ? ` The ${retained.length === 1 ? 'one still in the queue keeps its' : `${retained.length} still in the queue keep their`} category — press Apply to try again.`
+                : ''),
       );
-      await load();
     } catch (err) {
       setNote(describeActionFailure(err, 'The re-filing failed.'));
     } finally {

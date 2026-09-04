@@ -38,7 +38,16 @@ const CATEGORIES = [
 ];
 
 function mockApi(
-  over: { documents?: unknown[]; total?: number; truncated?: boolean; postStatus?: number } = {},
+  over: {
+    documents?: unknown[];
+    total?: number;
+    truncated?: boolean;
+    postStatus?: number;
+    /** A per-row refusal for a row that stays in the queue (R422). */
+    postResult?: unknown;
+    /** Keep serving the same queue after the POST, as a failed file would. */
+    keepQueue?: boolean;
+  } = {},
 ) {
   const calls: string[] = [];
   const bodies: unknown[] = [];
@@ -52,13 +61,15 @@ function mockApi(
       round += 1;
       const status = over.postStatus ?? 200;
       return jsonResponse(
-        status >= 400 ? { title: 'Forbidden', status } : { succeeded: 1, failed: 0, results: [] },
+        status >= 400
+          ? { title: 'Forbidden', status }
+          : (over.postResult ?? { succeeded: 1, failed: 0, results: [] }),
         status,
       );
     }
     // After a successful file the row is gone from the queue, as the server
     // would report it.
-    const documents = round > 0 ? [] : (over.documents ?? [doc()]);
+    const documents = round > 0 && !over.keepQueue ? [] : (over.documents ?? [doc()]);
     return jsonResponse({
       documents,
       total: over.total ?? documents.length,
@@ -130,6 +141,63 @@ describe('AdminDocumentsPage', () => {
       }),
     );
     expect(await screen.findByText(/Filed 1 document/)).toBeInTheDocument();
+  });
+
+  /**
+   * R422, methodology M5 — a document that could not be filed keeps the bucket
+   * the operator picked for it.
+   *
+   * The route answers per row and names each document it refused. `load` clears
+   * every choice, which is right for the rows that were filed and wrong for the
+   * rows that were not: a two-hundred-document batch that lost nine to a
+   * transient write meant re-reading nine filenames and re-picking nine
+   * categories, with nothing on the page saying which nine.
+   */
+  it('keeps the chosen bucket on a document that could not be filed', async () => {
+    const user = userEvent.setup();
+    const { bodies } = mockApi({
+      keepQueue: true,
+      postResult: {
+        succeeded: 0,
+        failed: 1,
+        results: [
+          {
+            document_id: '01N409DOC00000000000000001',
+            ok: false,
+            error: 'Could not be re-filed — the reason is in the service log.',
+          },
+        ],
+      },
+    });
+    renderPage();
+    await screen.findByText('Bylaws_Amended_2023.pdf');
+    await user.selectOptions(screen.getByLabelText(/File Bylaws_Amended_2023.pdf as/), 'board_resolutions');
+    await user.click(screen.getByRole('button', { name: /^File 1 document$/ }));
+
+    expect(await screen.findByText(/0 filed, 1 failed/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText(/File Bylaws_Amended_2023.pdf as/)).toHaveValue('board_resolutions'),
+    );
+    // …so Apply is armed for exactly that row again, without re-picking.
+    await user.click(screen.getByRole('button', { name: /^File 1 document$/ }));
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]).toEqual({
+      assignments: [{ document_id: '01N409DOC00000000000000001', category: 'board_resolutions' }],
+    });
+  });
+
+  it('still clears the choice for a document that was filed', async () => {
+    const user = userEvent.setup();
+    mockApi();
+    renderPage();
+    await screen.findByText('Bylaws_Amended_2023.pdf');
+    await user.selectOptions(screen.getByLabelText(/File Bylaws_Amended_2023.pdf as/), 'board_resolutions');
+    await user.click(screen.getByRole('button', { name: /^File 1 document$/ }));
+
+    expect(await screen.findByText(/Filed 1 document/)).toBeInTheDocument();
+    // The row left the queue and took its choice with it — nothing is armed.
+    await waitFor(() => expect(screen.getByText(/Nothing to triage/)).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /^File 1 document$/ })).not.toBeInTheDocument();
   });
 
   it('accepts every suggestion in one action when asked', async () => {

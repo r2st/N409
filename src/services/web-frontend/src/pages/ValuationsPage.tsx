@@ -349,12 +349,32 @@ export function ValuationsPage() {
       if (bulkAction === 'assign_reviewer') params.reviewer_id = bulkReviewer.trim() || null;
       const body = { action: bulkAction, valuation_ids: [...selected], params };
       const result = await api<BulkResult>('/valuations/bulk-action', { method: 'POST', body });
+      /*
+       * THE FAILED ROWS STAY SELECTED (R422, methodology M5).
+       *
+       * A bulk action answers per row, so a partial failure is the ordinary
+       * outcome — a stale state on nine of two hundred, a reviewer who lost the
+       * role between loading the list and pressing the button. The response
+       * names each of those rows by id. This handler read the response for two
+       * numbers and one message and then cleared the whole selection, so the
+       * only surviving account of which nine failed was a count: the operator
+       * was told "191 succeeded, 9 failed", handed a reloaded table of two
+       * hundred rows with nothing checked, and left to find the nine by hand.
+       *
+       * Re-selecting exactly the failed ids makes the retry the same gesture as
+       * the first attempt — press the action again — and makes the failed set
+       * visible on the table rather than only countable in a sentence. A clean
+       * run selects nothing, which is the clear-the-selection behaviour that
+       * was there before, arrived at from the data instead of assumed.
+       */
+      const failedIds = result.results.filter((r) => !r.ok).map((r) => r.id);
       setBulkNote(
         result.failed === 0
           ? `Applied to ${result.succeeded} valuation${result.succeeded === 1 ? '' : 's'}.`
-          : `${result.succeeded} succeeded, ${result.failed} failed (${result.results.find((r) => !r.ok)?.error ?? 'see log'}).`,
+          : `${result.succeeded} succeeded, ${result.failed} failed (${result.results.find((r) => !r.ok)?.error ?? 'see log'}). ` +
+              `The ${result.failed === 1 ? 'one that failed is' : 'ones that failed are'} still selected.`,
       );
-      setSelected(new Set());
+      setSelected(new Set(failedIds));
       reload();
       loadCounts();
     } catch (err) {

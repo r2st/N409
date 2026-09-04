@@ -104,15 +104,19 @@ export function AdminDataRemediationPage() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  /** Returns the listing as well as storing it, so `rerun` can prune against it. */
+  const load = useCallback(async (): Promise<Remediation | null> => {
     try {
-      setData(await api<Remediation>('/admin/data-remediation'));
+      const listing = await api<Remediation>('/admin/data-remediation');
+      setData(listing);
+      return listing;
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 403
           ? 'Data remediation is operations-only.'
           : 'Could not load the remediation queues.',
       );
+      return null;
     }
   }, []);
 
@@ -132,19 +136,45 @@ export function AdminDataRemediationPage() {
     setBusy(true);
     setNote(null);
     try {
-      const result = await api<{ succeeded: number; failed: number; results: Array<{ error?: string }> }>(
-        '/admin/data-remediation/rerun',
-        { method: 'POST', body: { valuation_ids: [...selected] } },
-      );
+      const result = await api<{
+        succeeded: number;
+        failed: number;
+        results: Array<{ valuation_id: string; ok: boolean; error?: string }>;
+      }>('/admin/data-remediation/rerun', { method: 'POST', body: { valuation_ids: [...selected] } });
+      /*
+       * The failed rows stay ticked (R422, methodology M5) — see the same note
+       * on `ValuationsPage.applyBulk`.
+       *
+       * The route answers per row and names each one, and a re-run is the batch
+       * most likely to fail in part: it is pressed over a queue of engagements
+       * whose results are stale precisely because something about them changed.
+       * Clearing the whole selection threw away the only account of which ones
+       * failed, on a table with no other mark to find them by.
+       */
+      const failedIds = new Set(result.results.filter((r) => !r.ok).map((r) => r.valuation_id));
+      const listing = await load();
+      /*
+       * Pruned against the reloaded queue, because a re-run that failed on the
+       * gate — "it may have published since this list was loaded" — leaves an
+       * id that no longer has a row. Left in the set it would be a selection
+       * with no checkbox to clear it, counting towards `max_rerun` and towards
+       * the button's own label forever.
+       */
+      const stillListed = listing
+        ? new Set(listing.stale_backsolves.rows.filter((r) => !r.published).map((r) => r.valuation_id))
+        : null;
+      const retained = [...failedIds].filter((id) => stillListed === null || stillListed.has(id));
       setNote(
         result.failed === 0
           ? `Re-ran ${result.succeeded} engagement${result.succeeded === 1 ? '' : 's'}.`
           : `${result.succeeded} re-ran, ${result.failed} failed (${
               result.results.find((r) => r.error)?.error ?? 'see log'
-            }).`,
+            }).` +
+              (retained.length > 0
+                ? ` The ${retained.length === 1 ? 'one still in the queue is' : `${retained.length} still in the queue are`} selected.`
+                : ''),
       );
-      setSelected(new Set());
-      await load();
+      setSelected(new Set(retained));
     } catch (err) {
       setNote(describeActionFailure(err, 'The re-run failed.'));
     } finally {

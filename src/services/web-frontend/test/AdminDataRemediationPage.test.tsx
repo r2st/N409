@@ -122,7 +122,11 @@ describe('AdminDataRemediationPage', () => {
 
   it('reports a partial failure with the reason', async () => {
     mockApi(() =>
-      jsonResponse({ succeeded: 0, failed: 1, results: [{ error: 'params drifted out of range' }] }),
+      jsonResponse({
+        succeeded: 0,
+        failed: 1,
+        results: [{ valuation_id: UNPUBLISHED, ok: false, error: 'params drifted out of range' }],
+      }),
     );
     renderPage();
     await screen.findByText(/#1811 Draft Co/);
@@ -130,6 +134,59 @@ describe('AdminDataRemediationPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /re-run 1 selected/i }));
 
     expect(await screen.findByText(/params drifted out of range/)).toBeInTheDocument();
+  });
+
+  /**
+   * R422, methodology M5. The route answers per row and names each engagement
+   * it could not re-run; the handler cleared the whole selection anyway, so the
+   * failed subset survived only as a number in a sentence.
+   */
+  it('leaves a row that failed the re-run selected, so it can be pressed again', async () => {
+    mockApi(() =>
+      jsonResponse({
+        succeeded: 0,
+        failed: 1,
+        results: [{ valuation_id: UNPUBLISHED, ok: false, error: 'the engine was unreachable' }],
+      }),
+    );
+    renderPage();
+    await screen.findByText(/#1811 Draft Co/);
+    await userEvent.click(screen.getByRole('checkbox', { name: /Draft Co/i }));
+    await userEvent.click(screen.getByRole('button', { name: /re-run 1 selected/i }));
+
+    expect(await screen.findByText(/still in the queue is selected/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /Draft Co/i })).toBeChecked());
+    expect(screen.getByRole('button', { name: /re-run 1 selected/i })).toBeInTheDocument();
+  });
+
+  /**
+   * The other half: a row refused because it published since the list loaded is
+   * gone from the reloaded queue, so keeping it selected would be a tick with
+   * no checkbox — counting towards `max_rerun` and the button's label forever.
+   */
+  it('does not retain a failed row that has left the queue', async () => {
+    mockApi(() =>
+      jsonResponse({
+        succeeded: 0,
+        failed: 1,
+        results: [
+          {
+            valuation_id: PUBLISHED,
+            ok: false,
+            refused: true,
+            error: 'Not in the re-runnable queue — it may have published since this list was loaded.',
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByText(/#1811 Draft Co/);
+    await userEvent.click(screen.getByRole('checkbox', { name: /Draft Co/i }));
+    await userEvent.click(screen.getByRole('button', { name: /re-run 1 selected/i }));
+
+    expect(await screen.findByText(/may have published since this list was loaded/)).toBeInTheDocument();
+    expect(screen.queryByText(/still in the queue/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /Draft Co/i })).not.toBeChecked());
   });
 
   it('shows whether a report was actually rendered from the affected run', async () => {

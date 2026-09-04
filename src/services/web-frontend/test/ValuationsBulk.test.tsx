@@ -52,7 +52,7 @@ const row = (id: string, company: string) => ({
   published_at: null,
 });
 
-function mockApi(opts: { rosterStatus?: number; exportTruncated?: boolean } = {}) {
+function mockApi(opts: { rosterStatus?: number; exportTruncated?: boolean; partialBulk?: boolean } = {}) {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
@@ -62,6 +62,16 @@ function mockApi(opts: { rosterStatus?: number; exportTruncated?: boolean } = {}
       return jsonResponse({ counts: { all: 2, open: 0, in_review: 0, drafted: 0, published: 0, closed: 2 } });
     }
     if (path.includes('/valuations/bulk-action')) {
+      if (opts.partialBulk) {
+        return jsonResponse({
+          results: [
+            { id: VAL_A, ok: true, state: 'review' },
+            { id: VAL_B, ok: false, error: 'This engagement could not be updated.' },
+          ],
+          succeeded: 1,
+          failed: 1,
+        });
+      }
       return jsonResponse({
         results: [
           { id: VAL_A, ok: true, state: 'review' },
@@ -155,6 +165,53 @@ describe('ValuationsPage bulk operations', () => {
         params: { reviewer_id: null },
       });
     });
+  });
+
+  /**
+   * R422, methodology M5 — a partial failure has to leave a retry behind it.
+   *
+   * The route answers per row and names the rows it refused. The handler used
+   * to clear the whole selection regardless, so the only surviving account of
+   * *which* rows failed was the count in the sentence: on a two-hundred-row
+   * batch the operator was handed a reloaded table with nothing ticked.
+   */
+  it('leaves exactly the failed rows selected after a partial bulk failure', async () => {
+    const calls = mockApi({ partialBulk: true });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+    await user.click(screen.getAllByLabelText('Select Beta LLC')[0]!);
+    await user.selectOptions(screen.getByLabelText('Bulk target state'), 'review');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(await screen.findByText(/1 succeeded, 1 failed/)).toBeInTheDocument();
+    // The one that failed, and only it.
+    await waitFor(() => expect(screen.getByText('1 selected')).toBeInTheDocument());
+    expect((screen.getAllByLabelText('Select Beta LLC')[0] as HTMLInputElement).checked).toBe(true);
+    expect((screen.getAllByLabelText('Select Acme Corp')[0] as HTMLInputElement).checked).toBe(false);
+
+    // …so pressing Apply again retries that row and nothing else.
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      const posts = calls.filter((c) => c.url.includes('/valuations/bulk-action'));
+      expect(posts).toHaveLength(2);
+      expect((posts[1]!.body as { valuation_ids: string[] }).valuation_ids).toEqual([VAL_B]);
+    });
+  });
+
+  it('clears the selection when every row succeeded', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+    await user.click(screen.getAllByLabelText('Select Beta LLC')[0]!);
+    await user.selectOptions(screen.getByLabelText('Bulk target state'), 'review');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(await screen.findByText('Applied to 2 valuations.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/ selected$/)).not.toBeInTheDocument());
   });
 
   it('select-all toggles every row on the page', async () => {
