@@ -38,7 +38,7 @@ import {
   retryAfterSecondsFor,
 } from '../clients/deadline.js';
 import { isUniqueViolation } from '../db/pgError.js';
-import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
+import { storeRefreshedTokens, tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -156,14 +156,27 @@ export interface HrisSyncOutcome {
  *     configuration fact rather than something about this connection.
  */
 async function accessTokenFor(
-  deps: { pool: pg.Pool; fetchFn: FetchFn; credentials?: Partial<Record<HrisProvider, ProviderCredentials>> },
+  deps: {
+    pool: pg.Pool;
+    fetchFn: FetchFn;
+    credentials?: Partial<Record<HrisProvider, ProviderCredentials>>;
+    log?: ConnectorLogger;
+  },
   connection: HrisConnectionRow,
 ): Promise<string> {
   if (!tokenNeedsRefresh(connection.token_expires_at)) return connection.access_token;
   const creds = deps.credentials?.[connection.provider];
   if (!creds || !connection.refresh_token) return connection.access_token;
   const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);
-  await updateTokens(deps.pool, connection, refreshed);
+  // Not a bare `await updateTokens(...)`: the exchange above may have retired
+  // the refresh token in the row, so a rejection here loses the only live
+  // credential the connection has. See `storeRefreshedTokens`.
+  await storeRefreshedTokens(refreshed, (tokens) => updateTokens(deps.pool, connection, tokens), {
+    log: deps.log,
+    connectionId: connection.id,
+    provider: connection.provider,
+    family: 'hris',
+  });
   return refreshed.accessToken;
 }
 

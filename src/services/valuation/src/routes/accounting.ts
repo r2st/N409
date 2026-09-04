@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems, type FailureLogger } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signAccountingState, verifyAccountingState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -37,7 +37,7 @@ import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/ret
 import { integrationActorStillAuthorized } from '../domain/integrationActor.js';
 import { logConnectorSyncFailure } from '../domain/connectorSyncLog.js';
 import { describeConnectorFailure, IntegrationError } from '../clients/deadline.js';
-import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
+import { storeRefreshedTokens, tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 import { CONNECTOR_PANELS, notConnected } from '../domain/connectorRefusal.js';
@@ -105,6 +105,8 @@ async function accessTokenFor(
     pool: pg.Pool;
     fetchFn: FetchFn;
     credentials: Partial<Record<AccountingProvider, ProviderCredentials>>;
+    /** Where a credential that could not be stored says so — see below. */
+    log?: FailureLogger;
   },
   connection: AccountingConnectionRow,
 ): Promise<string> {
@@ -112,7 +114,15 @@ async function accessTokenFor(
   const creds = deps.credentials[connection.provider];
   if (!creds || !connection.refresh_token) return connection.access_token;
   const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);
-  await updateTokens(deps.pool, connection.id, refreshed);
+  // Not a bare `await updateTokens(...)`: the exchange above may have retired
+  // the refresh token in the row, so a rejection here loses the only live
+  // credential the connection has. See `storeRefreshedTokens`.
+  await storeRefreshedTokens(refreshed, (tokens) => updateTokens(deps.pool, connection.id, tokens), {
+    log: deps.log,
+    connectionId: connection.id,
+    provider: connection.provider,
+    family: 'accounting',
+  });
   return refreshed.accessToken;
 }
 
@@ -386,7 +396,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
         // credentials for it — in each case the provider gets to give the real
         // answer.
         const accessToken = await accessTokenFor(
-          { pool: deps.pool, fetchFn, credentials: deps.credentials },
+          { pool: deps.pool, fetchFn, credentials: deps.credentials, log: req.log },
           connection,
         );
         financials = await fetchFinancials(

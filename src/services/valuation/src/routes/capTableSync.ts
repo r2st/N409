@@ -44,7 +44,7 @@ import {
   ReconnectRequiredError,
   retryAfterSecondsFor,
 } from '../clients/deadline.js';
-import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
+import { storeRefreshedTokens, tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { CONNECTOR_PANELS, notConnected } from '../domain/connectorRefusal.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
@@ -165,6 +165,7 @@ async function accessTokenFor(
     pool: pg.Pool;
     fetchFn: FetchFn;
     credentials?: Partial<Record<CapTableProvider, ProviderCredentials>>;
+    log?: ConnectorLogger;
   },
   connection: CapTableConnectionRow,
 ): Promise<string> {
@@ -172,7 +173,15 @@ async function accessTokenFor(
   const creds = deps.credentials?.[connection.provider];
   if (!creds || !connection.refresh_token) return connection.access_token;
   const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);
-  await updateTokens(deps.pool, connection, refreshed);
+  // Not a bare `await updateTokens(...)`: the exchange above may have retired
+  // the refresh token in the row, so a rejection here loses the only live
+  // credential the connection has. See `storeRefreshedTokens`.
+  await storeRefreshedTokens(refreshed, (tokens) => updateTokens(deps.pool, connection, tokens), {
+    log: deps.log,
+    connectionId: connection.id,
+    provider: connection.provider,
+    family: 'cap_table',
+  });
   return refreshed.accessToken;
 }
 
