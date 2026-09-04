@@ -129,6 +129,28 @@ export const WEBHOOK_RETRY_BACKOFF_MINUTES: readonly number[] = [1, 5, 30, 120, 
 export const WEBHOOK_MAX_ATTEMPTS = WEBHOOK_RETRY_BACKOFF_MINUTES.length + 1;
 
 /**
+ * The ceiling `partner_webhook_deliveries.max_attempts` is held to by the
+ * table's own CHECK — migration 0103, `CHECK (max_attempts BETWEEN 1 AND 10)`.
+ *
+ * Named here because {@link WEBHOOK_MAX_ATTEMPTS} is *derived* from the ladder
+ * above and goes into that column on every insert, so the two are one
+ * constraint stated in two layers with nothing linking them. Adding five more
+ * backoff steps makes the constant 11, and every `enqueueWebhookDelivery` then
+ * dies on a `23514 check_violation` from the driver — post-commit, on the
+ * announcement path, which is where a failure is a partner event nobody knows
+ * was lost.
+ *
+ * Migration 0139 is the near miss: extending the ladder from three steps to
+ * five needed a migration to raise the column *default* as well, and the person
+ * writing it had to check this CHECK by hand and say so in a comment ("The
+ * CHECK from 0103 already permits up to 10"). `webhookRetryLadder.test.ts` asks
+ * both questions instead — that the constant fits under the CHECK, and that the
+ * column default a new row inherits is the constant — so the next extension
+ * fails a test rather than a partner's deliveries.
+ */
+export const WEBHOOK_MAX_ATTEMPTS_CEILING = 10;
+
+/**
  * How long to wait before attempt number `attemptsMade + 1`, or null when the
  * row is out of attempts and the failure is terminal.
  *
