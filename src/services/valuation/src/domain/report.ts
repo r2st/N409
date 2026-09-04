@@ -122,6 +122,35 @@ export interface ReportContent {
   sections: ReportSection[];
 }
 
+/**
+ * The longest report title the editor accepts, and therefore the longest one
+ * anything is allowed to *generate*.
+ *
+ * A report title is not typed; it is composed. Both generators spell it
+ * `${template.name} — ${company_name}`, so its length is the sum of two other
+ * fields' ceilings and neither of them is 300:
+ *
+ *  - `company_name` is `z.string().trim().min(1).max(300)` on both valuation
+ *    create and patch (routes/valuations.ts);
+ *  - a managed template's `name` is `.max(100)` (routes/templates.ts), and the
+ *    built-in skeletons' names are ours and short.
+ *
+ * 100 + 3 + 300 = 403, and the editor's `PutBody` bounded the title at 300 —
+ * so a company whose name ran past 272 characters got a report whose *own
+ * generated title* the save door refused. The editor round-trips `content`
+ * verbatim, title included, so this landed on the analyst's first save of a
+ * report they had not touched, as a 400 naming `content.title`: a field they
+ * did not write, with no length they could have known to stay under.
+ *
+ * 500 rather than 403 so a longer built-in skeleton name is a rename and not a
+ * regression. This is the *editor's* ceiling, not a second opinion about
+ * either input — the two fields above stay the doors that bound what a person
+ * can type, and this one only has to be wide enough to accept what they add up
+ * to. See {@link instantiateTemplate} and {@link contentFromManagedTemplate}
+ * for the two composers; `reportGeneratedBounds.test.ts` holds them to it.
+ */
+export const REPORT_TITLE_MAX = 500;
+
 export const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   'p',
   'br',

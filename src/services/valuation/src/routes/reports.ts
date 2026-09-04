@@ -9,6 +9,7 @@ import {
   contentFromManagedTemplate,
   DELIVERED_REPORT_STATES,
   instantiateTemplate,
+  REPORT_TITLE_MAX,
   reportStatusFor,
   sanitizeContent,
   templateForKind,
@@ -95,7 +96,7 @@ const PutBody = z
   .object({
     content: z
       .object({
-        title: nonBlankText(1, 300),
+        title: nonBlankText(1, REPORT_TITLE_MAX),
         /*
          * One chapter per key (R419, methodology M19).
          *

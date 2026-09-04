@@ -485,6 +485,10 @@ export function ReportTab() {
               }}
               className="font-display !text-lg font-semibold"
               aria-label="Report title"
+              // The server's own bound (REPORT_TITLE_MAX). A generated title is
+              // already ~400 characters for a long company name, so this stops
+              // a typed one from being refused on save rather than in the box.
+              maxLength={500}
             />
           ) : (
             <h2 className="font-display text-xl font-semibold text-ink-900">{content.title}</h2>
