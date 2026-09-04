@@ -22,6 +22,7 @@ import {
 } from '../repos/projections.js';
 import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { EngineInputsBody } from './engineInputs.js';
 
 /**
  * The financial projection — the build behind the DCF's cash flows.
@@ -236,6 +237,55 @@ function numberList(value: unknown): number[] | null {
   if (!Array.isArray(value)) return null;
   const out = value.map(num);
   return out.every((n): n is number => n !== null) ? out : null;
+}
+
+/**
+ * The fields adoption is about to write, checked against the schema that owns
+ * the document they land in.
+ *
+ * Adoption writes through `applyEngineInputsWithin` — the repo call, not the
+ * route — so `EngineInputsBody` never sees it. That is the same gap the
+ * terminal-metric block below already names ("a value into `engine_inputs` by
+ * the one path that did not check it"), and `terminal_metric` was closed one
+ * field at a time. Two of the other three written fields are still outside it,
+ * and the two schemas disagree about both:
+ *
+ *   * `revenues` is `nonNeg` in `EngineInputsBody`, and the `Line` a
+ *     driver-mode run supplies its revenue on is signed — signed on purpose,
+ *     because `cogs`, `capex` and `nwc` share that type and a negative capex is
+ *     a disposal. So a driver run carrying a revenue year of -100 stores
+ *     cleanly, adopts cleanly, and writes a revenue line the model form then
+ *     refuses. Growth mode cannot produce one: `base_revenue` is positive and
+ *     `_check_growth` floors the rate at -1 for exactly this reason — a rate
+ *     below -100% "flips the sign of the projected revenue every year", which
+ *     the engine calls "a complete, plausible-looking, entirely fictional
+ *     forecast on a 200". Typing the same line by hand was the one way in.
+ *   * `free_cash_flows` is `boundedSigned()` — bounded at `MAX_QUANTITY`,
+ *     above which a double cannot add exactly. `Line` stops at 1e15 and
+ *     `base_revenue` at 1e15, but growth mode *compounds*: `Ratio` runs to 20
+ *     (a bound written for the expense ratios that share the type, where 20x
+ *     revenue is ordinary), and a base of 1e9 grown at a mistyped `2` — 200% a
+ *     year, for the 2% that was meant — reaches 2e23 by year 30. `_finite`
+ *     passes it, because it is finite.
+ *
+ * Either way the run itself is fine and the adoption returns 200. What breaks
+ * is the *next* save of the financial model: `FinancialModelPanel` loads the
+ * whole income section into its form and posts the whole thing back, so
+ * `PATCH /engine-inputs` comes back 422 on `income.revenues` or
+ * `income.free_cash_flows` — an array the analyst never touched, on a form
+ * with no way to correct it. The engagement's model is stuck.
+ *
+ * Refused at adoption instead, naming the field: the analyst is told at the
+ * moment they adopt, about the run they are adopting, and the engagement's
+ * document is left as it was. Only the fields this route writes are checked —
+ * the section it merges into is the analyst's and may hold whatever it held.
+ */
+export function unstorableAdoption(written: Record<string, unknown>): string | null {
+  const parsed = EngineInputsBody.safeParse({ income: written });
+  if (parsed.success) return null;
+  const issue = parsed.error.issues[0];
+  const field = issue && issue.path.length > 0 ? issue.path.join('.') : 'income';
+  return `${field}: ${issue?.message ?? 'invalid value'}`;
 }
 
 /** Would the calculation read different figures than it did before adoption? */
@@ -472,7 +522,8 @@ export function registerProjectionRoutes(
       const terminalEbitda = run.projections.at(-1)?.ebitda ?? null;
 
       income.free_cash_flows = run.free_cash_flows;
-      if (revenues.length === run.free_cash_flows.length) income.revenues = revenues;
+      const wroteRevenues = revenues.length === run.free_cash_flows.length;
+      if (wroteRevenues) income.revenues = revenues;
 
       /*
        * A terminal-year EBITDA of zero or less is not a figure an exit multiple
@@ -493,6 +544,26 @@ export function registerProjectionRoutes(
       const adoptedMetric = terminalEbitda !== null && terminalEbitda > 0 ? terminalEbitda : null;
       income.terminal_metric = adoptedMetric;
       income.terminal_metric_basis = adoptedMetric === null ? null : 'ebitda';
+      /*
+       * The four fields just written, against the schema that owns the
+       * document — see `unstorableAdoption`. Checked after `terminal_metric`
+       * has been settled above, so the one field this route already guards is
+       * guarded once and the other three are guarded at all.
+       */
+      const unstorable = unstorableAdoption({
+        free_cash_flows: income.free_cash_flows,
+        // Only when this adoption set it. A revenue line the *analyst* left in
+        // the section is not this route's to refuse a run over.
+        ...(wroteRevenues ? { revenues: income.revenues } : {}),
+        terminal_metric: income.terminal_metric,
+        terminal_metric_basis: income.terminal_metric_basis,
+      });
+      if (unstorable) {
+        throw problems.unprocessable(
+          `This run cannot be adopted: ${unstorable}. The engagement's forecast is unchanged.`,
+        );
+      }
+
       const afterIncome = adoptedIncome({ income });
 
       /*
