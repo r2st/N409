@@ -371,7 +371,7 @@ def opm_backsolve(
 
     if last_round_pps is not None and last_round_pps > 0 and have_model:
         if share_classes and last_round_class:
-            from .waterfall import class_per_share, normalize_share_classes
+            from .waterfall import class_per_share_objective, normalize_share_classes
 
             target = float(last_round_pps)
             # Normalised before anything reads it. `sum(float(c.get("shares")))`
@@ -396,8 +396,15 @@ def opm_backsolve(
             lo, hi = _bounds(target * max(total_shares, 1.0))
             x0 = last_round_post_money if last_round_post_money and last_round_post_money > 0 else target * total_shares
 
+            # Prepared once rather than per evaluation (R409, M8). The
+            # breakpoint structure is a function of the cap table alone, and
+            # this solver moves only the equity value — see
+            # `waterfall.class_per_share_objective`, which is `class_per_share`
+            # with that structure hoisted out of the loop.
+            per_share = class_per_share_objective(share_classes, last_round_class, t, r, sigma)
+
             def objective(equity: float) -> float:
-                return class_per_share(equity, share_classes, last_round_class, t, r, sigma) - target
+                return per_share(equity) - target
 
             equity, iterations = newton_raphson(objective, x0, tol=1e-7, min_x=lo, max_x=hi)
             result = {
@@ -405,7 +412,7 @@ def opm_backsolve(
                 "method": "backsolve_waterfall",
                 "iterations": iterations,
                 "target_pps": target,
-                "solved_pps": class_per_share(equity, share_classes, last_round_class, t, r, sigma),
+                "solved_pps": per_share(equity),
             }
         elif (
             preferred_shares is not None

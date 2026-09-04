@@ -32,6 +32,7 @@ as a cash inflow.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 from .bs import bs_call, bs_call_delta, bs_call_terms
 from .display_text import quote_for_message
@@ -430,13 +431,23 @@ def _allocate(
     _finite(equity_value, "equity_value")
     if equity_value <= 0:
         raise EngineInputError("equity_value must be positive for the waterfall allocation")
-    # The OPM scalars get the same treatment as every cap-table figure above,
-    # and for the same reason `_finite` documents: they are multiplied into
-    # every tranche, so one NaN here makes the whole allocation NaN and the
-    # run still returns 200 — with `null` where each class's value belongs.
-    # Note the ordering: the finiteness check has to come *first*, because the
-    # positivity check below cannot do it. `NaN <= 0` is False, so a NaN
-    # volatility satisfies "volatility is required" and sails through.
+    _require_opm_scalars(t, r, sigma)
+    normalized = _normalize(classes)
+    segments = _segments(normalized)
+    tranches, values = _price_segments(equity_value, normalized, segments, t, r, sigma)
+    return normalized, segments, tranches, values
+
+
+def _require_opm_scalars(t: float | None, r: float | None, sigma: float | None) -> None:
+    """The three OPM scalars, checked the way every cap-table figure is.
+
+    They are multiplied into every tranche, so one NaN here makes the whole
+    allocation NaN and the run still returns 200 — with `null` where each
+    class's value belongs. Note the ordering: the finiteness check has to come
+    *first*, because the positivity check below cannot do it. `NaN <= 0` is
+    False, so a NaN volatility satisfies "volatility is required" and sails
+    through.
+    """
     if t is None:
         raise EngineInputError("time_to_exit is required for the waterfall allocation")
     _finite(t, "time_to_exit")
@@ -450,9 +461,25 @@ def _allocate(
     _finite(sigma, "volatility")
     if sigma <= 0:
         raise EngineInputError("volatility is required for the waterfall allocation")
-    normalized = _normalize(classes)
-    segments = _segments(normalized)
 
+
+def _price_segments(
+    equity_value: float,
+    normalized: list[dict],
+    segments: list[dict],
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
+) -> tuple[list[float], dict[str, float]]:
+    """The only part of ``_allocate`` that depends on ``equity_value``.
+
+    Split out for ``class_per_share_objective``: the segments are a function of
+    the cap table alone, so a solver that moves only the equity value must not
+    rebuild them. Reads ``normalized`` and ``segments`` and mutates neither, so
+    one prepared pair can be priced at as many equity values as the caller
+    likes.
+    """
+    assert t is not None and r is not None and sigma is not None
     values: dict[str, float] = {c["name"]: 0.0 for c in normalized}
     tranches: list[float] = []
     for seg in segments:
@@ -462,7 +489,7 @@ def _allocate(
         for name, fraction in seg["participants"].items():
             values[name] += tranche * fraction
         tranches.append(tranche)
-    return normalized, segments, tranches, values
+    return tranches, values
 
 
 def allocate_waterfall(
@@ -825,3 +852,54 @@ def class_per_share(
     raise EngineInputError(
         f"share class '{quote_for_message(str(class_name))}' not found in share_classes"
     )
+
+
+def class_per_share_objective(
+    classes: list[dict],
+    class_name: str,
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
+) -> Callable[[float], float]:
+    """``class_per_share`` with the cap table prepared once (R409, M8).
+
+    The backsolve in ``approaches`` moves one number — the equity value — and
+    asks this for the resulting per-share figure. ``_allocate`` re-derived the
+    breakpoint structure on every one of those asks: ``_normalize`` over the raw
+    list and ``_segments``' event loop over the normalised one, neither of which
+    reads ``equity_value`` at all. Newton spends three evaluations per iteration
+    (the value and the two arms of the central difference) and falls back to a
+    bisection of up to 200 more, and ``solved_pps`` is one further call.
+
+    Measured on a 200-class table — the ``MAX_SHARE_CLASSES`` ceiling — the prep
+    is 3.44 ms of a 4.62 ms ``_allocate``, so 74% of the objective was rebuilding
+    what it already had. A four-iteration solve made 12 calls and took 55.0 ms;
+    prepared, it is 15.8 ms. A solve that reaches the bisection fallback pays
+    that difference two hundred times over.
+
+    Two error timings move earlier and neither changes what a caller sees: the
+    OPM scalars and a ``class_name`` that names no class are both properties of
+    the arguments this is built with, so they are raised here rather than on the
+    first evaluation — the same ``EngineInputError`` out of the same request.
+    ``approaches`` already calls ``normalize_share_classes`` before the solve for
+    exactly this reason, so a malformed cap table was surfacing here anyway.
+    """
+    _require_opm_scalars(t, r, sigma)
+    normalized = _normalize(classes)
+    segments = _segments(normalized)
+    target = next((c for c in normalized if c["name"] == class_name), None)
+    if target is None:
+        raise EngineInputError(
+            f"share class '{quote_for_message(str(class_name))}' not found in share_classes"
+        )
+    name = target["name"]
+    shares = target["shares"]
+
+    def per_share(equity_value: float) -> float:
+        _finite(equity_value, "equity_value")
+        if equity_value <= 0:
+            raise EngineInputError("equity_value must be positive for the waterfall allocation")
+        _, values = _price_segments(equity_value, normalized, segments, t, r, sigma)
+        return values[name] / shares
+
+    return per_share
