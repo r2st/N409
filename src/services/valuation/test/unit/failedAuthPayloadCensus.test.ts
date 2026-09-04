@@ -40,6 +40,23 @@ function code(src: string): string {
     .replace(/([^:"'`\\])\/\/[^\n]*/g, (m, p1: string) => p1 + blank(m.slice(1)));
 }
 
+/**
+ * Whether a payload literal carries `field`, written long or short.
+ *
+ * R420. Every matcher here read `field:` alone, so ES6 property shorthand — a
+ * value computed into a `const` above and spread into the object by name — read
+ * as an absent field. R353 did exactly that to the password door: it computed
+ * `reason` once so the audit row and the new sign-in counter could not become
+ * two vocabularies for one thing, and the census that exists to make sure a
+ * failed sign-in says *why* has been red on it ever since, for a defect that is
+ * not there. A guard that has been failing for sixty-odd rounds is a guard
+ * nobody reads, which is the same failure this file was written against one
+ * field over.
+ */
+function carries(payload: string, field: string): boolean {
+  return new RegExp(`\\b${field}\\s*(?::|,|\\})`).test(payload);
+}
+
 interface Site {
   file: string;
   line: number;
@@ -92,15 +109,28 @@ describe('a failed sign-in on the audit spine', () => {
     // address and no reason.
     const mute = found
       .filter((s) => s.type === 'user_login_failed')
-      .filter((s) => !/\breason:/.test(s.payload))
+      .filter((s) => !carries(s.payload, 'reason'))
       .map((s) => `${s.file}:${s.line} ${s.payload.replace(/\s+/g, ' ')}`);
     expect(mute).toEqual([]);
+  });
+
+  it('reads a field written short as well as long', () => {
+    // The pin on `carries`. Both spellings put the field on the row; only one
+    // of them used to count, and the shorthand is what a value computed once
+    // and shared with a second reader looks like.
+    expect(carries("payload: { method: 'password', reason, ip: req.ip }", 'reason')).toBe(true);
+    expect(carries("payload: { method: 'password', reason: 'bad_password' }", 'reason')).toBe(true);
+    expect(carries('payload: { method, reason }', 'reason')).toBe(true);
+    expect(carries("payload: { method: 'password', ip: req.ip }", 'reason')).toBe(false);
+    // And it must not be satisfied by the word appearing as part of another
+    // name, which is what makes it a check rather than a spell-check.
+    expect(carries('payload: { reasonable: true }', 'reason')).toBe(false);
   });
 
   it('says which door, so three of them are not one number', () => {
     const unattributed = found
       .filter((s) => s.type === 'user_login_failed')
-      .filter((s) => !/\bmethod:/.test(s.payload))
+      .filter((s) => !carries(s.payload, 'method'))
       .map((s) => `${s.file}:${s.line} ${s.payload.replace(/\s+/g, ' ')}`);
     expect(unattributed).toEqual([]);
   });
