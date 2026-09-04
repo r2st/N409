@@ -1,8 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
-import { WorkbookTab } from '../src/pages/valuation/WorkbookTab';
+import { WorkbookTab, WorkbookRow } from '../src/pages/valuation/WorkbookTab';
 import type { Valuation } from '../src/lib/types';
 
 const valuation = {
@@ -132,5 +132,71 @@ describe('WorkbookTab', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/not a number/);
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+});
+
+/**
+ * `drafts` is one `Map` shared by every row of the active sheet, and typing
+ * into one cell replaces it wholesale — so with no row-level component
+ * boundary, that keystroke re-rendered every row's JSX, not just the one
+ * being edited. `WorkbookRow` is memoized against exactly that (R425).
+ *
+ * As with `EntriesTable`'s test, this counts actual invocations of the
+ * memoized render function (`WorkbookRow.type`) rather than trusting a DOM
+ * assertion or `React.Profiler`, neither of which can tell "rendered again
+ * with identical output" apart from "did not render again".
+ */
+describe('WorkbookRow', () => {
+  const trueRender = (WorkbookRow as unknown as { type: (props: unknown) => unknown }).type;
+
+  afterEach(() => {
+    (WorkbookRow as unknown as { type: typeof trueRender }).type = trueRender;
+  });
+
+  function spyOnRender() {
+    const spy = vi.fn(trueRender);
+    (WorkbookRow as unknown as { type: typeof trueRender }).type = spy;
+    return spy;
+  }
+
+  const TWO_INPUT_ROWS: typeof SHEETS = [
+    {
+      ...SHEETS[0]!,
+      rows: [
+        {
+          key: 'revenue',
+          label: 'Revenue',
+          kind: 'input',
+          format: 'currency',
+          cells: [{ column_key: 'fy_current', value: 100 }],
+        },
+        {
+          key: 'opex',
+          label: 'Opex',
+          kind: 'input',
+          format: 'currency',
+          cells: [{ column_key: 'fy_current', value: 50 }],
+        },
+      ],
+    },
+  ];
+
+  const callsFor = (spy: ReturnType<typeof spyOnRender>, rowKey: string) =>
+    spy.mock.calls.filter(([props]) => (props as { row: { key: string } }).row.key === rowKey).length;
+
+  it('does not re-render an untouched row when a sibling cell is edited', async () => {
+    const renderSpy = spyOnRender();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ sheets: TWO_INPUT_ROWS }));
+    renderTab();
+
+    await screen.findByLabelText('Revenue fy_current');
+    expect(callsFor(renderSpy, 'opex')).toBe(1);
+    expect(callsFor(renderSpy, 'revenue')).toBe(1);
+
+    await userEvent.type(screen.getByLabelText('Revenue fy_current'), '1');
+    // The edited row redraws (its own draft changed); the sibling row, whose
+    // props are unchanged, must not run its render function again.
+    expect(callsFor(renderSpy, 'revenue')).toBeGreaterThan(1);
+    expect(callsFor(renderSpy, 'opex')).toBe(1);
   });
 });

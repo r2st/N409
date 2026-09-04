@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, apiDownload, describeActionFailure } from '../../lib/api';
 import {
   formatWorkbookValue,
@@ -96,6 +96,110 @@ function AnomalyPanel({
   );
 }
 
+type WorkbookRowData = WorkbookSheet['rows'][number];
+
+/** Whether `highlight` names a cell that belongs to `row` on `sheetKey`. */
+function rowIsHighlighted(highlight: CellKey | null, row: WorkbookRowData, sheetKey: string): boolean {
+  return highlight !== null && row.cells.some((c) => cellKey(sheetKey, row.key, c.column_key) === highlight);
+}
+
+/**
+ * One row of the working model, split out and memoized (R425, methodology
+ * M8).
+ *
+ * `drafts` is one `Map` shared by every cell of every row of the active
+ * sheet, so typing a single digit into one input replaced it wholesale
+ * (`setDraft`'s `new Map(prev)`) and re-rendered `WorkbookTab` — which, with
+ * no component boundary below it, meant re-running the JSX for every sheet,
+ * every row and every cell to redraw the one input the keystroke touched. A
+ * model sheet, the cap table or the waterfall can carry hundreds of rows;
+ * this made every one of them cost the same as the row actually being edited.
+ *
+ * The comparator reads `drafts`, not just its identity — a `Map` gets a new
+ * reference on every keystroke by construction, so a default shallow-props
+ * memo would never bail. It looks up only this row's own cell keys, which is
+ * cheap because `drafts` holds one entry per *unsaved* cell, not one per cell
+ * on the sheet; comparing a few `Map.get`s is far short of rebuilding a row's
+ * `<tr>`. `highlight` gets the same treatment: a row bails on it unless the
+ * old or new value actually names one of its own cells, so moving the
+ * highlight into or out of a row still redraws that row and nothing else.
+ */
+export const WorkbookRow = memo(
+  function WorkbookRow({
+    row,
+    sheetKey,
+    highlight,
+    drafts,
+    onCellChange,
+    onCellFocus,
+  }: {
+    row: WorkbookRowData;
+    sheetKey: string;
+    highlight: CellKey | null;
+    drafts: Map<CellKey, string>;
+    onCellChange: (key: CellKey, raw: string, original: number | null) => void;
+    onCellFocus: () => void;
+  }) {
+    return (
+      <tr className={`border-b border-paper-200 ${row.kind === 'derived' ? 'bg-paper-50' : ''}`}>
+        <td className={`px-4 py-2 ${row.kind === 'derived' ? 'font-semibold text-ink-700' : 'text-ink-800'}`}>
+          {row.label}
+          {row.kind === 'derived' && (
+            <span className="ml-2 rounded bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-500 uppercase">
+              calc
+            </span>
+          )}
+        </td>
+        {row.cells.map((cell) => {
+          const key = cellKey(sheetKey, row.key, cell.column_key);
+          if (row.kind === 'derived') {
+            return (
+              <td key={cell.column_key} className="tnum px-3 py-2 text-right font-medium text-ink-700">
+                {formatWorkbookValue(cell.value, row.format)}
+              </td>
+            );
+          }
+          const draft = drafts.get(key);
+          const display = draft !== undefined ? draft : cell.value === null ? '' : String(cell.value);
+          return (
+            <td key={cell.column_key} className="px-1.5 py-1">
+              <input
+                type="text"
+                inputMode="decimal"
+                aria-label={`${row.label} ${cell.column_key}`}
+                value={display}
+                onChange={(e) => onCellChange(key, e.target.value, cell.value)}
+                onFocus={onCellFocus}
+                className={`tnum w-full rounded border px-2 py-1.5 text-right text-sm focus:border-bond-600 focus:ring-1 focus:ring-bond-600/30 focus:outline-none ${
+                  draft !== undefined
+                    ? 'border-amber-300 bg-amber-50'
+                    : highlight === key
+                      ? 'border-red-400 bg-red-50 ring-1 ring-red-400/30'
+                      : 'border-transparent bg-transparent hover:border-ink-200'
+                }`}
+              />
+            </td>
+          );
+        })}
+      </tr>
+    );
+  },
+  (prev, next) => {
+    if (prev.row !== next.row || prev.sheetKey !== next.sheetKey) return false;
+    if (prev.onCellChange !== next.onCellChange || prev.onCellFocus !== next.onCellFocus) return false;
+    if (prev.highlight !== next.highlight) {
+      const wasHighlighted = rowIsHighlighted(prev.highlight, next.row, next.sheetKey);
+      const isHighlighted = rowIsHighlighted(next.highlight, next.row, next.sheetKey);
+      if (wasHighlighted || isHighlighted) return false;
+    }
+    for (const cell of next.row.cells) {
+      const key = cellKey(next.sheetKey, next.row.key, cell.column_key);
+      if (prev.drafts.get(key) !== next.drafts.get(key)) return false;
+    }
+    return true;
+  },
+);
+
 /**
  * The working model: spreadsheet-style grid per sheet. Input rows are
  * editable; derived rows recompute server-side on save (single source of
@@ -147,6 +251,23 @@ export function WorkbookTab() {
   }, [load, token]);
 
   const sheet = useMemo(() => sheets?.find((s) => s.key === activeSheet) ?? null, [sheets, activeSheet]);
+
+  // Stable across renders so `WorkbookRow`'s memo comparator sees the same
+  // function on every keystroke — a new closure here would fail
+  // `prev.onCellChange !== next.onCellChange` on every row, every time. Kept
+  // above the early returns below: a hook cannot follow a conditional one.
+  const setDraft = useCallback((key: CellKey, raw: string, original: number | null) => {
+    setDrafts((prev) => {
+      const next = new Map(prev);
+      const normalized = raw.trim();
+      const originalText = original === null ? '' : String(original);
+      if (normalized === originalText) next.delete(key);
+      else next.set(key, normalized);
+      return next;
+    });
+  }, []);
+
+  const clearHighlight = useCallback(() => setHighlight(null), []);
   const dirty = drafts.size > 0;
 
   if (error && !sheets) return <LoadError message={error} {...retryProps} />;
@@ -187,17 +308,6 @@ export function WorkbookTab() {
     } finally {
       setExporting(false);
     }
-  };
-
-  const setDraft = (key: CellKey, raw: string, original: number | null) => {
-    setDrafts((prev) => {
-      const next = new Map(prev);
-      const normalized = raw.trim();
-      const originalText = original === null ? '' : String(original);
-      if (normalized === originalText) next.delete(key);
-      else next.set(key, normalized);
-      return next;
-    });
   };
 
   const save = async () => {
@@ -321,56 +431,15 @@ export function WorkbookTab() {
             </thead>
             <tbody>
               {sheet.rows.map((row) => (
-                <tr
+                <WorkbookRow
                   key={row.key}
-                  className={`border-b border-paper-200 ${row.kind === 'derived' ? 'bg-paper-50' : ''}`}
-                >
-                  <td
-                    className={`px-4 py-2 ${row.kind === 'derived' ? 'font-semibold text-ink-700' : 'text-ink-800'}`}
-                  >
-                    {row.label}
-                    {row.kind === 'derived' && (
-                      <span className="ml-2 rounded bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-500 uppercase">
-                        calc
-                      </span>
-                    )}
-                  </td>
-                  {row.cells.map((cell) => {
-                    const key = cellKey(sheet.key, row.key, cell.column_key);
-                    if (row.kind === 'derived') {
-                      return (
-                        <td
-                          key={cell.column_key}
-                          className="tnum px-3 py-2 text-right font-medium text-ink-700"
-                        >
-                          {formatWorkbookValue(cell.value, row.format)}
-                        </td>
-                      );
-                    }
-                    const draft = drafts.get(key);
-                    const display =
-                      draft !== undefined ? draft : cell.value === null ? '' : String(cell.value);
-                    return (
-                      <td key={cell.column_key} className="px-1.5 py-1">
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          aria-label={`${row.label} ${cell.column_key}`}
-                          value={display}
-                          onChange={(e) => setDraft(key, e.target.value, cell.value)}
-                          onFocus={() => setHighlight(null)}
-                          className={`tnum w-full rounded border px-2 py-1.5 text-right text-sm focus:border-bond-600 focus:ring-1 focus:ring-bond-600/30 focus:outline-none ${
-                            draft !== undefined
-                              ? 'border-amber-300 bg-amber-50'
-                              : highlight === key
-                                ? 'border-red-400 bg-red-50 ring-1 ring-red-400/30'
-                                : 'border-transparent bg-transparent hover:border-ink-200'
-                          }`}
-                        />
-                      </td>
-                    );
-                  })}
-                </tr>
+                  row={row}
+                  sheetKey={sheet.key}
+                  highlight={highlight}
+                  drafts={drafts}
+                  onCellChange={setDraft}
+                  onCellFocus={clearHighlight}
+                />
               ))}
             </tbody>
           </table>
