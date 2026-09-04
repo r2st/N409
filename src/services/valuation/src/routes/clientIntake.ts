@@ -42,6 +42,7 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import { ulidField } from '../domain/ulidField.js';
 import { recordThrottleRefusal } from '../observability/requestThrottle.js';
+import { tokenField } from '../domain/credentialFields.js';
 
 /**
  * Firm-branded client intake.
@@ -70,7 +71,7 @@ const CreateBody = z
   })
   .strict();
 
-const TokenBody = z.object({ token: z.string().min(1) });
+const TokenBody = z.object({ token: tokenField() });
 const SaveBody = TokenBody.extend({ answers: IntakeAnswers });
 
 /**

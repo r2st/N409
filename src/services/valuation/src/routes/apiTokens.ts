@@ -22,6 +22,7 @@ import { flagParam } from '../domain/queryFlag.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
+import { presentedPasswordField } from '../domain/credentialFields.js';
 
 /**
  * M3 feature 14 — partner API token management. Tokens are scoped to a
@@ -66,7 +67,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
       );
 
     const parsed = z
-      .object({ name: nonBlankText(1, 200), current_password: z.string().min(1).optional() })
+      .object({ name: nonBlankText(1, 200), current_password: presentedPasswordField().optional() })
       .safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid token', parsed.error);
 

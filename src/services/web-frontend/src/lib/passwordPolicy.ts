@@ -25,6 +25,15 @@
 /** The floor no administrator can go below — see the service module. */
 export const PASSWORD_MIN_LENGTH = 10;
 
+/**
+ * The ceiling, which every password box here also has to apply.
+ *
+ * Unlike the floor there is nothing deployment-specific about it — no system
+ * setting raises or lowers it — so this half knows the real figure and can
+ * refuse without a round trip. See the service module for why it exists.
+ */
+export const PASSWORD_MAX_LENGTH = 1024;
+
 const HAS_LETTER = /[a-zA-Z]/;
 const HAS_DIGIT = /[0-9]/;
 
@@ -47,6 +56,8 @@ export function passwordPolicyError(password: string, label = 'Password'): strin
   if (!password) return `${label} is required.`;
   if (password.length < PASSWORD_MIN_LENGTH)
     return `${label} must be at least ${PASSWORD_MIN_LENGTH} characters.`;
+  if (password.length > PASSWORD_MAX_LENGTH)
+    return `${label} must be at most ${PASSWORD_MAX_LENGTH} characters.`;
   if (!HAS_LETTER.test(password) || !HAS_DIGIT.test(password)) return `${NOT_COMPLEX_MESSAGE}.`;
   return null;
 }

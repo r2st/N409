@@ -35,6 +35,7 @@ import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { presentedPasswordField } from '../domain/credentialFields.js';
 
 /**
  * Self-service account management: the things a signed-in user does to their
@@ -58,7 +59,7 @@ const ProfileBody = z
     timezone: optionalText(100).refine(isKnownTimezone, 'Unknown time zone'),
     email: z.string().email().max(320),
     /** Required only when changing the email of a password account. */
-    current_password: z.string().min(1),
+    current_password: presentedPasswordField(),
   })
   .partial()
   .strict();
@@ -66,14 +67,14 @@ const ProfileBody = z
 const CloseAccountBody = z
   .object({
     /** Required for password accounts; ignored for SSO-only accounts. */
-    current_password: z.string().min(1).optional(),
+    current_password: presentedPasswordField().optional(),
   })
   .strict();
 
 const TokenBody = z.object({
   name: z.string().trim().min(1).max(200),
   /** Required for password accounts; ignored for SSO-only ones. See the mint route. */
-  current_password: z.string().min(1).optional(),
+  current_password: presentedPasswordField().optional(),
 });
 
 function isKnownTimezone(tz: string | null): boolean {

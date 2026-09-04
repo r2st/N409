@@ -18,6 +18,7 @@ import {
   upsertSamlConfig,
 } from '../repos/ssoConfig.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { presentedPasswordField } from '../domain/credentialFields.js';
 
 /**
  * Admin SSO configuration (feature 9): SAML IdP settings + SCIM token
@@ -59,14 +60,14 @@ const ScimTokenBody = z
   .object({
     label: z.string().trim().min(1).max(200).nullish(),
     /** The re-authentication prompt — see the mint route for why it is here. */
-    current_password: z.string().min(1).optional(),
+    current_password: presentedPasswordField().optional(),
   })
   .strict();
 
 const SamlBody = z.object({
   enabled: z.boolean(),
   /** The re-authentication prompt — see the PUT route for why it is here. */
-  current_password: z.string().min(1).optional(),
+  current_password: presentedPasswordField().optional(),
   idp_entity_id: z.string().trim().max(500).nullable().optional(),
   idp_sso_url: httpsUrl(1000).nullable().optional(),
   idp_cert: z.string().trim().max(20000).nullable().optional(),

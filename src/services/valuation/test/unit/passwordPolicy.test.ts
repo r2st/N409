@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   NOT_COMPLEX_MESSAGE,
+  PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   passwordPolicyError,
+  tooLongMessage,
   tooShortMessage,
 } from '../../src/domain/passwordPolicy.js';
 
@@ -16,7 +18,7 @@ import {
  * says so at the moment it happens rather than the moment a user is refused.
  */
 
-const CASES: ReadonlyArray<{ password: string; why: 'short' | 'complexity' | null }> = [
+const CASES: ReadonlyArray<{ password: string; why: 'short' | 'long' | 'complexity' | null }> = [
   { password: '', why: 'short' },
   { password: 'aA1', why: 'short' },
   { password: 'abc123def', why: 'short' },
@@ -28,6 +30,11 @@ const CASES: ReadonlyArray<{ password: string; why: 'short' | 'complexity' | nul
   { password: 'a1        ', why: null },
   { password: '          ', why: 'complexity' },
   { password: 'Correct-Horse-Battery-Staple-7', why: null },
+  // The ceiling (R426). Refused for its length rather than passed to scrypt,
+  // and refused by the schema beside this so the caller is told which field —
+  // the transport's 413 names none.
+  { password: `a1${'x'.repeat(PASSWORD_MAX_LENGTH - 2)}`, why: null },
+  { password: `a1${'x'.repeat(PASSWORD_MAX_LENGTH - 1)}`, why: 'long' },
 ];
 
 describe('passwordPolicyError', () => {
@@ -37,6 +44,8 @@ describe('passwordPolicyError', () => {
       if (why === null) expect(message, JSON.stringify(password)).toBeNull();
       if (why === 'short')
         expect(message, JSON.stringify(password)).toBe(tooShortMessage(PASSWORD_MIN_LENGTH));
+      if (why === 'long')
+        expect(message, `${password.length} characters`).toBe(tooLongMessage(PASSWORD_MAX_LENGTH));
       if (why === 'complexity') expect(message, JSON.stringify(password)).toBe(NOT_COMPLEX_MESSAGE);
     }
   });

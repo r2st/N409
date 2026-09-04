@@ -19,6 +19,7 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { presentedPasswordField } from '../domain/credentialFields.js';
 
 /**
  * Self-service TOTP 2FA enrolment for the signed-in user (feature: MFA/2FA).
@@ -47,7 +48,7 @@ import { invalidBody } from '../domain/validationProblem.js';
  */
 
 const ConfirmBody = z.object({ code: z.string().min(6).max(10) });
-const PasswordBody = z.object({ password: z.string().min(1) });
+const PasswordBody = z.object({ password: presentedPasswordField() });
 
 /**
  * Starting an enrolment is a credential-level action, and it was the one that

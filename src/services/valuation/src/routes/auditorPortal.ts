@@ -30,6 +30,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import { recordThrottleRefusal } from '../observability/requestThrottle.js';
+import { tokenField } from '../domain/credentialFields.js';
 
 /**
  * External auditor portal (feature 8). An ops user (or the valuation owner)
@@ -47,7 +48,7 @@ const CreateBody = z
     expires_in_days: z.number().int().min(1).max(MAX_EXPIRY_DAYS).default(30),
   })
   .strict();
-const RedeemBody = z.object({ token: z.string().min(1) });
+const RedeemBody = z.object({ token: tokenField() });
 
 /**
  * What an auditor can put on the record, and the three things they ever want to
@@ -68,7 +69,7 @@ const DISPOSITIONS = {
 type Disposition = keyof typeof DISPOSITIONS;
 
 const NoteBody = z.object({
-  token: z.string().min(1),
+  token: tokenField(),
   disposition: z.enum(['question', 'change_requested', 'approved']),
   body: z.string().trim().min(1).max(20_000),
 });

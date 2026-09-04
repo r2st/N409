@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NOT_COMPLEX_MESSAGE,
   PASSWORD_HINT,
+  PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   passwordPolicyError,
 } from '../src/lib/passwordPolicy';
@@ -42,6 +43,11 @@ const CASES: ReadonlyArray<{ password: string; why: string | null }> = [
   { password: 'a1        ', why: null }, // spaces count toward length…
   { password: '          ', why: 'complexity' }, // …but are neither a letter nor a digit
   { password: 'Correct-Horse-Battery-Staple-7', why: null },
+  // The ceiling. A password past it is refused for its length, not for the
+  // digit it happens to contain — and refused *here*, so the box says so
+  // rather than the transport answering a fieldless 413 (R426).
+  { password: `a1${'x'.repeat(PASSWORD_MAX_LENGTH - 2)}`, why: null },
+  { password: `a1${'x'.repeat(PASSWORD_MAX_LENGTH - 1)}`, why: 'long' },
 ];
 
 describe('the password rule, in the browser', () => {
@@ -52,6 +58,7 @@ describe('the password rule, in the browser', () => {
       else expect(message, JSON.stringify(password)).not.toBeNull();
       if (why === 'required') expect(message).toBe('Password is required.');
       if (why === 'short') expect(message).toContain(`at least ${PASSWORD_MIN_LENGTH} characters`);
+      if (why === 'long') expect(message).toContain(`at most ${PASSWORD_MAX_LENGTH} characters`);
       if (why === 'complexity') expect(message).toBe(`${NOT_COMPLEX_MESSAGE}.`);
     }
   });
@@ -90,6 +97,10 @@ describe('the two halves have not drifted', () => {
     expect(service).toContain(`export const PASSWORD_MIN_LENGTH = ${PASSWORD_MIN_LENGTH};`);
   });
 
+  it('shares the ceiling', () => {
+    expect(service).toContain(`export const PASSWORD_MAX_LENGTH = ${PASSWORD_MAX_LENGTH};`);
+  });
+
   it('shares the complexity message verbatim', () => {
     // Reused rather than re-worded on purpose: two spellings of one rule is two
     // answers to "why was my password refused", and the user gets whichever
@@ -104,10 +115,10 @@ describe('the two halves have not drifted', () => {
 
   it('has no rule the browser does not also apply', () => {
     // A crude but load-bearing check: the service's error function returns
-    // exactly three things — too short, not complex, and null. A fourth return
-    // is a rule this file knows nothing about, and the form would go on
+    // exactly four things — too short, too long, not complex, and null. A fifth
+    // return is a rule this file knows nothing about, and the form would go on
     // accepting what the server refuses.
     const body = service.slice(service.indexOf('export function passwordPolicyError'));
-    expect(body.match(/\breturn\b/g)?.length).toBe(3);
+    expect(body.match(/\breturn\b/g)?.length).toBe(4);
   });
 });

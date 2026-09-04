@@ -47,6 +47,12 @@ import {
 } from '../repos/users.js';
 import { EmailAddress } from '../domain/email.js';
 import { PASSWORD_MIN_LENGTH, passwordPolicyError } from '../domain/passwordPolicy.js';
+import {
+  issuedCredentialField,
+  newPasswordField,
+  presentedPasswordField,
+  tokenField,
+} from '../domain/credentialFields.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { SlidingWindowRateLimiter } from '../plugins/rateLimit.js';
 import { findUserById } from '../repos/users.js';
@@ -66,19 +72,19 @@ import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 const RegisterBody = z.object({
   email: EmailAddress,
-  password: z.string().min(10, 'password must be at least 10 characters'),
+  password: newPasswordField(),
   first_name: nonBlankText(1, 100).optional(),
   last_name: nonBlankText(1, 100).optional(),
 });
 
 const LoginBody = z.object({
   email: EmailAddress,
-  password: z.string().min(1),
+  password: presentedPasswordField(),
 });
 
 const MfaVerifyBody = z
   .object({
-    challenge: z.string().min(1),
+    challenge: issuedCredentialField(),
     code: z.string().min(6).max(10).optional(),
     backup_code: z.string().min(1).max(20).optional(),
     remember_device: z.boolean().optional(),
@@ -89,23 +95,23 @@ const MfaVerifyBody = z
 
 const ForgotPasswordBody = z.object({ email: EmailAddress });
 
-const VerifyEmailBody = z.object({ token: z.string().min(1) });
+const VerifyEmailBody = z.object({ token: tokenField() });
 
 const ResetPasswordBody = z.object({
-  token: z.string().min(1),
-  password: z.string().min(10, 'password must be at least 10 characters'),
+  token: tokenField(),
+  password: newPasswordField(),
 });
 
 const ChangePasswordBody = z.object({
-  current_password: z.string().min(1),
-  new_password: z.string().min(10, 'password must be at least 10 characters'),
+  current_password: presentedPasswordField(),
+  new_password: newPasswordField(),
 });
 
-const InviteTokenBody = z.object({ token: z.string().min(1) });
+const InviteTokenBody = z.object({ token: tokenField() });
 
 const AcceptInviteBody = z.object({
-  token: z.string().min(1),
-  password: z.string().min(10, 'password must be at least 10 characters'),
+  token: tokenField(),
+  password: newPasswordField(),
   first_name: nonBlankText(1, 100).optional(),
   last_name: nonBlankText(1, 100).optional(),
 });
@@ -646,7 +652,7 @@ export function registerAuthRoutes(
   app.get('/api/v1/auth/google/callback', async (req, reply) => {
     const google = deps.google;
     if (!google) return refuseSso(req, reply, 'not_configured', googleUnconfigured());
-    const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).safeParse(req.query);
+    const query = z.object({ code: issuedCredentialField(), state: issuedCredentialField() }).safeParse(req.query);
     if (!query.success) {
       return refuseSso(req, reply, 'invalid_request', problems.badRequest('Missing code/state'));
     }

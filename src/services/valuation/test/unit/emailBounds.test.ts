@@ -7,6 +7,7 @@ import { EmailAddress, MAX_EMAIL_LENGTH, isStorableEmail } from '../../src/domai
 import { SYSTEM_SETTINGS_SCHEMA, SYSTEM_SETTINGS_DEFAULTS } from '../../src/domain/systemSettings.js';
 import { extractIdentity } from '../../src/routes/saml.js';
 import { sourceFiles } from '../support/sourceFiles.js';
+import { blankNonCode, chainAfter } from '../support/zodChain.js';
 
 /**
  * Every address entering this service is length-bounded.
@@ -98,17 +99,34 @@ describe('no schema accepts an unbounded email', () => {
   ];
   const exempt = new Set(BOUNDED_ELSEWHERE.map((e) => e.file));
 
+  /**
+   * Asked of the expression, not of the line (R426).
+   *
+   * This was `/\.email\(\)/.test(line) && !/\.max\(/.test(line)`, and both
+   * halves were wrong in a way that only shows up on one spelling each.
+   * `cc_emails: z.array(z.string().email()).max(10)` put a `.max(` on the line
+   * — bounding the array at ten entries, not the address inside it — so the one
+   * address schema on this service that was not `EmailAddress` was read as
+   * bounded and never reported. And a `//` comment that mentions `.email()` is
+   * not a schema, which the fix for that field promptly demonstrated.
+   *
+   * `blankNonCode` removes the second, and walking the members chained onto the
+   * `.email()` itself removes the first: the `.max(10)` above is chained onto
+   * `z.array(…)`, so it is not in the address's chain and does not answer for it.
+   */
   function unboundedEmailSites(): string[] {
     const sites: string[] = [];
     for (const file of sourceFiles(SRC)) {
+      const rel = path.relative(SRC, file);
+      if (exempt.has(rel)) continue;
       const source = readFileSync(file, 'utf8');
-      source.split('\n').forEach((line, i) => {
-        if (!/\.email\(\)/.test(line)) return;
-        if (/\.max\(/.test(line)) return;
-        const rel = path.relative(SRC, file);
-        if (exempt.has(rel)) return;
-        sites.push(`${rel}:${i + 1}  ${line.trim()}`);
-      });
+      const code = blankNonCode(source);
+      for (const match of code.matchAll(/\.email\(\)/g)) {
+        const end = match.index! + match[0].length;
+        if (chainAfter(code, end).includes('max')) continue;
+        const line = code.slice(0, match.index!).split('\n').length;
+        sites.push(`${rel}:${line}  ${source.split('\n')[line - 1]!.trim()}`);
+      }
     }
     return sites;
   }
@@ -120,6 +138,26 @@ describe('no schema accepts an unbounded email', () => {
 
   it('leaves none unbounded outside the exemption list', () => {
     expect(unboundedEmailSites()).toEqual([]);
+  });
+
+  /**
+   * The blind spot itself, pinned.
+   *
+   * Without this the fix above is invisible: the sweep passes both before and
+   * after, because the site it could not see is now spelled `EmailAddress` and
+   * is not in the population either way. So the shape is asserted directly —
+   * an array bound must not be read as an address bound.
+   */
+  it('does not read a bound on the array as a bound on the address', () => {
+    const code = blankNonCode('const S = z.object({ cc: z.array(z.string().email()).max(10) });');
+    const at = code.indexOf('.email()') + '.email()'.length;
+    expect(chainAfter(code, at)).toEqual([]);
+    expect(/\.max\(/.test(code)).toBe(true);
+  });
+
+  it('does not read a comment that mentions .email() as a schema', () => {
+    const code = blankNonCode('// `EmailAddress`, not `z.string().email()` — see R426.\nconst x = 1;');
+    expect(code).not.toContain('.email()');
   });
 
   it('keeps the exemption list honest — every entry still has a site', () => {

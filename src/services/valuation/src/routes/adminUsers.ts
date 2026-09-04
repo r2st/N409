@@ -70,6 +70,7 @@ import { nonBlankText } from '../domain/nonBlankText.js';
 import { optionalText } from '../domain/optionalText.js';
 import { ulidField } from '../domain/ulidField.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { newPasswordField, presentedPasswordField } from '../domain/credentialFields.js';
 
 const ListQuery = z.object({
   q: z.string().max(200).optional(),
@@ -82,9 +83,7 @@ const ListQuery = z.object({
 
 const CreateBody = z.object({
   email: EmailAddress,
-  password: z
-    .string()
-    .min(PASSWORD_MIN_LENGTH, `password must be at least ${PASSWORD_MIN_LENGTH} characters`),
+  password: newPasswordField(),
   first_name: nonBlankText(1, 100).optional(),
   last_name: nonBlankText(1, 100).optional(),
   /*
@@ -105,7 +104,7 @@ const CreateBody = z.object({
   verified: z.boolean().optional(),
   roles: RoleSet.min(1),
   /** The *caller's* own password — see REAUTH_PROMPT. Not the new account's. */
-  current_password: z.string().optional(),
+  current_password: presentedPasswordField().optional(),
 });
 
 const PatchBody = z
@@ -190,7 +189,7 @@ const InviteBody = z.object({
   roles: RoleSet.min(1),
   partner_id: ulidField().nullable().optional(),
   /** The caller's own password — see REAUTH_PROMPT. */
-  current_password: z.string().optional(),
+  current_password: presentedPasswordField().optional(),
 });
 
 /**
@@ -1011,7 +1010,14 @@ export function registerAdminUserRoutes(
         prepaid: z.boolean(),
         // Ten is generous for a shared mailbox and low enough that a paste
         // accident cannot turn one state change into a hundred sends.
-        cc_emails: z.array(z.string().email()).max(10),
+        //
+        // `EmailAddress`, not `z.string().email()` (R426). Every other address
+        // on this service is the shared schema, which trims and bounds at 320
+        // characters; this one was neither, so a "me@x.example" with a hundred
+        // kilobytes of local part passed `.email()` and landed in
+        // `partners.cc_emails` — carried onto the envelope of every state-change
+        // mail the firm is copied on from then on.
+        cc_emails: z.array(EmailAddress).max(10),
       })
       .partial()
       .strict()

@@ -26,6 +26,29 @@
 export const PASSWORD_MIN_LENGTH = 10;
 
 /**
+ * The ceiling, which had no counterpart anywhere.
+ *
+ * Every password field on the platform was `z.string().min(10)` with nothing
+ * above it, so the only bound on a password was Fastify's 1 MiB body limit —
+ * and `routes/bodyLimits.ts` already says what is wrong with that: the 413 is
+ * raised by the content-type parser, "so it names no field and quotes no
+ * limit". A password is the one field where a fieldless refusal is worst,
+ * because the caller cannot see what they typed to guess at the cause.
+ *
+ * It also decides how much work an unauthenticated request can buy. `verifyPassword`
+ * feeds the whole string to scrypt, whose first step is a PBKDF2-HMAC-SHA256
+ * pass over it — linear in the length, on the one route (`POST /auth/login`)
+ * that is reachable without a session and is answered before anything else on
+ * the box.
+ *
+ * Deliberately far above any password a person or a manager generates — the
+ * longest generated secret in this codebase is 43 characters, and bcrypt-shaped
+ * systems refuse anything past 72. It exists so the bound is the schema's and
+ * the refusal names the field, not to ration a passphrase.
+ */
+export const PASSWORD_MAX_LENGTH = 1024;
+
+/**
  * Basic complexity: at least one letter and one digit, so "1234567890" and
  * "aaaaaaaaaa" are rejected. Full entropy scoring is overkill for a B2B SaaS,
  * but this catches the low-hanging fruit.
@@ -38,6 +61,11 @@ export function tooShortMessage(min: number): string {
   return `Password must be at least ${min} characters`;
 }
 
+/** The message for a password past {@link PASSWORD_MAX_LENGTH}. */
+export function tooLongMessage(max: number): string {
+  return `Password must be at most ${max} characters`;
+}
+
 /** The message for a password that is long enough but has no letter or no digit. */
 export const NOT_COMPLEX_MESSAGE = 'Password must contain at least one letter and one number';
 
@@ -47,10 +75,12 @@ export const NOT_COMPLEX_MESSAGE = 'Password must contain at least one letter an
  * `min` is the effective floor — `password_min_length` from system settings,
  * which an administrator may raise but not lower past `PASSWORD_MIN_LENGTH`.
  * Length is checked before complexity so a short password is told the shorter
- * truth first.
+ * truth first, and the ceiling is checked with it: a caller who pasted a file
+ * into the box is told that, rather than that it contains no digit.
  */
 export function passwordPolicyError(password: string, min: number = PASSWORD_MIN_LENGTH): string | null {
   if (password.length < min) return tooShortMessage(min);
+  if (password.length > PASSWORD_MAX_LENGTH) return tooLongMessage(PASSWORD_MAX_LENGTH);
   if (!HAS_LETTER.test(password) || !HAS_DIGIT.test(password)) return NOT_COMPLEX_MESSAGE;
   return null;
 }
