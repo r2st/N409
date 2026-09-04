@@ -158,6 +158,7 @@ const Body = z
 const MAX_TSR_PEERS = 50;
 /** Matches the `vars` cap in routes/communications.ts — a bounded key-value map. */
 const MAX_RSU_CONDITIONS = 200;
+const MAX_RSU_CONDITION_KEY_CHARS = 200;
 
 const SettingsBody = z.object({
   company_type: z.enum(['private', 'public']),
@@ -176,7 +177,15 @@ const SettingsBody = z.object({
    * save. A basket that cannot be measured is not a basket worth storing.
    */
   rsu_performance_conditions: z
-    .record(z.unknown())
+    /*
+     * Both axes, which it was one of (R430, methodology M6). `z.record(v)` is
+     * `z.record(z.string(), v)` — the count was bounded and the *key* was not,
+     * so 200 keys of half a kilobyte apiece is the same megabyte of jsonb the
+     * paragraph above is about, re-read on every tab load and re-sent on every
+     * save. 200 characters is far past a condition name; the same figure the
+     * specialty overrides and the instrument terms use for the same reason.
+     */
+    .record(z.string().max(MAX_RSU_CONDITION_KEY_CHARS), z.unknown())
     .refine((v) => Object.keys(v).length <= MAX_RSU_CONDITIONS, {
       message: `At most ${MAX_RSU_CONDITIONS} performance conditions`,
     })

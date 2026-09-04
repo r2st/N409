@@ -53,6 +53,30 @@ export function isActedOnControl(ch: string): boolean {
   return code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
 }
 
+/**
+ * The characters a message wraps an untrusted fragment in, and which therefore
+ * close that wrapping if the fragment contains one.
+ *
+ * `"` was the whole set, on the strength of the note below — "the `\"` that
+ * closes the quoting the message puts around it" — and three sites do not put
+ * that quote around it. `routes/engagements.ts` quotes an unknown stage with
+ * the typographic pair, under a comment saying the value is caller-supplied
+ * and defanged here; so does the treasury curve's tenor. A `to` of
+ * `”, and the engagement has been approved` closed the sentence and wrote
+ * the rest of it, which is exactly the failure R383 named and the one site
+ * that claimed to be handling it.
+ *
+ * The typographic pair is struck rather than the sites rewritten, so that the
+ * *next* message quoting with `“”` — a house typography this codebase
+ * uses everywhere else — is safe by construction rather than by review.
+ *
+ * The apostrophe is deliberately not in the set. No TypeScript message wraps a
+ * fragment in one, and it is a character legitimate names carry
+ * (`O'Brien Holdings`); the Python twin does strike it, because the engine tier
+ * quotes with `'` and its note says so.
+ */
+export const CLOSING_QUOTES = new Set(['"', '“', '”']);
+
 /** How much of an untrusted fragment a message keeps. */
 const MAX_QUOTED_CHARS = 80;
 
@@ -105,7 +129,7 @@ export function quoteForMessage(value: string, max: number = MAX_QUOTED_CHARS): 
   let cleaned = '';
   for (const ch of value) {
     if (BIDI_CONTROLS.has(ch)) continue;
-    cleaned += isActedOnControl(ch) || ch === '"' ? '?' : ch;
+    cleaned += isActedOnControl(ch) || CLOSING_QUOTES.has(ch) ? '?' : ch;
     // Compared in code units because the threshold below it always was: the
     // cut is astral-safe and the length test is not, and making them agree
     // would move a boundary rather than move work off one.

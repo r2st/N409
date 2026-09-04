@@ -78,3 +78,64 @@ describe('treasury_curve maturities', () => {
     expect(res.error?.issues.some((i) => i.path.includes('10y'))).toBe(true);
   });
 });
+
+/**
+ * The other half of naming the key: it is the caller's string, and the message
+ * is ours (R430, methodology M6).
+ *
+ * `echoedRequestValueCensus` holds every refusal that quotes a *path segment*
+ * to `quoteForMessage`, and a curve tenor is a body key -- no schema, no
+ * length, no character set, which is precisely the reason these branches exist
+ * at all.
+ */
+describe('the tenor a refusal quotes is bounded and defanged', () => {
+  const curve = (c: Record<string, number>) =>
+    ParamsPatchBody.safeParse({ wacc_inputs: { treasury_curve: c } });
+  const messages = (c: Record<string, number>) => {
+    const res = curve(c);
+    expect(res.success).toBe(false);
+    return (res.error?.issues ?? []).map((i) => i.message).join('\n');
+  };
+
+  /** U+202E, the override that made an attachment's extension read backwards. */
+  const RLO = '\u202E';
+
+  it('refuses a key too long to be a maturity before it walks it', () => {
+    // The bound is on the record, so a megabyte of key is refused by the schema
+    // rather than cleaned by the message builder.
+    expect(curve({ ['1'.repeat(201)]: 0.04 }).success).toBe(false);
+  });
+
+  it('does not let a tenor close the quoting the sentence puts round it', () => {
+    // The message wraps the key in curly quotes, which are characters a caller
+    // can send. Unquoted, this read as our sentence about a curve we accepted.
+    const text = messages({ '\u201D, and the platform accepts this curve': 0.04 });
+    expect(text).not.toContain('\u201D, and the platform accepts this curve');
+    expect(text).toContain('Treasury-curve keys are maturities in years');
+  });
+
+  it('strikes the controls that reorder or act on the line it is printed on', () => {
+    const text = messages({ [`a${RLO}b`]: 0.04, 'c\u0007d': 0.04 });
+    expect(text).not.toContain(RLO);
+    expect(text).not.toContain('\u0007');
+  });
+
+  /**
+   * Both quoted keys, not only the first: the clash message names two.
+   *
+   * A control cannot appear in a *clashing* key — `Number` refuses it, so the
+   * key never reaches this branch — but length can: 150 leading zeroes parse to
+   * the same 5 as `"5"` does, and the sentence would otherwise carry all of it.
+   */
+  it('bounds both sides of a duplicate-maturity refusal', () => {
+    const padded = `${'0'.repeat(150)}5`;
+    const text = messages({ '5': 0.04, [padded]: 0.041 });
+    expect(text).toContain('are the same maturity');
+    expect(text).not.toContain(padded);
+    expect(text).toContain('\u2026');
+  });
+
+  it('still prints an ordinary tenor as written', () => {
+    expect(messages({ '10y': 0.045 })).toContain('\u201C10y\u201D');
+  });
+});

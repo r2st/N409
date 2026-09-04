@@ -209,7 +209,39 @@ const SERVER_OWNED_PAYLOAD_KEYS = [
 ] as const;
 const SERVER_OWNED_PAYLOAD_KEY_SET: ReadonlySet<string> = new Set(SERVER_OWNED_PAYLOAD_KEYS);
 
-const RunBody = z
+/**
+ * The size of `context`, which round 271 bounded the *authority* of and not the
+ * shape (R430, methodology M6).
+ *
+ * `z.record(z.unknown())` on its own is bounded by nothing but Fastify's 1 MB
+ * body, and this estate has settled that question four times already —
+ * `routes/debt.ts` (`MAX_INSTRUMENT_PARAMS`), `routes/specialty.ts`
+ * (`MAX_SPECIALTY_INPUT_KEYS` / `_KEY_CHARS`), `routes/params.ts`
+ * (`MAX_CUSTOM_RANGES`), `routes/asc718.ts` (`MAX_RSU_CONDITIONS`) — each with
+ * the same sentence about a map bounded only by the transport. This door was
+ * the one written before that rule and never brought under it.
+ *
+ * It does not die with the request either. `context` is spread over the
+ * pipeline payload and POSTed whole to the AI service, where several agents
+ * `json.dumps` the block they were given *before* slicing it into the prompt
+ * (`agents/roll_forward.py`'s `[:12000]`, `report_narrative.py`'s `[:6000]`) —
+ * so the slice bounds what the model is charged for and nothing bounds the
+ * serialisation in front of it. A megabyte of keys nobody reads is a megabyte
+ * encoded here, sent over the wire, decoded there and walked by every agent
+ * that goes looking for its own.
+ *
+ * The value axis stays open, exactly as `InstrumentParams` and the specialty
+ * overrides leave it: what a named block may contain is the agent's question,
+ * and a new agent taking new context without a route change is the whole point
+ * of the field. What is bounded is how many keys there may be and how long a
+ * key may be — 200 characters being far past `prior_valuation`-sized, which is
+ * what `**payload`-shaped lookups on the other side are.
+ */
+export const MAX_CONTEXT_KEYS = 100;
+export const MAX_CONTEXT_KEY_CHARS = 200;
+
+/** Exported for `opaqueMapBounds.test.ts`, which holds every such door to one rule. */
+export const RunBody = z
   .object({
     // Cap-table anonymization (PII redaction) is on unless explicitly disabled.
     anonymize: z.boolean().default(true),
@@ -220,7 +252,10 @@ const RunBody = z
     // service. Kept opaque here so new agents don't need a route change —
     // opaque, but not authoritative: see SERVER_OWNED_PAYLOAD_KEYS.
     context: z
-      .record(z.unknown())
+      .record(z.string().max(MAX_CONTEXT_KEY_CHARS), z.unknown())
+      .refine((ctx) => Object.keys(ctx).length <= MAX_CONTEXT_KEYS, {
+        message: `At most ${MAX_CONTEXT_KEYS} context keys`,
+      })
       .superRefine((ctx, refine) => {
         for (const key of Object.keys(ctx)) {
           if (!SERVER_OWNED_PAYLOAD_KEY_SET.has(key)) continue;

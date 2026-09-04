@@ -11,6 +11,7 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { overwriteBand } from '../domain/overwrites.js';
+import { quoteForMessage } from '../domain/displayText.js';
 
 /**
  * Weights are accepted with up to 4 decimal places and must sum to exactly 1
@@ -124,6 +125,13 @@ const banded = (key: string) => {
   return z.number().min(min).max(max);
 };
 /** Treasury publishes thirteen constant-maturity tenors; 100 leaves room for any of them. */
+/**
+ * How long a key may be on any of this route's persisted maps — the treasury
+ * curve's maturities and the custom market ranges. Both are short engine-facing
+ * names; the figure matches `routes/specialty.ts` and `routes/debt.ts`.
+ */
+const MAX_MAP_KEY_CHARS = 200;
+
 const MAX_CURVE_POINTS = 100;
 
 /**
@@ -160,8 +168,27 @@ const MAX_CURVE_POINTS = 100;
  * all of those except the empty string, which it reads as 0 and which the
  * positivity check then refuses anyway.
  */
+/*
+ * The two refusals below name the key they disliked, and the key is the
+ * caller's (R430, methodology M6).
+ *
+ * `echoedRequestValueCensus` settled this for path segments and could not see
+ * this one: a treasury-curve tenor is a *body* key, and it arrives with no
+ * schema of its own — which is the whole reason these branches exist. Written
+ * raw it was the R383 sentence exactly: the curly quotes the message puts round
+ * it are a character a caller can send, so `{"”, and the platform accepts this
+ * curve": 0.04}` reads as two clauses of which the caller wrote the first; a
+ * bidi control reorders the sentence a person reads; a C0 control is acted on
+ * by whatever terminal a `curl` caller or a partner's integration log is.
+ *
+ * `quoteForMessage` is the estate's answer and bounds all four, length
+ * included — but it bounds what is *printed*, not what it is handed, so the
+ * key carries its own `.max()` as well. Both halves: the record bound keeps a
+ * megabyte off the walk, the quote keeps the sentence the caller's to read and
+ * not to write.
+ */
 const TreasuryCurve = z
-  .record(z.number().min(0).max(1))
+  .record(z.string().max(MAX_MAP_KEY_CHARS), z.number().min(0).max(1))
   .superRefine((curve, ctx) => {
     const keys = Object.keys(curve);
     if (keys.length > MAX_CURVE_POINTS) {
@@ -186,7 +213,7 @@ const TreasuryCurve = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [key],
-          message: `Treasury-curve keys are maturities in years, so “${key}” is not one — a positive number, as in {"5": 0.042}.`,
+          message: `Treasury-curve keys are maturities in years, so “${quoteForMessage(key)}” is not one — a positive number, as in {"5": 0.042}.`,
         });
         continue;
       }
@@ -195,7 +222,7 @@ const TreasuryCurve = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [key],
-          message: `“${key}” and “${clash}” are the same maturity (${maturity}), and two yields at one tenor cannot be interpolated between.`,
+          message: `“${quoteForMessage(key)}” and “${quoteForMessage(clash)}” are the same maturity (${maturity}), and two yields at one tenor cannot be interpolated between.`,
         });
         continue;
       }
@@ -403,7 +430,14 @@ export const ParamsPatchBody = z
     // Same reasoning as `treasury_curve`: persisted jsonb, one entry per market
     // multiple the analyst overrides, and nothing measured the count.
     market_custom_ranges: z
-      .record(z.unknown())
+      /*
+       * And the key, which `z.record(z.unknown())` leaves as a bare
+       * `z.string()` (R430, methodology M6): the count above was the whole
+       * bound, so a hundred keys of ten kilobytes is the megabyte of persisted
+       * jsonb this note is about, re-sent to the engine on every compute. The
+       * key is a market-multiple name — `ev_revenue`-sized.
+       */
+      .record(z.string().max(MAX_MAP_KEY_CHARS), z.unknown())
       .refine((v) => Object.keys(v).length <= MAX_CUSTOM_RANGES, {
         message: `At most ${MAX_CUSTOM_RANGES} custom market ranges`,
       })
