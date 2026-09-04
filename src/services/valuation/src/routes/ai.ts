@@ -300,7 +300,47 @@ export async function encodeDocuments(
   const unreadable: string[] = [];
   const overBudget: string[] = [];
   let budgetUsed = 0;
+  /**
+   * The number of bytes `doc` will add to the request if it is sent.
+   *
+   * Base64 is four characters per three bytes and the JSON string that carries
+   * it needs no escaping, so this is what the request will actually weigh
+   * rather than an estimate of it.
+   */
+  const weighEncoded = (plaintextBytes: number): number => Math.ceil(plaintextBytes / 3) * 4;
+
   for (const doc of eligible) {
+    /*
+     * THE BUDGET DECIDES BEFORE THE READ, NOT AFTER IT (R417, methodology M8).
+     *
+     * `MAX_AI_REQUEST_DOCUMENT_BYTES` bounds what the request carries, and it
+     * was applied to `buf.length` — which exists only because this document had
+     * already been read off disk, decrypted and hashed. So the ten documents
+     * `MAX_AI_DOCUMENTS` admits are 50 MiB of work to fill an 18 MiB budget:
+     * once the budget is full every remaining document is read, AES-opened and
+     * SHA-256'd in full, and then dropped. Measured at the caps — six 5 MiB
+     * documents past a full budget — that is 24.5 ms of event-loop-blocking
+     * decrypt and hash plus 30 MiB of short-lived Buffer, on the request that
+     * starts an AI run.
+     *
+     * `documents.size_bytes` is written as `plain.length` by the upload route
+     * and is the same number `buf.length` reports, so the decision does not need
+     * the bytes to be made. The filter three lines above already trusts it for
+     * the per-document ceiling; this trusts it for the total, and the read's own
+     * check below stays as the authority so a row whose recorded size is wrong
+     * still cannot overrun the budget.
+     *
+     * One consequence, stated rather than discovered later: a document that is
+     * both over budget and corrupt is now counted as over budget instead of
+     * unreadable, because nothing reads it to find out. It was excluded from the
+     * run either way, and `readStoredBlob`'s integrity alert still fires for it
+     * on every reader that does read it — the download route, the report, and
+     * the key-rotation tool.
+     */
+    if (budgetUsed + weighEncoded(Number(doc.size_bytes)) > MAX_AI_REQUEST_DOCUMENT_BYTES) {
+      overBudget.push(doc.id);
+      continue;
+    }
     try {
       const stored = await readFile(path.join(documentsDir, doc.storage_path));
       // `readStoredBlob`, not a bare `decodeFromStorage` (round 223). The
@@ -314,10 +354,10 @@ export async function encodeDocuments(
       // The download route has refused these since round 197; this path, which
       // is the one that feeds a valuation, did not.
       const buf = readStoredBlob(doc, stored, log);
-      // Base64 is four characters per three bytes, and the JSON string that
-      // carries it needs no escaping — so this is the number of bytes the
-      // request will actually weigh, not an estimate of it.
-      const encodedBytes = Math.ceil(buf.length / 3) * 4;
+      // The authoritative check, over the bytes themselves. The pre-check above
+      // is the same arithmetic on `size_bytes` and agrees with this one for
+      // every row the upload route wrote; this is what holds if one disagrees.
+      const encodedBytes = weighEncoded(buf.length);
       if (budgetUsed + encodedBytes > MAX_AI_REQUEST_DOCUMENT_BYTES) {
         // Skipped rather than sent, because sending it makes the *whole*
         // request a 413 and this engagement's analysis fails on every attempt.

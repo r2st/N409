@@ -257,4 +257,88 @@ describe('the request budget the two ceilings did not add up to', () => {
     expect(encoded).toHaveLength(1);
     expect(warns.some((w) => w.msg === 'AI input truncated to the request budget')).toBe(false);
   });
+
+  /**
+   * The budget decides before the read (R417, methodology M8).
+   *
+   * These assertions are about the *work*, and they have to be: the answer is
+   * byte-for-byte the same whichever side of the read the decision is made on,
+   * so nothing about `encoded` or about the tallies could ever have shown that
+   * the three documents past the budget were being read off disk, decrypted and
+   * hashed in full before being dropped. At the caps that is 30 MiB of Buffer
+   * and 24.5 ms of event-loop-blocking crypto per run.
+   *
+   * The discriminator is the absence of the blobs themselves. A reader that
+   * reaches for `big3`..`big5` gets ENOENT and files them as *unreadable*; one
+   * that has already decided they do not fit never touches the disk and files
+   * them as *over budget*. So the pre-fix source fails these by putting three
+   * documents in the wrong bucket, and no mock is involved in saying so.
+   */
+  describe('the documents past the budget are not read', () => {
+    let sparse: string;
+
+    beforeAll(async () => {
+      sparse = await mkdtemp(join(tmpdir(), 'n409-ai-budget-sparse-'));
+      // Only the three that fit exist on disk. The other three are rows whose
+      // blobs this function must never ask for.
+      for (let i = 0; i < 3; i++) {
+        await writeFile(join(sparse, `big${i}.bin`), Buffer.alloc(BIG, 0x61));
+      }
+    });
+
+    afterAll(async () => {
+      await rm(sparse, { recursive: true, force: true });
+    });
+
+    it('never opens a blob it has already decided will not fit', async () => {
+      const { log, warns } = recorder();
+      const encoded = await encodeDocuments(sparse, bigDocs(), log);
+
+      // Output identity with the full directory above — this is the assertion
+      // that makes the two below a statement about work and not about answers.
+      expect(encoded.map((e) => e.id)).toEqual(['big0', 'big1', 'big2']);
+
+      // Filed as over budget, which is what they are.
+      const truncated = warns.find((w) => w.msg === 'AI input truncated to the request budget');
+      expect(truncated!.obj).toMatchObject({ overBudget: 3, eligible: 6, sent: 3 });
+
+      // And not as unreadable, which is what a read of a blob that is not there
+      // would have made them.
+      expect(warns.some((w) => w.msg === 'AI input is missing documents')).toBe(false);
+    });
+
+    it('still reads, and still refuses, a document inside the budget', async () => {
+      // The pre-check must not become the only check: a row that claims to fit
+      // is read, and what the read says about it is what counts. `big3` claims
+      // 5 MiB, fits on its own, and is not on disk.
+      const { log, warns } = recorder();
+      const encoded = await encodeDocuments(sparse, [bigDocs()[3]!], log);
+
+      expect(encoded).toEqual([]);
+      expect(warns.find((w) => w.msg === 'AI input is missing documents')!.obj).toMatchObject({
+        unreadable: 1,
+        eligible: 1,
+        sent: 0,
+      });
+    });
+
+    it('holds the budget against the bytes when the recorded size is wrong', async () => {
+      // `size_bytes` is written as `plain.length` by the upload route, so the
+      // two agree for every row it wrote. If one ever does not, the read's own
+      // check is the authority: three documents that understate themselves as
+      // 1 kB each pass the pre-check and are still cut to what fits.
+      const { log } = recorder();
+      const encoded = await encodeDocuments(
+        sparse,
+        Array.from({ length: 3 }, (_, i) =>
+          doc({ id: `big${i}`, storage_path: `big${i}.bin`, size_bytes: 1024 }),
+        ),
+        log,
+      );
+
+      const bytes = encoded.reduce((n, e) => n + String(e.content_base64).length, 0);
+      expect(bytes).toBeLessThanOrEqual(MAX_AI_REQUEST_DOCUMENT_BYTES);
+      expect(encoded.map((e) => e.id)).toEqual(['big0', 'big1', 'big2']);
+    });
+  });
 });
