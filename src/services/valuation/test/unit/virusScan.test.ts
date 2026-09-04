@@ -187,8 +187,12 @@ const scannerReturning = (verdict: ScanVerdict): VirusScanner => ({
 });
 
 function fakeLog() {
-  const lines: Array<{ obj: Record<string, unknown>; msg: string }> = [];
-  return { lines, warn: (obj: Record<string, unknown>, msg: string) => lines.push({ obj, msg }) };
+  const lines: Array<{ level: 'warn' | 'error'; obj: Record<string, unknown>; msg: string }> = [];
+  return {
+    lines,
+    warn: (obj: Record<string, unknown>, msg: string) => lines.push({ level: 'warn', obj, msg }),
+    error: (obj: Record<string, unknown>, msg: string) => lines.push({ level: 'error', obj, msg }),
+  };
 }
 
 describe('scanUpload', () => {
@@ -258,6 +262,49 @@ describe('scanUpload', () => {
       expect(log.lines[0]!.msg).toBe('virus scan unavailable');
       expect(log.lines[0]!.obj).toMatchObject({ failClosed });
     }
+  });
+
+  /**
+   * R412: the level and the flag, not just the line.
+   *
+   * `warn` in this estate means "a retry is coming" (`shared/failure.ts`), and
+   * nothing retries a dead clamd — fail-open stores the file unscanned for
+   * good, fail-closed sends the analyst back to re-upload, not to restart the
+   * daemon. `alert: true` is the one field `log_alert_lines_total` counts, so
+   * without it the only symptom of a security control that has stopped working
+   * is a line in the journal.
+   */
+  it('alerts on an unavailable scanner rather than warning about it', async () => {
+    for (const failClosed of [true, false]) {
+      const log = fakeLog();
+      await scanUpload(
+        payload,
+        {
+          scanner: scannerReturning({ status: 'error', message: 'clamd down' }),
+          failClosed,
+          log,
+        },
+        { filename: 'f.pdf' },
+      ).catch(() => {});
+      expect(log.lines[0]!.level).toBe('error');
+      expect(log.lines[0]!.obj).toMatchObject({ alert: true, failClosed });
+    }
+  });
+
+  /**
+   * The other half of the same decision: an infected file is the control
+   * *working*, so it stays a warning and carries no alert. Asserted so a later
+   * round does not sweep both onto one level.
+   */
+  it('does not alert on an infected file — the control worked', async () => {
+    const log = fakeLog();
+    await scanUpload(
+      payload,
+      { scanner: scannerReturning({ status: 'infected', signature: 'Eicar' }), failClosed: true, log },
+      { filename: 'model.xlsx' },
+    ).catch(() => {});
+    expect(log.lines[0]!.level).toBe('warn');
+    expect(log.lines[0]!.obj.alert).toBeUndefined();
   });
 
   it('logs a rejection with the filename and signature', async () => {

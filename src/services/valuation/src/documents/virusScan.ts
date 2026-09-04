@@ -158,7 +158,10 @@ export interface ScanPolicy {
    * Set false where availability genuinely outranks the scan.
    */
   failClosed: boolean;
-  log?: { warn: (obj: Record<string, unknown>, msg: string) => void };
+  log?: {
+    warn: (obj: Record<string, unknown>, msg: string) => void;
+    error: (obj: Record<string, unknown>, msg: string) => void;
+  };
 }
 
 /** Thrown for an infected or (when fail-closed) unscannable upload. */
@@ -177,8 +180,9 @@ export class UploadRejected extends Error {
  *
  * A clean verdict and an unconfigured scanner are both silent passes. An
  * infected verdict always throws. An error verdict throws only when fail-closed,
- * and is logged either way — a scanner that has quietly stopped answering is
- * something ops need to see whichever way the policy falls.
+ * and is logged either way — at `error` with `alert: true`, because a scanner
+ * that has quietly stopped answering is something ops need to see whichever way
+ * the policy falls and nothing else is going to tell them.
  */
 export async function scanUpload(
   buffer: Buffer,
@@ -198,12 +202,39 @@ export async function scanUpload(
   }
 
   if (verdict.status === 'error') {
-    policy.log?.warn(
+    /*
+     * THE ONE LINE THIS CONTROL EMITS, AT A LEVEL THAT REACHES SOMEBODY
+     * (R412, methodology M11).
+     *
+     * `ScanPolicy` above says it in as many words — "a control that silently
+     * stops working is worse than no control: nobody notices" — and then the
+     * only thing that happened when it stopped working was a `warn`. In this
+     * estate `warn` carries a written promise: `shared/failure.ts` grades a
+     * transient failure down to `warn` *because the retry is going to handle
+     * it*. Nothing retries this. Fail-open stores the document unscanned and
+     * nothing ever comes back to re-check it; fail-closed refuses the upload,
+     * and the analyst's retry re-runs the upload, not clamd. Either way the
+     * remedy is a person restarting a daemon or fixing a route to it.
+     *
+     * `alert: true` is the estate's one alerting contract and, since R376, the
+     * field `log_alert_lines_total` counts at the logger — so this is the
+     * difference between a rule firing and a line nobody reads. It is stamped
+     * on both arms deliberately: the fail-open arm is the one with no other
+     * symptom at all (the upload succeeds, the card is green, the file is
+     * stored), and the fail-closed arm's 4xx tells the uploader something and
+     * tells operations nothing.
+     *
+     * The infected verdict below keeps `warn`: there the control worked, the
+     * file was refused, and the record wanted is of a rejection rather than of
+     * a broken subsystem.
+     */
+    policy.log?.error(
       {
         filename: context.filename,
         error: verdict.message,
         scanner: policy.scanner.name,
         failClosed: policy.failClosed,
+        alert: true,
       },
       'virus scan unavailable',
     );
