@@ -1,6 +1,13 @@
 import Fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -32,6 +39,37 @@ async function startEngineStub() {
     source: 'fallback',
     warning: 'yfinance is not installed; returning the caller fallback',
   }));
+  // engine/projection.py, in the one mode these tests strike a run in.
+  stub.post('/engine/v1/projection', async (req) => {
+    const { inputs } = req.body as { inputs: Record<string, unknown> };
+    const years = Number(inputs.years ?? 1);
+    const base = Number(inputs.base_revenue);
+    const projections = Array.from({ length: years }, (_, i) => {
+      const revenue = base * 1.2 ** (i + 1);
+      return {
+        year: i + 1,
+        revenue,
+        cogs: revenue * 0.4,
+        opex: revenue * 0.3,
+        ebitda: revenue * 0.3,
+        da: revenue * 0.05,
+        ebit: revenue * 0.25,
+        nopat: revenue * 0.25 * 0.79,
+        capex: revenue * 0.06,
+        delta_nwc: 0,
+        fcff: revenue * 0.2,
+      };
+    });
+    return {
+      method: 'growth',
+      years,
+      tax_rate: 0.21,
+      projections,
+      free_cash_flows: projections.map((p) => p.fcff),
+      terminal_method: null,
+      terminal_value: null,
+    };
+  });
   stub.post('/engine/v1/volatility', async (req) => {
     const body = req.body as { manual_override?: number };
     return {
@@ -164,5 +202,97 @@ describe.skipIf(!dbUp)('an adoption lands whole or not at all (R404)', () => {
       [valuationId],
     );
     expect(events[0]!.n).toBe('0');
+  });
+
+  /*
+   * The projection adoption is the same shape one route over, with two writes
+   * rather than three: `applyEngineInputs` carries the forecast into
+   * `engine_inputs.income`, and `markProjectionApplied` is the only writer of
+   * the column that says which run the engagement is carrying.
+   *
+   * The failure is injected here rather than driven, because there is no
+   * reachable way to fail the second write on its own — the UPDATE names a row
+   * the handler has just read and does not check its own row count. What is
+   * being asserted is the same thing either way: the state the database is left
+   * in when the caller is told the adoption did not happen.
+   */
+  describe('a projection adoption', () => {
+    async function runProjection(valuationId: string): Promise<string> {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/projection/run`,
+        headers: authHeader(ops.token),
+        payload: {
+          method: 'growth',
+          years: 5,
+          base_revenue: 1_000_000,
+          revenue_growth: 0.2,
+          cogs_pct: 0.4,
+          opex_pct: 0.3,
+          da_pct: 0.05,
+          capex_pct: 0.06,
+          nwc_pct: 0.1,
+          tax_rate: 0.21,
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      return res.json().projection.id as string;
+    }
+
+    const adopt = (valuationId: string, projectionId: string) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/projection/${projectionId}/apply`,
+        headers: authHeader(ops.token),
+        payload: {},
+      });
+
+    const storedIncome = async (valuationId: string) => {
+      const { rows } = await ctx.pool.query<{ income: string | null }>(
+        `SELECT engine_inputs->'income' AS income FROM valuation_params WHERE valuation_id = $1`,
+        [valuationId],
+      );
+      return rows[0]!.income;
+    };
+
+    it('carries the forecast and the applied stamp together on the ordinary path', async () => {
+      const valuationId = await newValuation();
+      const projectionId = await runProjection(valuationId);
+
+      const res = await adopt(valuationId, projectionId);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().projection.applied_at).not.toBeNull();
+      expect(await storedIncome(valuationId)).not.toBeNull();
+    });
+
+    it('leaves the engagement on its previous forecast when the applied stamp cannot be written', async () => {
+      const valuationId = await newValuation();
+      const projectionId = await runProjection(valuationId);
+      const before = await storedIncome(valuationId);
+
+      const restore = interceptPoolQueries(ctx.pool, (sql) => {
+        if (sql.includes('UPDATE valuation_projections')) {
+          throw new Error('staged failure on the applied stamp');
+        }
+        return undefined;
+      });
+      try {
+        const res = await adopt(valuationId, projectionId);
+        expect(res.statusCode).toBeGreaterThanOrEqual(500);
+      } finally {
+        restore();
+      }
+
+      // `engine_inputs.income` is what the DCF reads. Carrying this run's cash
+      // flows while `applied_at` names no run — after a response that said the
+      // adoption failed — is a forecast in the valuation that no history
+      // accounts for.
+      expect(await storedIncome(valuationId)).toEqual(before);
+      const { rows } = await ctx.pool.query<{ applied_at: Date | null }>(
+        'SELECT applied_at FROM valuation_projections WHERE id = $1',
+        [projectionId],
+      );
+      expect(rows[0]!.applied_at).toBeNull();
+    });
   });
 });

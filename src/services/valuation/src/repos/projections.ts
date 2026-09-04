@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import type { Queryable } from '../db/pool.js';
 import { newUlid } from '@n409/shared';
 
 /**
@@ -148,7 +149,7 @@ export async function findCurrentProjection(
 }
 
 export async function findProjection(
-  pool: pg.Pool,
+  pool: Queryable,
   valuationId: string,
   id: string,
 ): Promise<ProjectionRow | null> {
@@ -219,7 +220,7 @@ export async function insertProjection(pool: pg.Pool, args: NewProjection): Prom
  * lives.
  */
 export async function markProjectionApplied(
-  pool: pg.Pool,
+  pool: Queryable,
   valuationId: string,
   id: string,
   appliedBy: string | null,

@@ -4,11 +4,12 @@ import { z } from 'zod';
 import type { AdminEventType } from '../domain/auditTrail.js';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
+import { withTransaction } from '../db/pool.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { PROJECTION_TERMINAL_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { applyEngineInputs, findParams } from '../repos/params.js';
+import { applyEngineInputsWithin, findParams } from '../repos/params.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import {
   findProjection,
@@ -494,14 +495,39 @@ export function registerProjectionRoutes(
       income.terminal_metric_basis = adoptedMetric === null ? null : 'ebitda';
       const afterIncome = adoptedIncome({ income });
 
-      await applyEngineInputs(
-        deps.pool,
-        valuation.id,
-        { income },
-        { actorType: 'human', actorId: principal.id, source: 'api' },
-      );
-
-      const applied = await markProjectionApplied(deps.pool, valuation.id, projectionId, principal.id);
+      /*
+       * BOTH WRITES OR NEITHER (R404, methodology M5).
+       *
+       * These were two statements on the pool, each committing on its own, and
+       * the second is the only writer of the column that says which forecast
+       * the engagement is carrying. A failure between them leaves
+       * `engine_inputs.income` holding this run's cash flows — and, where the
+       * terminal-year EBITDA is not positive, holding a `terminal_metric` this
+       * adoption *cleared* — while `applied_at` still names the previously
+       * adopted run, or names nothing at all. The history then reports a
+       * forecast the DCF is not running, which is the disagreement
+       * `markProjectionApplied`'s sibling on the volatility side documents at
+       * length.
+       *
+       * And the caller is told the adoption failed, which is not true of that
+       * state: the engagement's forecast really did move, the cleared terminal
+       * metric really is gone, and nothing revisits an adoption. The response
+       * fields below — `adopted_terminal_metric`, `terminal_metric_warning`,
+       * `recalculation_required` — are the only place any of it is ever said,
+       * and a 500 carries none of them.
+       *
+       * The `projection_applied` admin event stays outside, with the estate's
+       * other `recordAdminEvent` call sites; see `routes/volatility.ts`.
+       */
+      const applied = await withTransaction(deps.pool, async (client) => {
+        await applyEngineInputsWithin(
+          client,
+          valuation.id,
+          { income },
+          { actorType: 'human', actorId: principal.id, source: 'api' },
+        );
+        return markProjectionApplied(client, valuation.id, projectionId, principal.id);
+      });
       await audit(valuation, principal, 'projection_applied', {
         projection_id: projectionId,
         from: before,
