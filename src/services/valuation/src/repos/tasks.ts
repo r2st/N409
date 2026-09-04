@@ -8,6 +8,7 @@ import {
   type ReviewTaskStatus,
 } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
+import { STATE_GROUPS } from '../domain/operations.js';
 
 export interface ReviewTaskRow {
   id: string;
@@ -101,6 +102,18 @@ export interface TaskFilters {
 }
 
 /**
+ * The states a task queue still has work in, as SQL.
+ *
+ * `STATE_GROUPS.closed` rather than three literals, for the reason
+ * `ACTIVE_ENGAGEMENT_WHERE` gives: this is another predicate in the service
+ * asking what "closed" means, and a list spelled once per query is how they
+ * come to disagree.
+ */
+const LIVE_ENGAGEMENT_STATE_SQL = `v.state <> ALL(ARRAY[${STATE_GROUPS.closed
+  .map((s) => `'${s}'`)
+  .join(', ')}]::valuation_state[])`;
+
+/**
  * The ops task queue, and the one queue on this platform that still offered
  * work on engagements the firm had withdrawn.
  *
@@ -121,6 +134,26 @@ export interface TaskFilters {
  * stay `open` past their `due_at` forever, and `overdue` is computed from
  * exactly that. The queue built to show an operator what is late accumulated a
  * floor of work nobody is allowed to finish.
+ *
+ * AND A CALLED-OFF ENGAGEMENT IS THE OTHER HALF OF THAT SENTENCE (round 432,
+ * methodology M3). The paragraph above is about `archived_at`, and R400 wrote
+ * down why that is the rarer half: retirement is the retention sweep's word for
+ * a file withdrawn years later, while `cancelled`, `timeout` and `ignored` —
+ * `STATE_GROUPS.closed`, the three terminal states of `WORKFLOW_TRANSITIONS` —
+ * are how work actually stops, the week a client goes quiet. R400 gave that
+ * question to the pipeline board, the overdue sweep, the pay panel, the monitor
+ * list and the connector cards. This queue got the retirement half in R342 and
+ * was never revisited, so it went on offering the open tasks of engagements
+ * that had been called off — in the status tabs, in the total under them, and
+ * first of all in the overdue tab, since `due_at ASC` sorts a task nobody is
+ * going to do to the top of the list the moment it goes past due.
+ *
+ * Softer than the retirement case in one respect and not in the other: closure
+ * refuses no writes, so an operator who finds one of these *can* clear it —
+ * they simply have no reason to be shown it, exactly as the board has no reason
+ * to show the engagement. Reversible, too, and reversal puts the tasks back
+ * with the clock they had rather than the one that ran while the file was
+ * closed: see `creditClocksForReopen`.
  *
  * NOT APPLIED WHEN THE CALLER NAMES ONE ENGAGEMENT. Both doors that pass a
  * `valuationId` — the engagement's own tasks panel and the console filtered to
@@ -148,7 +181,9 @@ export async function listTasks(
     // drive from `valuations` instead, which is the ordering that index exists
     // to serve. Filtered above the index, the same shape the `status` filter
     // takes there.
-    where.push(`EXISTS (SELECT 1 FROM valuations v WHERE v.id = t.valuation_id AND v.archived_at IS NULL)`);
+    where.push(`EXISTS (SELECT 1 FROM valuations v
+                         WHERE v.id = t.valuation_id AND v.archived_at IS NULL
+                           AND ${LIVE_ENGAGEMENT_STATE_SQL})`);
   }
   if (filters.assigneeId) add('t.assignee_id = ?', filters.assigneeId);
   if (filters.status) add('t.status = ?', filters.status);
