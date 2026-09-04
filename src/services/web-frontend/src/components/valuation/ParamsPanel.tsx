@@ -1380,7 +1380,10 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           {form.dloc_method !== 'studies' && (
             <Field
               label="DLOC (fraction)"
-              hint="0–0.9999."
+              /* The qualitative derivation is the one the engine caps, at
+                 `_MAX_DLOC`; a stated DLOC with no method behind it is applied
+                 as-is and keeps the band the service publishes for the cell. */
+              hint={form.dloc_method === 'qualitative' ? '0–0.95.' : '0–0.9999.'}
               error={dlocQualitativeMissing ? 'Required for the qualitative method.' : errorFor('dloc')}
             >
               <TextInput
@@ -1390,7 +1393,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                    cell, and the figure the engine refuses just past. The box
                    said 0–1 while the service took 0–0.9999 and the Overwrites
                    tab took 0–0.9 (R413). */
-                max={0.9999}
+                max={form.dloc_method === 'qualitative' ? 0.95 : 0.9999}
                 step={0.01}
                 disabled={readOnly || form.dloc_method === 'control_premium'}
                 value={form.dloc}

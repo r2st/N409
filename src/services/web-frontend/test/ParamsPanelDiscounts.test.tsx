@@ -224,6 +224,23 @@ describe('ParamsPanel — DLOC', () => {
     expect(screen.getByText(/required for the qualitative method/i)).toBeInTheDocument();
   });
 
+  /**
+   * R413. The service refuses a qualitative DLOC above `_MAX_DLOC` (0.95) and
+   * takes a stated one with no method behind it up to 0.9999 — the engine
+   * applies the second through an unbounded `_num`. The box offered one number
+   * for both, so the ceiling the analyst was working to depended on a dropdown
+   * beside it and was never shown.
+   */
+  it('narrows the discount box to what the qualitative derivation allows', async () => {
+    mockApi();
+    render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
+    const box = (await screen.findByTestId('dloc')) as HTMLInputElement;
+    expect(box.max).toBe('0.9999');
+    await userEvent.selectOptions(screen.getByTestId('dloc-method'), 'qualitative');
+    expect((screen.getByTestId('dloc') as HTMLInputElement).max).toBe('0.95');
+    expect(screen.getByText(/0–0\.95\./)).toBeInTheDocument();
+  });
+
   it('swaps the discount box for the study statistic', async () => {
     mockApi();
     render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
