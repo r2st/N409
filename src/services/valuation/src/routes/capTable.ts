@@ -24,7 +24,7 @@ import { findCapTable, saveCapTable } from '../repos/capTables.js';
 import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { TRANSACTION_PAGE_LIMIT, listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
-import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
+import { bufferUpload, soleUpload } from './uploadLimits.js';
 import { safeFilename } from '../documents/filename.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
@@ -260,10 +260,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!canEdit(principal, valuation))
       throw problems.forbidden('Only the client or ops can import a cap table');
 
-    const file = await req.file({
-      limits: { fileSize: MAX_CAP_TABLE_UPLOAD_BYTES, files: 1, ...UPLOAD_FIELD_LIMITS },
-    });
-    if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
+    const { file, refuseIfMore } = await soleUpload(req, { fileSize: MAX_CAP_TABLE_UPLOAD_BYTES });
 
     const buffer = await bufferUpload(file, MAX_CAP_TABLE_UPLOAD_BYTES);
     // Scrubbed once, here, because every use of it below is a sentence somebody
@@ -274,6 +271,11 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // in at. `safeFilename` is what the document upload passes the same value
     // through; see documents/filename.ts.
     const filename = safeFilename(file.filename ?? 'upload');
+    // A second file here is not the silent data loss it is on the document
+    // upload — nothing is stored on this path — but it is the same lie: the
+    // client is handed the first file's sheets and told nothing about the
+    // spreadsheet it also sent. See `soleUpload`.
+    await refuseIfMore(filename);
     if (buffer.length === 0) {
       // The same condition the document upload answers, on the sibling path
       // that was left saying "Uploaded file is empty" — three words that name

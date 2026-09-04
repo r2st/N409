@@ -35,7 +35,7 @@ import { normalizeMediaType } from '../documents/mediaType.js';
 import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusScan.js';
 import { encodeForStorage } from '../storage/documentEncryption.js';
 import { readStoredBlob, writeBlobAtomically } from '../storage/blobFile.js';
-import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
+import { bufferUpload, soleUpload } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
@@ -290,13 +290,12 @@ export function registerDocumentRoutes(
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
     refuseIfRetired(valuation, 'accepting documents');
 
-    // Field caps repeated here rather than left to the plugin registration:
-    // per-call `limits` and plugin `limits` are merged by @fastify/multipart,
-    // but the protection belongs where the upload is, not one file away.
-    const file = await req.file({
-      limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1, ...UPLOAD_FIELD_LIMITS },
-    });
-    if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
+    // Field caps live in `soleUpload` rather than being left to the plugin
+    // registration: per-call `limits` and plugin `limits` are merged by
+    // @fastify/multipart, but the protection belongs where the upload is, not
+    // one file away. `soleUpload` is also what notices a second file, which
+    // `req.file()` silently dropped — see routes/uploadLimits.ts.
+    const { file, refuseIfMore } = await soleUpload(req, { fileSize: MAX_DOCUMENT_BYTES });
 
     // Either axis, or both: an API caller thinks in kinds, the person clicking
     // "Monthly income statements" in the intake UI has never heard of one.
@@ -337,6 +336,10 @@ export function registerDocumentRoutes(
         { filename: named },
       );
     }
+
+    // Before the type check and well before anything reaches disk: a request
+    // offering two documents is refused whole rather than half-stored.
+    await refuseIfMore(safeFilename(file.filename));
 
     // Confirm the bytes match the declared type before the file can feed the AI
     // pipeline or be served back (audit B-1 P2).

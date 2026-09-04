@@ -22,6 +22,8 @@
  * takes one file and nothing else. Eight fields of a kilobyte is generous
  * against both and still four orders of magnitude below what was reachable.
  */
+import type { FastifyRequest } from 'fastify';
+import type { MultipartFile } from '@fastify/multipart';
 import { problems } from '@n409/shared';
 
 export const UPLOAD_FIELD_LIMITS = {
@@ -97,4 +99,70 @@ export async function bufferUpload(
         'This is usually a dropped connection rather than a problem with the file; upload it again.',
     );
   }
+}
+
+/**
+ * The one file an upload route takes, plus the question "was there another?".
+ *
+ * Both upload routes read the body with `req.file({ limits: { files: 1 } })`,
+ * which reads as "at most one file" and is not what it does. `req.file` walks
+ * the parts and *returns at the first one that has a file*; the rest of the
+ * body is never asked for, so busboy's `filesLimit` never fires and nothing
+ * anywhere sees the second file. A request carrying two documents therefore
+ * stored the first and answered `201 { document }` — a success naming one file
+ * for a request that offered two (R419, methodology M19).
+ *
+ * Silence is the whole cost. The response body is a document, so a client
+ * looping over its own file list sees a 201 per request and no reason to look
+ * again; the analyst sees an intake bucket short of a file that was sent; and
+ * the surface that would show the gap — the document list — is the one nobody
+ * rereads after an upload reports success. The multipart shape is not exotic
+ * either: it is what `<input type="file" multiple>` produces, and what
+ * `curl -F file=@a.pdf -F file=@b.pdf` produces.
+ *
+ * `files: 2` rather than 1, so the second part is parsed far enough to be
+ * *noticed*. The ceiling that bound exists for is the size of the whole body,
+ * which `parts`, `fields` and `fileSize` hold between them; one extra part is
+ * what turns a silent drop into a sentence, and nothing past the second is ever
+ * reached because {@link SoleUpload.refuseIfMore} throws at it.
+ *
+ * Two steps rather than one because the order is forced: the part stream has to
+ * be drained before the parser will advance, so "is there another file?" can
+ * only be asked after the first file has been read into memory — and it has to
+ * be asked before anything is written. Both callers sit exactly between those.
+ *
+ * Asking it does mean the handler now waits for the end of the body rather than
+ * returning at the first file, which for a body that stops half-sent is a wait
+ * on Node's own `server.requestTimeout`. That is the right side to be on: a
+ * half-sent multipart request is a broken upload, and the alternative is
+ * storing a document out of a request nobody finished. What is left of the body
+ * after the file has been read is a boundary line, or the second file this
+ * exists to refuse.
+ */
+export interface SoleUpload {
+  file: MultipartFile;
+  /**
+   * Refuses the request if a second file follows. 422, naming the file that
+   * would have been kept: nothing has been stored at this point, and "one file
+   * per request" is only actionable if the reader knows which request to split.
+   */
+  refuseIfMore: (keptFilename: string) => Promise<void>;
+}
+
+export async function soleUpload(req: FastifyRequest, limits: { fileSize: number }): Promise<SoleUpload> {
+  const files = req.files({ limits: { fileSize: limits.fileSize, files: 2, ...UPLOAD_FIELD_LIMITS } });
+  const first = await files.next();
+  if (first.done) throw problems.badRequest('Expected a multipart file field named "file"');
+  return {
+    file: first.value,
+    refuseIfMore: async (keptFilename: string) => {
+      const next = await files.next();
+      if (next.done) return;
+      throw problems.unprocessable(
+        `This request carried more than one file. Upload them one at a time — only “${keptFilename}” ` +
+          'would have been read, and nothing was saved.',
+        { filename: keptFilename },
+      );
+    },
+  };
 }
