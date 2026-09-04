@@ -4,7 +4,7 @@ import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { OPERATIONS_EVENT_TYPES, type CommentKind } from '../domain/operations.js';
 import type { ValuationEventType } from '../domain/auditTrail.js';
-import { invalidateValuationAfter } from './valuations.js';
+import { invalidateValuation, invalidateValuationAfter } from './valuations.js';
 
 export interface CommentRow {
   id: string;
@@ -269,14 +269,55 @@ export async function updateComment(
  * withdrawal to record.
  */
 export async function deleteComment(pool: pg.Pool, id: string, actor: EventActor): Promise<boolean> {
-  return withTransaction(pool, async (client) => {
+  const removed = await withTransaction(pool, async (client) => {
     const { rows } = await client.query<CommentRow>(
       'SELECT * FROM valuation_comments WHERE id = $1 FOR UPDATE',
       [id],
     );
     const comment = rows[0];
-    if (!comment) return false;
+    if (!comment) return null;
     await client.query('DELETE FROM valuation_comments WHERE id = $1', [id]);
+    /*
+     * And roll `valuations.last_comment_at` back onto the thread that is left
+     * (R418, methodology M4).
+     *
+     * `createComment` stamps that column in this same transaction, six lines
+     * up, because it is the denormalised answer to "when did this thread last
+     * move" — the only one, since no reader of it joins the comments table.
+     * The withdrawal did not un-stamp it, so the column went on describing a
+     * comment that no longer exists, and the four things derived from it went
+     * on believing the same:
+     *
+     *  - The unread mark on the engagement list and its filter
+     *    (`buildValuationWhere`'s `unreadFor`, `listValuations`' `unread`
+     *    column) is `last_comment_at > <this reader>_read_at`. A comment posted
+     *    and then withdrawn before anybody read it left every reader's row
+     *    flagged for a message they could open the engagement and not find.
+     *  - `countUnread` behind the nav badge counts those same rows.
+     *  - The firm dashboard prints `last_comment_at` as the engagement's last
+     *    activity and orders on it.
+     *  - `staleEngagements` measures silence from `coalesce(last_comment_at,
+     *    created_at)`, so a withdrawn note kept an engagement out of the nudge
+     *    it was due.
+     *
+     * `max(created_at)` over what remains, and NULL when nothing does — which
+     * is the state the column was in before the first comment and the only
+     * honest answer once the last one is withdrawn.
+     *
+     * It can only ever move the timestamp *back*, so it cannot invent an unread
+     * mark for anybody; it can only clear ones that point at nothing. The
+     * insert stamps `now()` rather than the row's `created_at`, and this reads
+     * `created_at` — the two are the same statement apart, and this is the
+     * value that can be recomputed from what is on the table rather than from
+     * what was on it.
+     */
+    await client.query(
+      `UPDATE valuations v
+          SET last_comment_at = (SELECT max(c.created_at) FROM valuation_comments c
+                                  WHERE c.valuation_id = v.id)
+        WHERE v.id = $1`,
+      [comment.valuation_id],
+    );
     await recordEvent(client, {
       valuationId: comment.valuation_id,
       type: OPERATIONS_EVENT_TYPES.commentRemoved,
@@ -288,6 +329,14 @@ export async function deleteComment(pool: pg.Pool, id: string, actor: EventActor
         posted_at: comment.created_at,
       },
     });
-    return true;
+    return comment.valuation_id;
   });
+  // The transaction writes `valuations` now, so the row cache has to be
+  // dropped — and after the COMMIT, for the reason `invalidateValuationAfter`
+  // holds: a drop issued inside the transaction is one a concurrent reader
+  // refills from the pre-commit row. Not that wrapper, because which row was
+  // written is only known from inside; the ordering it exists to enforce is the
+  // same here. A losing race wrote nothing and has nothing to drop.
+  if (removed) invalidateValuation(removed);
+  return removed !== null;
 }
