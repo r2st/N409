@@ -118,13 +118,33 @@ afterEach(() => {
   circuits.resetAll();
 });
 
+/**
+ * The payload as the *schema* ever sees it.
+ *
+ * `postForPdf` sends `JSON.stringify(reportRenderPayload(input))` and the report
+ * unit parses the JSON, so nothing that crosses is a JS value the wire has no
+ * spelling for. Two of the cases below asserted against the in-memory object
+ * instead and were red on `generated_at`: `ReportPdfInput` types it as a `Date`,
+ * the builder passes it through under a comment saying a `Date` "stringifies to
+ * ISO 8601 and the wire schema coerces it back" — which is true, and true only
+ * after the stringify. `RenderBody` takes `string | number` (app.ts, for the
+ * year-range refinement), so the raw `Date` fails a check no request can reach.
+ *
+ * Which mattered: those two cases are the ones that put the real published
+ * sample and a white-labelled render through the contract, and a red guard
+ * proves nothing about either.
+ */
+function onTheWire(input: ReportPdfInput): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(reportRenderPayload(input))) as Record<string, unknown>;
+}
+
 describe('the wire contract accepts the reports this platform actually renders', () => {
   it('accepts the published sample, exhibits and charts included', () => {
     const input = sampleReportPdfInput('409a');
     // Not a token document: this is the one the marketing page serves, and it
     // is the largest render in the repository that does not need a database.
     expect(input.sections.length).toBeGreaterThan(20);
-    const parsed = RenderBody.safeParse(reportRenderPayload(input));
+    const parsed = RenderBody.safeParse(onTheWire(input));
     expect(parsed.success ? [] : parsed.error.issues).toEqual([]);
   });
 
@@ -140,7 +160,7 @@ describe('the wire contract accepts the reports this platform actually renders',
       },
       watermark: 'Draft',
     };
-    const payload = reportRenderPayload(input);
+    const payload = onTheWire(input);
     const branding = payload.branding as Record<string, unknown>;
     expect(branding.logo_base64).toBe(Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'));
     expect(branding).not.toHaveProperty('logo');
