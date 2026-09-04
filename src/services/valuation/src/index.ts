@@ -564,9 +564,10 @@ let webhookRetryTimer: NodeJS.Timeout | undefined;
 if (config.WEBHOOK_RETRY_SCAN_MINUTES > 0) {
   const sweep = scheduleSweep('webhook-retry', async () => {
     const r = await retryDueDeliveries({ pool, log: app.log });
-    // `reaped` too, not just `attempted`: a pass that settled abandoned
-    // deliveries and delivered nothing did the work this line reports on.
-    if (r.attempted > 0 || r.reaped > 0) app.log.info(r, 'webhook retry sweep');
+    // `reaped` and `withheld` too, not just `attempted`: a pass that settled
+    // abandoned deliveries, or ended the ones a switched-off endpoint was
+    // holding, and delivered nothing did the work this line reports on.
+    if (r.attempted > 0 || r.reaped > 0 || r.withheld > 0) app.log.info(r, 'webhook retry sweep');
     return r;
   });
   webhookRetryTimer = setInterval(() => sweep.run(), config.WEBHOOK_RETRY_SCAN_MINUTES * 60_000);

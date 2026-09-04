@@ -67,15 +67,17 @@ describe('FLAG_RETRY_LADDERS off — the partner webhook sweep', () => {
   it('claims nothing, so a pending delivery keeps its backoff', async () => {
     await expect(
       retryDueDeliveries({ pool: hostilePool, log: undefined } as never),
-      // `reaped` is behind the same flag: a row it would settle has no attempts
-      // left either way, so waiting loses nothing, and while the ladders are
-      // paused "still pending" is the honest reading of every unsettled row.
+      // `reaped` and `withheld` are behind the same flag: a row either of them
+      // would settle is not going anywhere either way, so waiting loses nothing,
+      // and while the ladders are paused "still pending" is the honest reading
+      // of every unsettled row.
     ).resolves.toEqual({
       attempted: 0,
       delivered: 0,
       retrying: 0,
       failed: 0,
       reaped: 0,
+      withheld: 0,
       superseded: 0,
       unsettled: 0,
     });

@@ -23,6 +23,7 @@ import {
   claimRetryableDeliveries,
   enabledWebhooks,
   failExhaustedDeliveries,
+  retireWithheldDeliveries,
   recordDelivery,
   settleDelivery,
   type PartnerWebhookRow,
@@ -344,6 +345,16 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
   failed: number;
   reaped: number;
   /**
+   * Deliveries ended because their endpoint is switched off (R422).
+   *
+   * Its own count rather than folded into `reaped`: that one is a delivery that
+   * ran out of road, and this one never got to try. A non-zero value here after
+   * the first pass following a switch-off is the backlog draining; a non-zero
+   * value that keeps appearing means something is still queueing events onto a
+   * disabled endpoint.
+   */
+  withheld: number;
+  /**
    * Attempts whose outcome was refused because the row had moved on — the
    * count of duplicate deliveries this pass made. Reported rather than folded
    * into `failed`, because it says something about *us* rather than about any
@@ -371,7 +382,16 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
   // the ladders are paused, "still pending" is the honest reading of every
   // unsettled row rather than a claim about this one in particular.
   if (!flagEnabled(FLAGS.retryLadders)) {
-    return { attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0, superseded: 0, unsettled: 0 };
+    return {
+      attempted: 0,
+      delivered: 0,
+      retrying: 0,
+      failed: 0,
+      reaped: 0,
+      withheld: 0,
+      superseded: 0,
+      unsettled: 0,
+    };
   }
 
   const abandoned = await failExhaustedDeliveries(deps.pool, { leaseMs: deps.leaseMs, limit: deps.limit });
@@ -379,6 +399,30 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
     deps.log?.warn(
       { deliveryId: row.id, webhookId: row.webhook_id, event: row.event_type, attempts: row.attempts },
       'partner webhook delivery abandoned mid-attempt with no retries left; settled as failed',
+    );
+  }
+
+  /*
+   * The second reap, and the one the claim's own `AND w.enabled` made necessary
+   * — see `retireWithheldDeliveries`. Beside the first because it wants the same
+   * cadence and the same lease, and because a row it settles is one the claim
+   * below would decline anyway.
+   *
+   * One line per batch rather than per row: switching an endpoint off retires
+   * everything queued for it at once, and a hundred identical warnings would say
+   * nothing the count does not.
+   */
+  const withheld = await retireWithheldDeliveries(deps.pool, {
+    leaseMs: deps.leaseMs,
+    limit: deps.limit,
+  });
+  if (withheld.length > 0) {
+    deps.log?.warn(
+      {
+        count: withheld.length,
+        webhookIds: [...new Set(withheld.map((r) => r.webhook_id))],
+      },
+      'partner webhook deliveries ended because their endpoint is switched off; replayable from the failed list once it is back on',
     );
   }
 
@@ -468,6 +512,7 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
     retrying,
     failed,
     reaped: abandoned.length,
+    withheld: withheld.length,
     superseded,
     unsettled,
   };

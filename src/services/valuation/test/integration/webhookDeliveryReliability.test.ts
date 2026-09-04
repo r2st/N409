@@ -412,4 +412,130 @@ describe.skipIf(!dbUp)('webhook delivery reliability', () => {
     // delivered again once the lease lapses.
     expect(rows.find((r) => r.status === 'pending')!.claimed_at).not.toBeNull();
   });
+
+  /**
+   * The second wedge, the one the claim's own `AND w.enabled` creates (R422,
+   * methodology M5).
+   *
+   * A delivery queued while the endpoint was on and still pending when it goes
+   * off is excluded by the claim, so its `attempts` stops moving — and the
+   * exhaustion reaper takes only rows that reached `max_attempts`. Nothing else
+   * writes it. `enabledWebhooks` states this rule about this same table, in the
+   * same file, as the reason R342 kept the archived-partner test *out* of the
+   * claim; the `enabled` test was already in it.
+   *
+   * Each assertion below is one of the two halves: the reproduction (neither
+   * the claim nor the exhaustion reaper can reach the row) and the fix.
+   */
+  it('ends a delivery its endpoint was switched off underneath', async () => {
+    const {
+      claimRetryableDeliveries,
+      failExhaustedDeliveries,
+      retireWithheldDeliveries,
+      DELIVERY_WITHHELD_ERROR,
+    } = await import('../../src/repos/partnerWebhooks.js');
+    await ctx.pool.query('DELETE FROM partner_webhooks');
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    receiverStatus = 200;
+    const { rows: made } = await ctx.pool.query<{ id: string }>(
+      `UPDATE partner_webhook_deliveries
+          SET status = 'pending', attempts = 1, claimed_at = NULL, last_error = NULL,
+              next_attempt_at = now() - interval '1 minute'
+        WHERE webhook_id = $1 RETURNING id`,
+      [webhookId],
+    );
+    expect(made).toHaveLength(1);
+    const id = made[0]!.id;
+
+    await ctx.pool.query('UPDATE partner_webhooks SET enabled = false WHERE id = $1', [webhookId]);
+
+    // The reproduction. The row is due, has attempts left, and no sweeper is
+    // holding it — and neither the claim nor the reaper will touch it.
+    const claimed = await claimRetryableDeliveries(ctx.pool, { leaseMs: 60_000 });
+    expect(claimed.map((c) => c.id)).not.toContain(id);
+    expect((await failExhaustedDeliveries(ctx.pool, { leaseMs: 60_000 })).map((r) => r.id)).not.toContain(id);
+    expect((await deliveryRow(id)).status).toBe('pending');
+
+    const retired = await retireWithheldDeliveries(ctx.pool, { leaseMs: 60_000 });
+    expect(retired.map((r) => r.id)).toContain(id);
+    const row = await deliveryRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.claimed_at).toBeNull();
+    expect(row.last_error).toBe(DELIVERY_WITHHELD_ERROR);
+
+    // Idempotent, like the reap beside it.
+    expect(await retireWithheldDeliveries(ctx.pool, { leaseMs: 60_000 })).toHaveLength(0);
+  });
+
+  it('keeps what the receiver last said, in preference to the withheld note', async () => {
+    const { retireWithheldDeliveries, DELIVERY_WITHHELD_ERROR } =
+      await import('../../src/repos/partnerWebhooks.js');
+    await ctx.pool.query('DELETE FROM partner_webhooks');
+    const webhookId = await registerWebhook();
+    receiverStatus = 503;
+    await ping(webhookId);
+    receiverStatus = 200;
+    await ctx.pool.query('UPDATE partner_webhooks SET enabled = false WHERE id = $1', [webhookId]);
+
+    const retired = await retireWithheldDeliveries(ctx.pool, { leaseMs: 60_000 });
+    expect(retired).toHaveLength(1);
+    // Same rule as the abandonment reaper's: the receiver's own words are more
+    // use to whoever reads the delivery log, so the note only fills a blank.
+    expect(retired[0]!.last_error).toContain('503');
+    expect(retired[0]!.last_error).not.toBe(DELIVERY_WITHHELD_ERROR);
+  });
+
+  it('leaves a withheld row alone while a sweeper is still holding it', async () => {
+    const { retireWithheldDeliveries } = await import('../../src/repos/partnerWebhooks.js');
+    await ctx.pool.query('DELETE FROM partner_webhooks');
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    receiverStatus = 200;
+    // Claimed a second ago against a five-minute lease: this POST is in flight
+    // and `settle` will write its real outcome. Switching the endpoint off does
+    // not make an attempt that is already running a failure.
+    const { rows: made } = await ctx.pool.query<{ id: string }>(
+      `UPDATE partner_webhook_deliveries
+          SET status = 'pending', attempts = 1, claimed_at = now() - interval '1 second'
+        WHERE webhook_id = $1 RETURNING id`,
+      [webhookId],
+    );
+    const id = made[0]!.id;
+    await ctx.pool.query('UPDATE partner_webhooks SET enabled = false WHERE id = $1', [webhookId]);
+
+    expect(
+      (await retireWithheldDeliveries(ctx.pool, { leaseMs: 5 * 60_000 })).map((r) => r.id),
+    ).not.toContain(id);
+    expect((await deliveryRow(id)).status).toBe('pending');
+  });
+
+  it('runs the withheld retirement on the retry sweep and counts it apart from the reap', async () => {
+    const { retryDueDeliveries } = await import('../../src/hooks/partnerWebhooks.js');
+    await ctx.pool.query('DELETE FROM partner_webhooks');
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    receiverStatus = 200;
+    await ctx.pool.query(
+      `UPDATE partner_webhook_deliveries
+          SET status = 'pending', attempts = 1, claimed_at = NULL,
+              next_attempt_at = now() - interval '1 minute'
+        WHERE webhook_id = $1`,
+      [webhookId],
+    );
+    await ctx.pool.query('UPDATE partner_webhooks SET enabled = false WHERE id = $1', [webhookId]);
+
+    const result = await retryDueDeliveries({ pool: ctx.pool, leaseMs: 60_000 });
+    expect(result.withheld).toBe(1);
+    // Not a delivery and not an exhaustion: the sweep tried nothing and nothing
+    // ran out of attempts.
+    expect(result.attempted).toBe(0);
+    expect(result.reaped).toBe(0);
+
+    const again = await retryDueDeliveries({ pool: ctx.pool, leaseMs: 60_000 });
+    expect(again.withheld).toBe(0);
+  });
 });

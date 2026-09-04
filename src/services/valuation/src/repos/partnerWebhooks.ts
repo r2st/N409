@@ -326,6 +326,86 @@ export async function failExhaustedDeliveries(
   return rows;
 }
 
+/** What {@link retireWithheldDeliveries} stamps on a row it settles. */
+export const DELIVERY_WITHHELD_ERROR =
+  'not delivered: the endpoint was switched off while this event was still queued';
+
+/**
+ * Ends the deliveries a disabled endpoint holds, instead of leaving them
+ * pending forever (R422, methodology M5).
+ *
+ * THE HOLE. `claimRetryableDeliveries` carries `AND w.enabled`, so a row queued
+ * while an endpoint was on and still pending when it went off is never claimed
+ * again. `attempts` therefore stops moving, which is precisely the condition
+ * {@link failExhaustedDeliveries} needs (`attempts >= max_attempts`) — so the
+ * one reaper this table has cannot take it either. Nothing else writes the row.
+ * It is 'pending' for the life of the table.
+ *
+ * `enabledWebhooks` states the rule this broke, about the same table, in the
+ * same file: "a claim query taught to skip them would leave `pending` rows
+ * nothing ever settles — the failure the exhaustion reaper exists to prevent".
+ * R342 kept the archived-partner test out of the claim for that reason. The
+ * `enabled` test was already inside it.
+ *
+ * What a stranded row costs, in the three places R272 names for the outbox's
+ * counterpart:
+ *
+ *   - `oldestActiveJobs` maps 'pending' to 'queued' and counts anything due, so
+ *     each one reads as a queue running later every minute. A `stalled` alert is
+ *     keyed `(source, kind)` and announced once, so a single withheld row holds
+ *     `webhook_delivery/stalled` open forever and the next real webhook outage
+ *     announces nothing. Same failure R228 fixed for withheld mail.
+ *   - `deliveryBacklogStats` counts it pending, so the backlog gauge ops watch
+ *     during an incident only ever climbs.
+ *   - `GET /webhooks/{id}/deliveries` tells the partner an event is still owed a
+ *     retry that will never be tried.
+ *
+ * Settled to 'failed' rather than excluded from the counts, because the claim's
+ * own policy is that these events are not going to be delivered — and a row
+ * nothing will deliver belongs in the dead-letter view where an operator can
+ * see it. That also makes the policy true: without this the backlog *does*
+ * arrive the moment the endpoint is switched back on, since every one of these
+ * rows still satisfies `next_attempt_at <= now()` and `attempts < max_attempts`.
+ * Re-enabling and replaying through `replayFailedDeliveries` is then a decision
+ * somebody makes, inside the age bound that keeps a stale transition from
+ * reaching a partner, rather than a side effect of flipping a switch.
+ *
+ * Deliberately *unlike* `retireStrandedEmails`, which leaves withheld rows
+ * alone: a suppression can be released and the message then genuinely should
+ * go, so a `failed` stamp there would destroy something recoverable. Here the
+ * recovery is the replay route, which is explicit and bounded.
+ *
+ * The lease check is the one {@link failExhaustedDeliveries} makes, for the same
+ * reason: a row claimed a moment before the endpoint was switched off is in
+ * flight, and `settle` will write its true outcome.
+ */
+export async function retireWithheldDeliveries(
+  pool: pg.Pool,
+  opts: { leaseMs?: number; limit?: number } = {},
+): Promise<WebhookDeliveryRow[]> {
+  const { limit, leaseSeconds } = claimWindow(opts);
+  const { rows } = await pool.query<WebhookDeliveryRow>(
+    `UPDATE partner_webhook_deliveries d
+        SET status = 'failed',
+            claimed_at = NULL,
+            -- Only fills a blank, like the abandonment reaper: the error from
+            -- the last real attempt says more about the receiver than this note.
+            last_error = coalesce(d.last_error, $3)
+      WHERE d.id IN (
+        SELECT dd.id FROM partner_webhook_deliveries dd
+          JOIN partner_webhooks w ON w.id = dd.webhook_id
+         WHERE dd.status = 'pending'
+           AND NOT w.enabled
+           AND (dd.claimed_at IS NULL OR dd.claimed_at < now() - ($1 || ' seconds')::interval)
+         LIMIT $2
+         FOR UPDATE OF dd SKIP LOCKED
+      )
+      RETURNING d.*`,
+    [leaseSeconds, limit, DELIVERY_WITHHELD_ERROR],
+  );
+  return rows;
+}
+
 /**
  * Atomically takes a batch of due deliveries for one sweeper.
  *
@@ -340,7 +420,10 @@ export async function failExhaustedDeliveries(
  * that always times out would be retried forever.
  *
  * Only enabled webhooks are swept — a partner who turned an endpoint off should
- * not have its backlog arrive when they turn it back on.
+ * not have its backlog arrive when they turn it back on. That is a *withholding*
+ * and not an ending, which is why {@link retireWithheldDeliveries} exists: this
+ * clause on its own is the shape `enabledWebhooks` warns about two hundred lines
+ * up, and R422 found it doing exactly what that warning describes.
  */
 export async function claimRetryableDeliveries(
   pool: pg.Pool,
