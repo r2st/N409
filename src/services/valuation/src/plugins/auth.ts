@@ -7,6 +7,7 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { findAuthPrincipal } from '../repos/users.js';
 import { API_TOKEN_REFUSAL_DETAIL, resolveApiTokenWithReason, TOKEN_SCHEME } from '../repos/apiTokens.js';
 import { recordApiTokenAuth, refuseApiToken } from '../observability/apiTokenAuth.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import { costOfRequest } from '../domain/requestCost.js';
 import type { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './rateLimit.js';
@@ -123,6 +124,12 @@ function applyLimiter(
   void reply.header(`x-ratelimit-remaining-${scope}`, result.remaining);
   void reply.header(`x-ratelimit-reset-${scope}`, Math.ceil(result.resetAt / 1000));
   if (!result.allowed) {
+    // Counted, because nothing else on this box can see it: a 429 sits in the
+    // 4xx class of `http_requests_total` beside every mistyped path on the
+    // estate and there is no 4xx rule here at all. See
+    // `observability/requestThrottle.ts` — `org` is the sharp one, a budget
+    // shared by everyone at a firm, so it turns away people who did nothing.
+    recordThrottleRefusal(scope === 'user' ? 'session-user' : 'session-org');
     const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
     throw problems.tooManyRequests(
       `Rate limit of ${result.limit} requests per minute exceeded for this ${scope === 'user' ? 'account' : 'organization'}`,
@@ -151,6 +158,10 @@ function applyCostLimiter(
   void reply.header('x-ratelimit-remaining-cost', result.remaining);
   void reply.header('x-ratelimit-reset-cost', Math.ceil(result.resetAt / 1000));
   if (!result.allowed) {
+    // The budget that governs the AI pipeline and the calculation runs — the
+    // operations a customer is paying for. Exhausting it looked, from every
+    // instrument on this box, exactly like nobody having asked.
+    recordThrottleRefusal('session-cost');
     const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
     throw problems.tooManyRequests(
       `Budget for expensive operations (${result.limit} cost units per minute) exhausted`,

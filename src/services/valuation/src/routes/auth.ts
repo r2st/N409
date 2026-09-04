@@ -62,6 +62,7 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 const RegisterBody = z.object({
   email: EmailAddress,
@@ -249,6 +250,12 @@ export function registerAuthRoutes(
       !allow(`register-ip:${req.ip}`, REGISTER_PER_IP, HOUR_MS) ||
       !allow(`register:${email.toLowerCase()}`, REGISTER_PER_EMAIL, HOUR_MS)
     ) {
+      // Counted for the reason every door in `observability/requestThrottle.ts`
+      // is: a 429 is one line in the 4xx class and this box has no rule on it,
+      // so a registration surface that has stopped accepting anybody — a bot
+      // run filling the per-IP window everybody behind that NAT shares — looks
+      // exactly like nobody having signed up today.
+      recordThrottleRefusal('register');
       throw problems.tooManyRequests(
         'Too many sign-up attempts from this address',
         retryAfter(
@@ -818,6 +825,10 @@ export function registerAuthRoutes(
     const email = parsed.data.email;
 
     if (!allow(`email:${email.toLowerCase()}`, 3, HOUR_MS) || !allow(`ip:${req.ip}`, 30, HOUR_MS)) {
+      // The refusal that costs the most on this surface: the person being
+      // turned away is already locked out, and the only other party who can see
+      // it is them. See `observability/requestThrottle.ts`.
+      recordThrottleRefusal('password-reset');
       throw problems.tooManyRequests(
         'Too many password-reset requests from this address',
         retryAfter([`email:${email.toLowerCase()}`, 3, HOUR_MS], [`ip:${req.ip}`, 30, HOUR_MS]),
@@ -878,6 +889,7 @@ export function registerAuthRoutes(
     // belt-and-braces limit — but an unbounded redeem endpoint also lets an
     // attacker burn CPU on a scrypt hash per request.
     if (!allow(`reset-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      recordThrottleRefusal('password-reset');
       throw problems.tooManyRequests(
         'Too many password-reset attempts',
         retryAfter([`reset-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
@@ -954,6 +966,7 @@ export function registerAuthRoutes(
     if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     if (!allow(`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      recordThrottleRefusal('email-verification');
       throw problems.tooManyRequests(
         'Too many verification attempts',
         retryAfter([`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
@@ -987,6 +1000,7 @@ export function registerAuthRoutes(
     if (user.verified) return { message: 'Your email is already verified.' };
 
     if (!allow(`verify:${user.id}`, 3, HOUR_MS) || !allow(`verify-ip:${req.ip}`, 30, HOUR_MS)) {
+      recordThrottleRefusal('email-verification');
       throw problems.tooManyRequests(
         'Too many verification emails requested for this address',
         retryAfter([`verify:${user.id}`, 3, HOUR_MS], [`verify-ip:${req.ip}`, 30, HOUR_MS]),
@@ -1043,6 +1057,7 @@ export function registerAuthRoutes(
     // real?" directly — limiting only the redeem route would leave the
     // enumeration oracle wide open.
     if (!allow(`invite-info-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      recordThrottleRefusal('invitation');
       throw problems.tooManyRequests(
         'Too many invitation lookups from this address',
         retryAfter([`invite-info-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
@@ -1062,6 +1077,8 @@ export function registerAuthRoutes(
     // Accepting an invite mints an account, so an unbounded endpoint is both a
     // token-guessing surface and a scrypt-CPU sink.
     if (!allow(`invite-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      // A colleague who cannot finish joining, and nobody here to tell.
+      recordThrottleRefusal('invitation');
       throw problems.tooManyRequests(
         'Too many invitation attempts from this address',
         retryAfter([`invite-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),

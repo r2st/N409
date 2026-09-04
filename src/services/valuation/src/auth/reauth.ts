@@ -1,6 +1,7 @@
 import { problems } from '@n409/shared';
 import { SlidingWindowRateLimiter } from '../plugins/rateLimit.js';
 import { verifyPassword } from './password.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * The throttle on re-authentication: the password prompts that sit in front of
@@ -53,6 +54,12 @@ export async function verifyReauthPassword(
   digest: string | null | undefined,
 ): Promise<boolean> {
   if (!limiter.allow(key(userId), REAUTH_MAX_FAILURES, REAUTH_WINDOW_MS, { peek: true })) {
+    // The one refusal here that is a security event rather than a sizing one:
+    // ten wrong passwords against a signed-in account is either a guesser
+    // working through a session somebody left open or an owner locked out of
+    // their own settings — the pair `signInOutcomes.ts` exists to separate one
+    // door over, and until R420 this door counted neither.
+    recordThrottleRefusal('reauth');
     throw problems.tooManyRequests(
       'Too many incorrect password attempts',
       // The window is a quarter hour, so a client left to guess at the wait

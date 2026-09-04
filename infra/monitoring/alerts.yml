@@ -1435,3 +1435,110 @@ groups:
         annotations:
           summary: '{{ $labels.family }} granted this deployment access and it could not be stored — revoke it in the provider'
           runbook: "journalctl -u n409-valuation | grep 'the provider granted access and it could not be stored'"
+
+  - name: n409-throttles
+    rules:
+      # The 429s nothing else counts (R420, methodology M11). Every door on this
+      # estate that got an instrument in R329, R337, R345, R369 and R376 had a
+      # machine behind it; these have a person, and they are the largest surface
+      # here — `plugins/auth.ts` runs three limiters over the whole
+      # authenticated API. A refusal is one 429 in the 4xx class of
+      # `http_requests_total`, which is the class `scimRequests.ts` says in as
+      # many words there is no rule on.
+      #
+      # `session-org` first because it is the sharp one. The organisation budget
+      # is shared by everyone at a firm, so the people it turns away are people
+      # who did nothing: one runaway integration, or an
+      # `SESSION_RATE_LIMIT_ORG_PER_MIN` a deploy set low, half-loads every screen for
+      # every analyst there at once. `HighServerErrorRate` sees no 5xx and
+      # `SlowRequests` sees nothing, because the box is healthy and is refusing
+      # on purpose.
+      - alert: OrgApiBudgetExhausted
+        expr: |
+          sum(rate(throttle_refusals_total{door="session-org"}[15m])) > 0
+        for: 15m
+        labels: { severity: page }
+        annotations:
+          summary: 'a whole organisation is being refused by its shared API budget — analysts who did nothing cannot load the app'
+          runbook: 'SESSION_RATE_LIMIT_ORG_PER_MIN on the valuation unit against the firm actually calling — GET /api/v1/admin/ops shows the busiest'
+
+      # One caller over their own budget is ordinarily a runaway tab and is
+      # nobody's emergency, so this is a rate rather than `> 0`, and a ticket.
+      # Sustained across the fleet it is the other reading: a session limit that
+      # is simply too low for the SPA's own fan-out, which arrives as "the app
+      # is flaky" and nothing else.
+      - alert: SessionApiThrottling
+        expr: |
+          sum(rate(throttle_refusals_total{door="session-user"}[15m])) > 0.1
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'signed-in callers are being rate limited across the fleet — SESSION_RATE_LIMIT_PER_MIN may be under what the app itself asks for'
+          runbook: 'domain/rateLimitPolicy.ts publishes the installed numbers; the SPA bootstrap alone issues several requests per screen'
+
+      # The heavy budget, which governs the AI pipeline and the calculation runs
+      # — the operations a customer is paying for. Exhausting it looks, from
+      # every other instrument here, exactly like nobody having asked: no job
+      # row is created, so the queue gauges stay flat and `AutoPipelineBacklog`
+      # never moves.
+      - alert: CostBudgetExhausted
+        expr: |
+          sum(rate(throttle_refusals_total{door="session-cost"}[30m])) > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the expensive-operation budget is turning away pipeline and calculation runs'
+          runbook: 'domain/requestCost.ts is what each operation costs; HEAVY_RATE_LIMIT_PER_MIN is the budget'
+
+      # The step-up password budget. Ten wrong passwords against an *already
+      # signed-in* session is not a sizing question: it is either a guesser
+      # working through a session somebody left open, or an owner locked out of
+      # their own settings. `signInOutcomes.ts` exists to keep that pair apart
+      # at the front door; this is the same pair one door in, where the caller
+      # has already presented a valid session.
+      - alert: ReauthBudgetSpent
+        expr: |
+          sum(increase(throttle_refusals_total{door="reauth"}[1h])) > 3
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'step-up password prompts are being locked out — a guesser on a live session, or owners locked out of their own settings'
+          runbook: "admin_events type=user_login_failed is the front door's copy; auth/reauth.ts is this one"
+
+      # And the token-only links, whose callers have no account here at all: an
+      # auditor sent a portal link, a director sent a resolution to sign, a
+      # client sent an intake form. The budget is per IP and a firm behind one
+      # office NAT spends it collectively, so the person who cannot open the
+      # engagement has no console to look in and no way to tell anybody here.
+      # `public_link_refusals` are dead-link causes, which is a different
+      # question — see the note on those; this is the door being shut before the
+      # token is even read.
+      - alert: PublicLinkThrottled
+        expr: |
+          sum by (door) (increase(throttle_refusals_total{door=~"auditor-portal|board-approval|client-intake"}[1h])) > 10
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.door }} link is being throttled — people with no account here are being turned away and cannot report it'
+          runbook: 'the budget is per IP; a firm behind one NAT shares it. PORTAL_RATE_LIMIT (auditorPortal.ts), BOARD_PUBLIC_RATE_LIMIT (boardApproval.ts), and the intake limiter in clientIntake.ts'
+
+      # And the unauthenticated identity surface, where the refusal costs the
+      # most and is reportable by nobody: `password-reset` turns away someone
+      # who is already locked out, `invitation` a colleague who cannot finish
+      # joining, `email-verification` an account that cannot be completed.
+      # `signInOutcomes.ts` holds the two doors beside these — the password
+      # sign-in and the second factor — so this rule deliberately does not.
+      #
+      # These budgets are per IP and per address over an hour, so an office
+      # behind one NAT and a scripted enumeration sweep both arrive here. That
+      # ambiguity is the reason it is a ticket with a wide window rather than a
+      # page: what it says is "go and look", and the audit spine
+      # (`admin_events`) is where the two are told apart.
+      - alert: IdentitySurfaceThrottled
+        expr: |
+          sum by (door) (increase(throttle_refusals_total{door=~"register|password-reset|email-verification|invitation"}[1h])) > 10
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.door }} door is refusing people who have no account here yet and no way to report it'
+          runbook: 'routes/auth.ts holds all four budgets; admin_events separates an enumeration sweep from an office behind one NAT'

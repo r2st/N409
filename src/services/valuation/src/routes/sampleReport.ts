@@ -7,6 +7,7 @@ import { SAMPLE_FIGURES, SAMPLE_NOTICE, sampleReportPdfInput } from '../domain/s
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { invalidQuery } from '../domain/validationProblem.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * "See a sample report" (`/sample-report`). Public: it is the page that shows
@@ -95,6 +96,10 @@ export function registerSampleReportRoutes(
     // order. It also means a flood of malformed requests is throttled too.
     const { allowed, resetAt } = pdfLimiter.check(req.ip);
     if (!allowed) {
+      // See `observability/requestThrottle.ts`. This one is the marketing
+      // surface: a sustained refusal rate is either a scraper or the sample
+      // being linked from somewhere that sends real readers into a 429.
+      recordThrottleRefusal('sample-report');
       throw problems.tooManyRequests(
         'The sample report has been downloaded too many times from this address',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),

@@ -34,6 +34,7 @@ import {
 import { invalidBody } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * Board approval workflow (feature 5). Ops generate a board resolution from the
@@ -181,6 +182,10 @@ export function registerBoardApprovalRoutes(
   const throttlePublic = (req: FastifyRequest): void => {
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
+      // Counted for the auditor link's reason — a director who cannot open the
+      // resolution has no account here to complain through. See
+      // `observability/requestThrottle.ts`.
+      recordThrottleRefusal('board-approval');
       throw problems.tooManyRequests(
         'Too many requests to this signing link from your connection',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),

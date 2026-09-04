@@ -41,6 +41,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import { ulidField } from '../domain/ulidField.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * Firm-branded client intake.
@@ -265,6 +266,9 @@ export function registerClientIntakeRoutes(
   const rateLimit = (ip: string) => {
     const { allowed, resetAt } = limiter.check(ip);
     if (!allowed) {
+      // The client filling this in has no account here either — see
+      // `observability/requestThrottle.ts`.
+      recordThrottleRefusal('client-intake');
       throw problems.tooManyRequests(
         'Too many requests to this intake form from your connection',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),

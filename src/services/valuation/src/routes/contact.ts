@@ -13,6 +13,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * Public marketing contact form (409.ai gap #28). Anyone can POST a message
@@ -51,6 +52,11 @@ export function registerContactRoutes(
   app.post('/api/v1/contact', async (req, reply) => {
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
+      // Mostly bots, which is the point of counting it: a step change here is
+      // the shape of a scripted flood, and the honest sender it also refuses is
+      // a prospect this firm never hears from. See
+      // `observability/requestThrottle.ts`.
+      recordThrottleRefusal('contact');
       throw problems.tooManyRequests(
         'Too many messages sent from this address',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),

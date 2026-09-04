@@ -172,6 +172,7 @@ import { registerIntegrationCallbackMetrics } from './observability/integrationC
 import { registerApiTokenAuthMetrics } from './observability/apiTokenAuth.js';
 import { registerPartnerApiGuardMetrics } from './observability/partnerApiGuard.js';
 import { registerRealtimeStreamMetrics } from './observability/realtimeStreams.js';
+import { registerRequestThrottleMetrics } from './observability/requestThrottle.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -967,6 +968,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // are all invisible to every instrument on this box. The audit spine has had
   // the rows since R215; what it has never had is a channel anybody is woken by.
   registerSignInMetrics(metricsRegistry);
+  // And the throttles in front of all of it, which every round above walked
+  // past. The doors they took each had a machine behind them; these have a
+  // person. `plugins/auth.ts` runs three limiters over the whole authenticated
+  // API — per user, per organisation, and a cost budget for the expensive
+  // operations — and a firm whose shared budget is spent, or a deploy that set
+  // `SESSION_RATE_LIMIT_PER_MIN` low, refuses everybody's workspace with the
+  // 4xx class this box has no rule on. The token-only links are the same shape
+  // with nobody able to report it: an auditor or a director refused by a
+  // per-IP budget has no account here at all.
+  registerRequestThrottleMetrics(metricsRegistry);
   // Whether we are still dialling the engine, the AI service and the report
   // unit at all. The breaker's own view was reachable only from the ops
   // incident endpoint, which is a page somebody visits once they already

@@ -29,6 +29,7 @@ import type { ValuationHub } from '../realtime/hub.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * External auditor portal (feature 8). An ops user (or the valuation owner)
@@ -181,6 +182,11 @@ export function registerAuditorPortalRoutes(
   app.post('/api/v1/auditor/portal', async (req) => {
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
+      // See `observability/requestThrottle.ts`: the person refused here has no
+      // account and no console, so this box is the only place the refusal can
+      // be seen at all — and a firm behind one office NAT spends this budget
+      // collectively.
+      recordThrottleRefusal('auditor-portal');
       throw problems.tooManyRequests(
         'Too many requests to this auditor link from your connection',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
@@ -365,6 +371,11 @@ export function registerAuditorPortalRoutes(
     // dozen times to write it.
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
+      // See `observability/requestThrottle.ts`: the person refused here has no
+      // account and no console, so this box is the only place the refusal can
+      // be seen at all — and a firm behind one office NAT spends this budget
+      // collectively.
+      recordThrottleRefusal('auditor-portal');
       throw problems.tooManyRequests(
         'Too many requests to this auditor link from your connection',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
