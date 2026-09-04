@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import type { Queryable } from '../db/pool.js';
 import { newUlid } from '@n409/shared';
 
 /**
@@ -161,7 +162,7 @@ export async function findAppliedRollforwardRun(
 }
 
 export async function findRollforwardRun(
-  pool: pg.Pool,
+  pool: Queryable,
   valuationId: string,
   id: string,
 ): Promise<RollforwardRunRow | null> {
@@ -250,7 +251,7 @@ export async function insertRollforwardRun(
  * lives.
  */
 export async function markRollforwardRunApplied(
-  pool: pg.Pool,
+  pool: Queryable,
   valuationId: string,
   id: string,
   appliedBy: string | null,

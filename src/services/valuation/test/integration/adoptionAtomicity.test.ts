@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { newUlid } from '@n409/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   authHeader,
@@ -40,6 +41,20 @@ async function startEngineStub() {
     warning: 'yfinance is not installed; returning the caller fallback',
   }));
   // engine/projection.py, in the one mode these tests strike a run in.
+  stub.post('/engine/v1/rollforward', async () => ({
+    prior_valuation_date: '2025-06-30',
+    new_valuation_date: '2026-06-30',
+    years_elapsed: 1.0,
+    prior_equity_value: 33_600_000,
+    rolled_equity_value: 42_000_000,
+    annual_accretion: 0.25,
+    calibration_steps: [{ step: 'prior_equity_value', value: 33_600_000 }],
+    material_changes: [],
+    requires_full_revaluation: false,
+    // No round price for the new date, so adoption supersedes the one on file —
+    // which is the write this route makes that cannot be undone.
+    pre_populated_inputs: { valuation_date: '2026-06-30', last_round_post_money: 42_000_000 },
+  }));
   stub.post('/engine/v1/projection', async (req) => {
     const { inputs } = req.body as { inputs: Record<string, unknown> };
     const years = Number(inputs.years ?? 1);
@@ -291,6 +306,119 @@ describe.skipIf(!dbUp)('an adoption lands whole or not at all (R404)', () => {
       const { rows } = await ctx.pool.query<{ applied_at: Date | null }>(
         'SELECT applied_at FROM valuation_projections WHERE id = $1',
         [projectionId],
+      );
+      expect(rows[0]!.applied_at).toBeNull();
+    });
+  });
+
+  /*
+   * The roll-forward adoption is the widest of the three: it moves the
+   * engagement's backsolve anchor, *deletes* the round price, share class and
+   * market-movement adjustment the rolled value supersedes, sets
+   * `rolling_forward`, and stamps the run's `applied_at`. Four writes over
+   * three rows, and `applied_at` is what Exhibit B-2 states the bridge from.
+   */
+  describe('a roll-forward adoption', () => {
+    const PRIOR_INPUTS = {
+      valuation_date: '2026-06-30',
+      revenue: 6_240_000,
+      last_round_post_money: 30_000_000,
+      last_round_price_per_share: 1.25,
+      last_round_class: 'Series A',
+      market_movement: { index_start: 100, index_end: 120 },
+    };
+
+    /** This year's engagement with last year's on file behind it. */
+    async function pair(): Promise<{ currentId: string; runId: string }> {
+      const priorId = await newValuation();
+      await ctx.pool.query(
+        `INSERT INTO calculations (id, valuation_id, engine_version, status, inputs, results)
+         VALUES ($1, $2, 'test', 'succeeded', $3::jsonb, $4::jsonb)`,
+        [
+          newUlid(),
+          priorId,
+          JSON.stringify({ params: {}, inputs: { valuation_date: '2025-06-30', revenue: 6_000_000 } }),
+          JSON.stringify({ equity_value: 33_600_000 }),
+        ],
+      );
+      const currentId = await newValuation();
+      await ctx.pool.query(
+        'UPDATE valuation_params SET engine_inputs = $2::jsonb WHERE valuation_id = $1',
+        [currentId, JSON.stringify(PRIOR_INPUTS)],
+      );
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${currentId}/rollforward`,
+        headers: authHeader(ops.token),
+        payload: { prior_valuation_id: priorId },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      return { currentId, runId: res.json().run.id as string };
+    }
+
+    const adopt = (currentId: string, runId: string) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${currentId}/rollforward/${runId}/apply`,
+        headers: authHeader(ops.token),
+      });
+
+    const paramsOf = async (valuationId: string) => {
+      const { rows } = await ctx.pool.query<{
+        engine_inputs: Record<string, unknown>;
+        rolling_forward: boolean;
+      }>('SELECT engine_inputs, rolling_forward FROM valuation_params WHERE valuation_id = $1', [
+        valuationId,
+      ]);
+      return rows[0]!;
+    };
+
+    it('moves the anchor, the flag and the stamp together on the ordinary path', async () => {
+      const { currentId, runId } = await pair();
+
+      const res = await adopt(currentId, runId);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().run.applied_at).not.toBeNull();
+
+      const params = await paramsOf(currentId);
+      expect(params.engine_inputs.last_round_post_money).toBe(42_000_000);
+      expect(params.engine_inputs.last_round_price_per_share).toBeNull();
+      expect(params.rolling_forward).toBe(true);
+    });
+
+    it('leaves the anchor and the superseded inputs alone when the stamp cannot be written', async () => {
+      const { currentId, runId } = await pair();
+
+      const restore = interceptPoolQueries(ctx.pool, (sql) => {
+        if (sql.includes('UPDATE rollforward_runs')) {
+          throw new Error('staged failure on the applied stamp');
+        }
+        return undefined;
+      });
+      try {
+        const res = await adopt(currentId, runId);
+        expect(res.statusCode).toBeGreaterThanOrEqual(500);
+      } finally {
+        restore();
+      }
+
+      /*
+       * The clears are the half that cannot be walked back by hand: nothing
+       * else on the engagement holds last year's round price once this route
+       * has removed it. A 500 that says the adoption failed, over an anchor
+       * that moved and a price that is gone, is the report this round exists
+       * to stop.
+       */
+      const params = await paramsOf(currentId);
+      expect(params.engine_inputs.last_round_post_money).toBe(30_000_000);
+      expect(params.engine_inputs.last_round_price_per_share).toBe(1.25);
+      expect(params.engine_inputs.last_round_class).toBe('Series A');
+      expect(params.engine_inputs.market_movement).toEqual({ index_start: 100, index_end: 120 });
+      expect(params.rolling_forward).toBe(false);
+
+      const { rows } = await ctx.pool.query<{ applied_at: Date | null }>(
+        'SELECT applied_at FROM rollforward_runs WHERE id = $1',
+        [runId],
       );
       expect(rows[0]!.applied_at).toBeNull();
     });

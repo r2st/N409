@@ -419,6 +419,26 @@ export async function patchParams(
   actor: EventActor,
   options: PatchParamsOptions = {},
 ): Promise<ValuationParamsRow> {
+  return withTransaction(pool, (client) => patchParamsWithin(client, current, fields, actor, options));
+}
+
+/**
+ * The body of {@link patchParams}, on a transaction the caller already holds.
+ *
+ * `routes/rollforward.ts` adopts a run by writing three rows — the engine
+ * input, this flag, and the run's own `applied_at` — and they are one decision
+ * only if they land or fail together. The `FOR UPDATE` below is then taken
+ * inside the caller's transaction, which is where it belongs: the whole
+ * adoption is what has to be serialised against a concurrent editor, not the
+ * one statement of it.
+ */
+export async function patchParamsWithin(
+  client: pg.PoolClient,
+  current: ValuationParamsRow,
+  fields: Record<string, unknown>,
+  actor: EventActor,
+  options: PatchParamsOptions = {},
+): Promise<ValuationParamsRow> {
   const { expectedVersion } = options;
 
   // An empty patch asks for nothing, whatever the row says. Returning here
@@ -434,65 +454,65 @@ export async function patchParams(
     return current;
   }
 
-  return withTransaction(pool, async (client) => {
-    const { rows: locked } = await client.query<ValuationParamsRow>(
-      'SELECT * FROM valuation_params WHERE valuation_id = $1 FOR UPDATE',
-      [current.valuation_id],
+
+  const { rows: locked } = await client.query<ValuationParamsRow>(
+    'SELECT * FROM valuation_params WHERE valuation_id = $1 FOR UPDATE',
+    [current.valuation_id],
+  );
+  // The row is created with the valuation and deleted only with it, so this
+  // is reachable only by a purge landing mid-request.
+  const raw = locked[0];
+  if (!raw)
+    throw problems.notFound(
+      'This valuation’s parameters no longer exist — the valuation was deleted while this save ' +
+        'was in flight. Nothing was saved.',
     );
-    // The row is created with the valuation and deleted only with it, so this
-    // is reachable only by a purge landing mid-request.
-    const raw = locked[0];
-    if (!raw)
-      throw problems.notFound(
-        'This valuation’s parameters no longer exist — the valuation was deleted while this save ' +
-          'was in flight. Nothing was saved.',
-      );
-    // Normalised *before* the diff, not after: the comparison below is `===`,
-    // and a `date` column off the driver is a Date that equals no string.
-    const fresh = hydrated(raw);
+  // Normalised *before* the diff, not after: the comparison below is `===`,
+  // and a `date` column off the driver is a Date that equals no string.
+  const fresh = hydrated(raw);
 
-    // Before the diff, not after. The diff is computed against `fresh`, so a
-    // caller whose snapshot is stale produces a perfectly well-formed patch
-    // that reverts somebody — and an empty diff is not proof of agreement
-    // either, only that this particular form happened to match. The version is
-    // the one reading that can tell the two apart, and under the row lock it
-    // is exact.
-    if (expectedVersion !== undefined && fresh.version !== expectedVersion) {
-      staleParamsWrite(fresh.version, expectedVersion);
-    }
+  // Before the diff, not after. The diff is computed against `fresh`, so a
+  // caller whose snapshot is stale produces a perfectly well-formed patch
+  // that reverts somebody — and an empty diff is not proof of agreement
+  // either, only that this particular form happened to match. The version is
+  // the one reading that can tell the two apart, and under the row lock it
+  // is exact.
+  if (expectedVersion !== undefined && fresh.version !== expectedVersion) {
+    staleParamsWrite(fresh.version, expectedVersion);
+  }
 
-    const check = options.revalidate?.(fresh);
-    if (check && !check.ok) throw problems.unprocessable(check.detail);
+  const check = options.revalidate?.(fresh);
+  if (check && !check.ok) throw problems.unprocessable(check.detail);
 
-    const changes = diffRecords(fresh, fields, PARAM_COLUMNS);
-    const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
-    if (entries.length === 0) return fresh;
+  const changes = diffRecords(fresh, fields, PARAM_COLUMNS);
+  const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
+  if (entries.length === 0) return fresh;
 
-    // Every writer of this row moves the version, not just the guarded one: an
-    // engine-inputs editor holding version 4 has to be able to tell that a
-    // `PATCH /params` landed, and a write that left the version alone would be
-    // invisible to it (migration 0158).
-    const sets: string[] = ['updated_at = now()', 'version = version + 1'];
-    const params: unknown[] = [];
-    for (const [key, value] of entries) {
-      // NULL stays NULL: `JSON.stringify(null)` is the four characters "null",
-      // which stores a jsonb null literal rather than clearing the column, and
-      // `IS NULL` would stop being true of a cleared table.
-      const jsonb = JSONB_PARAM_COLUMNS.has(key as (typeof PARAM_COLUMNS)[number]);
-      params.push(jsonb && value !== null ? JSON.stringify(value) : value);
-      sets.push(`${key} = $${params.length}`);
-    }
-    params.push(current.valuation_id);
-    const { rows } = await client.query<ValuationParamsRow>(
-      `UPDATE valuation_params SET ${sets.join(', ')} WHERE valuation_id = $${params.length} RETURNING *`,
-      params,
-    );
-    await recordEvent(client, {
-      valuationId: current.valuation_id,
-      type: PIPELINE_EVENT_TYPES.paramsUpdated,
-      actor,
-      payload: { changes },
-    });
-    return hydrated(rows[0]!);
+  // Every writer of this row moves the version, not just the guarded one: an
+  // engine-inputs editor holding version 4 has to be able to tell that a
+  // `PATCH /params` landed, and a write that left the version alone would be
+  // invisible to it (migration 0158).
+  const sets: string[] = ['updated_at = now()', 'version = version + 1'];
+  const params: unknown[] = [];
+  for (const [key, value] of entries) {
+    // NULL stays NULL: `JSON.stringify(null)` is the four characters "null",
+    // which stores a jsonb null literal rather than clearing the column, and
+    // `IS NULL` would stop being true of a cleared table.
+    const jsonb = JSONB_PARAM_COLUMNS.has(key as (typeof PARAM_COLUMNS)[number]);
+    params.push(jsonb && value !== null ? JSON.stringify(value) : value);
+    sets.push(`${key} = $${params.length}`);
+  }
+  params.push(current.valuation_id);
+  const { rows } = await client.query<ValuationParamsRow>(
+    `UPDATE valuation_params SET ${sets.join(', ')} WHERE valuation_id = $${params.length} RETURNING *`,
+    params,
+  );
+  await recordEvent(client, {
+    valuationId: current.valuation_id,
+    type: PIPELINE_EVENT_TYPES.paramsUpdated,
+    actor,
+    payload: { changes },
   });
+  return hydrated(rows[0]!);
 }
+

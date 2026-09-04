@@ -10,7 +10,13 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { calendarDate } from '../domain/calendarDate.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
-import { applyEngineInputs, findParams, patchParams, type ValuationParamsRow } from '../repos/params.js';
+import {
+  applyEngineInputsWithin,
+  findParams,
+  patchParamsWithin,
+  type ValuationParamsRow,
+} from '../repos/params.js';
+import { withTransaction } from '../db/pool.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { finite, finitePositive } from '../domain/finite.js';
 import {
@@ -477,26 +483,59 @@ export function registerRollforwardRoutes(
       // ending before the date the conclusion is stated as of.
       const supersededMovement = run.pre_populated_inputs.market_movement === undefined;
       const actor = { actorType: 'human' as const, actorId: principal.id };
-      await applyEngineInputs(
-        deps.pool,
-        valuation.id,
-        {
-          last_round_post_money: run.rolled_equity_value,
-          // Explicit nulls: the engine-inputs convention for clearing a field,
-          // and a jsonb merge has no other way to remove one.
-          ...(supersededPrice ? { last_round_price_per_share: null, last_round_class: null } : {}),
-          ...(supersededMovement ? { market_movement: null } : {}),
-        },
-        actor,
-      );
-      // The checkbox that has existed since migration 0001 and meant nothing.
-      // Adopting the bridge is the declaration it was always asking for, so it
-      // is recorded rather than left for somebody to tick separately.
-      if (paramsRow && !paramsRow.rolling_forward) {
-        await patchParams(deps.pool, paramsRow, { rolling_forward: true }, actor);
-      }
 
-      const applied = await markRollforwardRunApplied(deps.pool, valuation.id, runId, principal.id);
+      /*
+       * THREE WRITES, ONE DECISION (R404, methodology M5).
+       *
+       * These were three statements on the pool, each committing on its own,
+       * and the third is the only writer of `applied_at` — the column
+       * `findAppliedRollforwardRun` reads to answer "which run is the
+       * calculation carrying", which Exhibit B-2 states the bridge from. Its
+       * own note says what a disagreement here costs: "adopt A, adopt B, go
+       * back to A, and the calculation carries A while the lookup still named
+       * B. That is the superseded row R304 stopped the exhibits from
+       * describing." A failure part-way is that state arrived at without anyone
+       * clicking twice.
+       *
+       * The first write is the irreversible half and the loudest: it moves the
+       * engagement's backsolve anchor and *deletes* the round price, the share
+       * class and the market-movement adjustment that the adoption supersedes.
+       * A 500 after it says the adoption did not happen, on an engagement whose
+       * anchor has moved and two of whose inputs are gone — and `rolling_forward`
+       * unset beside it leaves the params claiming the opposite of what the
+       * engine inputs now say.
+       *
+       * A retry is not the recovery it looks like either: `before` is re-read
+       * from the params the failed attempt already moved, so
+       * `recalculation_required` below comes back false for an engagement whose
+       * stored results were struck on the old anchor.
+       *
+       * One transaction, so the 500 means what it says. The
+       * `rollforward_applied` admin event stays outside with the estate's other
+       * `recordAdminEvent` call sites; see `routes/volatility.ts`.
+       */
+      const applied = await withTransaction(deps.pool, async (client) => {
+        await applyEngineInputsWithin(
+          client,
+          valuation.id,
+          {
+            last_round_post_money: run.rolled_equity_value,
+            // Explicit nulls: the engine-inputs convention for clearing a field,
+            // and a jsonb merge has no other way to remove one.
+            ...(supersededPrice ? { last_round_price_per_share: null, last_round_class: null } : {}),
+            ...(supersededMovement ? { market_movement: null } : {}),
+          },
+          actor,
+        );
+        // The checkbox that has existed since migration 0001 and meant nothing.
+        // Adopting the bridge is the declaration it was always asking for, so it
+        // is recorded rather than left for somebody to tick separately.
+        if (paramsRow && !paramsRow.rolling_forward) {
+          await patchParamsWithin(client, paramsRow, { rolling_forward: true }, actor);
+        }
+
+        return markRollforwardRunApplied(client, valuation.id, runId, principal.id);
+      });
       await audit(valuation, principal, 'rollforward_applied', {
         run_id: runId,
         from: before,
