@@ -94,6 +94,8 @@ interface ApiOptions {
   autoEmails?: AutoEmail[];
   categories?: Array<{ key: CommunicationTemplate['category']; label: string; count: number }>;
   variables?: TemplateVariable[] | 'unavailable';
+  /** Body for `POST /admin/auto-emails/run`; defaults to a plain two-queued pass. */
+  scanResult?: Record<string, unknown>;
 }
 
 function mockApi(opts: ApiOptions = {}) {
@@ -132,7 +134,8 @@ function mockApi(opts: ApiOptions = {}) {
         ...(opts.categories ? { categories: opts.categories } : {}),
       });
     }
-    if (path.includes('/admin/auto-emails/run')) return jsonResponse({ queued: 2, skipped: 1 });
+    if (path.includes('/admin/auto-emails/run'))
+      return jsonResponse(opts.scanResult ?? { queued: 2, skipped: 1 });
     if (path.includes('/admin/auto-emails') && method === 'GET') {
       return jsonResponse({ auto_emails: opts.autoEmails ?? autoEmails });
     }
@@ -223,6 +226,44 @@ describe('CommunicationsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Run scan now' }));
 
     expect(await screen.findByText('Scan complete — 2 queued, 1 skipped.')).toBeInTheDocument();
+  });
+
+  /*
+   * R414 (M5). R340 gave the declined pass its own flag *for this button* —
+   * "the operator who pressed the button is told 'nothing to send' rather than
+   * 'your scan did not happen'" — and the button went on reading `queued` and
+   * `skipped`, so a scan that never ran drew four zeros in the success colour.
+   * `withSweepLock` can leave the key held by nobody, after which every pass
+   * declines forever with only an `info` to say so.
+   */
+  it('does not report a declined scan as a scan with nothing to send', async () => {
+    const user = userEvent.setup();
+    mockApi({ scanResult: { queued: 0, skipped: 0, suppressed: 0, failed: 0, declined: true } });
+    renderPage();
+    await autoEmailsTab(user);
+    await user.click(screen.getByRole('button', { name: 'Run scan now' }));
+
+    const alert = await screen.findByText(/The scan did not run/);
+    expect(alert).toHaveTextContent('holding the campaign scan lock');
+    expect(screen.queryByText(/Scan complete/)).not.toBeInTheDocument();
+  });
+
+  it('names the candidates the scan threw on, and the ones it withheld', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      scanResult: { queued: 2, skipped: 1, suppressed: 3, failed: 2, declined: false },
+    });
+    renderPage();
+    await autoEmailsTab(user);
+    await user.click(screen.getByRole('button', { name: 'Run scan now' }));
+
+    expect(
+      await screen.findByText(
+        'Scan complete \u2014 2 queued, 1 skipped, 3 withheld for want of marketing consent.',
+      ),
+    ).toBeInTheDocument();
+    const alert = await screen.findByText(/2 candidates could not be processed/);
+    expect(alert).toHaveTextContent('Check the service log');
   });
 
   it('shows an ops-only note on 403', async () => {

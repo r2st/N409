@@ -944,13 +944,69 @@ function AutoEmailsTab() {
     }
   };
 
+  /**
+   * Run the campaign scan now.
+   *
+   * `declined` WAS ADDED FOR THIS BUTTON AND THIS BUTTON DID NOT READ IT
+   * (R414, methodology M5). `runDueAutoEmails` takes a session-scoped advisory
+   * lock and returns four zeros when another pass holds it, and R340 gave that
+   * case its own flag with the reason written out: "a pass that never ran
+   * reported exactly what a pass with nothing due reports, on both of this
+   * function's surfaces … and `POST /admin/auto-emails/run`, where the operator
+   * who pressed the button is told 'nothing to send' rather than 'your scan did
+   * not happen'". The field arrived; the reader stayed on `queued` and
+   * `skipped`, so the console still drew "Scan complete — 0 queued, 0 skipped."
+   * in the success colour for a scan that did not happen.
+   *
+   * The same note says why that reading is worth more than a momentary race:
+   * `withSweepLock`'s failed unlock returns a live connection to the pool still
+   * holding the key, after which every later pass declines forever and the only
+   * line for it is an `info`. That is the drip campaigns stopped permanently,
+   * and this button is how a person would go looking.
+   *
+   * `failed` and `suppressed` are carried for the same reason they are counted
+   * apart in the scan: a candidate this pass was due to message and threw on is
+   * not a candidate with no phone on file, and neither is a promotional message
+   * withheld for want of consent. The first goes in the alert voice beside the
+   * tally, because whether the next pass owes that recipient anything depends on
+   * how far this one got — the scan's own catch says so: "a message whose
+   * `recordAutoEmailSend` committed is not owed again, and one whose enqueue
+   * transaction rolled back is". That is a question for a person, which is what
+   * an alert is for.
+   */
   const runNow = async () => {
     setRunResult(null);
+    setError(null);
     try {
-      const r = await api<{ queued: number; skipped: number }>('/admin/auto-emails/run', {
-        method: 'POST',
-      });
-      setRunResult(`Scan complete — ${r.queued} queued, ${r.skipped} skipped.`);
+      const r = await api<{
+        queued: number;
+        skipped: number;
+        suppressed?: number;
+        failed?: number;
+        declined?: boolean;
+      }>('/admin/auto-emails/run', { method: 'POST' });
+      if (r.declined) {
+        setError(
+          'The scan did not run — another pass is holding the campaign scan lock, so nothing was ' +
+            'sent or skipped. Try again in a moment; if it keeps declining the lock is stuck and ' +
+            'campaigns are not going out at all.',
+        );
+        return;
+      }
+      const suppressed = r.suppressed ?? 0;
+      const failed = r.failed ?? 0;
+      setRunResult(
+        `Scan complete — ${r.queued} queued, ${r.skipped} skipped` +
+          (suppressed > 0 ? `, ${suppressed} withheld for want of marketing consent` : '') +
+          '.',
+      );
+      if (failed > 0)
+        setError(
+          `${failed} candidate${failed === 1 ? '' : 's'} could not be processed — ${
+            failed === 1 ? 'that recipient was' : 'those recipients were'
+          } due and this pass did not message them. Check the service ` +
+            'log: a candidate whose send was already recorded will not be picked up again.',
+        );
     } catch (err) {
       setError(describeActionFailure(err, 'The campaign scan did not run.'));
     }
