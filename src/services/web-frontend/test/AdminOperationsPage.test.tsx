@@ -247,6 +247,44 @@ describe('AdminOperationsPage', () => {
     expect(await screen.findByText(/2 attempted, 2 delivered/)).toBeInTheDocument();
   });
 
+  /*
+   * R414 (M5). `retryDueDeliveries` counts `unsettled`, `superseded` and
+   * `reaped` apart from `failed` precisely because they are statements about us
+   * rather than about a receiver, and the note read neither — so a pass in
+   * which every POST landed and none was recorded reported "attempted, 0
+   * delivered", the same sentence as a pass in which every receiver was down.
+   */
+  it('names the endings that are ours rather than the receiver’s', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      '/admin/webhooks/retry': {
+        attempted: 5,
+        delivered: 0,
+        retrying: 0,
+        failed: 0,
+        reaped: 2,
+        superseded: 1,
+        unsettled: 4,
+      },
+    });
+    renderPage();
+    await screen.findByLabelText('Failed webhook deliveries');
+    await user.click(screen.getByRole('button', { name: 'Run retry sweep' }));
+    const note = await screen.findByText(/5 attempted, 0 delivered/);
+    expect(note.textContent).toContain('4 deliveries reached the receiver and could not be recorded');
+    expect(note.textContent).toContain('1 outcome was discarded because another sweeper held the row');
+    expect(note.textContent).toContain('2 deliveries had been abandoned mid-attempt');
+  });
+
+  it('says nothing extra about a clean pass, and reads an older build’s answer', async () => {
+    const user = userEvent.setup();
+    mockApi({ '/admin/webhooks/retry': { attempted: 3, delivered: 3 } });
+    renderPage();
+    await screen.findByLabelText('Failed webhook deliveries');
+    await user.click(screen.getByRole('button', { name: 'Run retry sweep' }));
+    expect(await screen.findByText('Retry sweep ran — 3 attempted, 3 delivered.')).toBeInTheDocument();
+  });
+
   it('explains the disabled replay button instead of leaving a dead control', async () => {
     mockApi();
     renderPage();

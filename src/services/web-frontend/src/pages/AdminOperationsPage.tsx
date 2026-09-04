@@ -251,16 +251,68 @@ export function AdminOperationsPage() {
     }
   };
 
-  /** The retry sweep, now — the same pass the interval runs. */
+  /**
+   * The retry sweep, now — the same pass the interval runs.
+   *
+   * WHAT THE NOTE LEFT OUT (R414, methodology M5). `retryDueDeliveries` answers
+   * with seven numbers, and its own field comments say why three of them are
+   * counted apart from `failed`: `superseded` and `unsettled` are "a statement
+   * about *us* rather than about any receiver", and `reaped` settles rows whose
+   * final attempt was lost with the process making it. This note read two of
+   * the seven, so `attempted − delivered` stood in for four different endings:
+   *
+   *   * a receiver that refused — the ordinary one, and the only one the note
+   *     could ever have meant;
+   *   * `unsettled` — the POST reached the partner and the settle write did
+   *     not land, so every one of those is a duplicate the partner will see
+   *     when the lease lapses and nothing else records;
+   *   * `superseded` — two sweepers overlapping on the same row, which is
+   *     exactly what pressing this button *while the interval runs* causes, so
+   *     the operator is the one who needs to hear it; and
+   *   * `reaped` — deliveries given up on for good in this pass.
+   *
+   * "12 attempted, 0 delivered" is the reading for all four, and only the first
+   * one is somebody else's problem to fix.
+   *
+   * Read defensively for the reason the two existing fields already are: this
+   * page is served to whatever build the fleet is on.
+   */
   const sweep = async () => {
     setBusy('sweep');
     setNote(null);
     setActionError(null);
     try {
-      const res = await api<{ attempted?: number; delivered?: number }>('/admin/webhooks/retry', {
+      const res = await api<{
+        attempted?: number;
+        delivered?: number;
+        reaped?: number;
+        superseded?: number;
+        unsettled?: number;
+      }>('/admin/webhooks/retry', {
         method: 'POST',
       });
-      setNote(`Retry sweep ran — ${res.attempted ?? 0} attempted, ${res.delivered ?? 0} delivered.`);
+      const reaped = res.reaped ?? 0;
+      const superseded = res.superseded ?? 0;
+      const unsettled = res.unsettled ?? 0;
+      const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+      const ours = [
+        unsettled > 0
+          ? `${plural(unsettled, 'delivery', 'deliveries')} reached the receiver and could not be ` +
+            'recorded — the partner will get those again when the lease lapses'
+          : null,
+        superseded > 0
+          ? `${plural(superseded, 'outcome was', 'outcomes were')} discarded because another sweeper ` +
+            'held the row — two sweeps are overlapping'
+          : null,
+        reaped > 0
+          ? `${plural(reaped, 'delivery', 'deliveries')} had been abandoned mid-attempt with no ` +
+            'retries left and settled as failed'
+          : null,
+      ].filter((s): s is string => s !== null);
+      setNote(
+        `Retry sweep ran — ${res.attempted ?? 0} attempted, ${res.delivered ?? 0} delivered.` +
+          (ours.length > 0 ? ` ${ours.join('. ')}.` : ''),
+      );
       await load();
     } catch (err) {
       setActionError(
