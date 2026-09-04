@@ -176,6 +176,28 @@ export function registerCommentRoutes(
       throw problems.unprocessable('Only sticky notes can be pinned');
 
     const updated = await updateComment(deps.pool, commentId, parsed.data, actorFor(principal));
+    /*
+     * The edit that arrived after the withdrawal (R418, methodology M4).
+     *
+     * `updateComment` returns null for exactly one reason: the row was gone by
+     * the time it took the lock. `loadEditable` above read it on another
+     * connection a few statements earlier, and the whole point of the DELETE
+     * route beside this one is that a second operator can withdraw a comment at
+     * any moment — two people on one thread is the ordinary case here.
+     *
+     * What that produced was a write reported as a success. Nothing was
+     * written, no `comment_edited` reached the spine, and the route answered
+     * 200 with `?? comment` — the row as it stood *before* the edit — so the
+     * editor's own tab redrew the old body under a saved state, and the
+     * broadcast below told every other open workspace to re-fetch a thread on
+     * account of an edit that had not happened.
+     *
+     * 404 is what the same request gets one moment later, when `loadEditable`
+     * is the thing that finds the row missing, and what the second withdrawal
+     * of a comment already gets. The sentence names the cause, because "not
+     * found" for a comment the person is looking at reads as a bug.
+     */
+    if (!updated) throw problems.notFound('This comment has been withdrawn');
     // The same frame the post above sends, for the same reason (R396, M3).
     // Three doors *create* a comment and all three broadcast; the two that
     // change one after the fact broadcast from nowhere, and the thread is the
@@ -192,7 +214,7 @@ export function registerCommentRoutes(
       comment_id: commentId,
       kind: comment.kind,
     });
-    return { comment: toPublicComment(updated ?? comment) };
+    return { comment: toPublicComment(updated) };
   });
 
   app.delete('/api/v1/comments/:commentId', { preHandler: app.authenticate }, async (req, reply) => {

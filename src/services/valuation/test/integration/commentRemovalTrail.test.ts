@@ -127,3 +127,93 @@ describe.skipIf(!dbUp)('a withdrawn comment on the spine', () => {
     expect((listed.json().comments as { id: string }[]).map((c) => c.id)).toContain(id);
   });
 });
+
+/**
+ * An edit that lands after the withdrawal (R418, methodology M4).
+ *
+ * `PATCH /comments/:id` reads the row through `loadEditable` on one connection
+ * and writes it under `FOR UPDATE` on another a few statements later. Two
+ * operators on one thread is the ordinary case here — the withdrawal route is
+ * right beside the edit — so the row can be gone in between, and `updateComment`
+ * says so by returning null.
+ *
+ * The route used to answer that with a 200 carrying the row as it stood
+ * *before* the edit: nothing written, no `comment_edited` on the spine, the
+ * editor's own tab redrawing the old body under a saved state, and a live frame
+ * telling every other open workspace to re-fetch on account of an edit that had
+ * not happened.
+ */
+describe.skipIf(!dbUp)('editing a comment that has just been withdrawn', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+  let valuationId: string;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ AUTO_PIPELINE: 'off', EMAIL_MODE: 'off' });
+    ops = await seedUser(ctx, { roles: ['admin'] });
+    const owner = await seedUser(ctx, { roles: ['valuation_user'] });
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(owner.token),
+      payload: { kind: '409a', company_name: 'Raced Edit Co' },
+    });
+    expect(created.statusCode).toBe(201);
+    valuationId = created.json().valuation.id as string;
+  }, 60_000);
+
+  afterAll(async () => ctx?.teardown());
+
+  it('refuses the edit rather than reporting the old body as saved', async () => {
+    const posted = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/comments`,
+      headers: authHeader(ops.token),
+      payload: { kind: 'note', body: 'the original wording' },
+    });
+    expect(posted.statusCode).toBe(201);
+    const commentId = posted.json().comment.id as string;
+
+    /*
+     * The window itself: the row is withdrawn between the route's own read of
+     * it and the locking write. Driven from the read rather than by timing —
+     * the authorisation read is a `pool.query`, and the write takes a pooled
+     * client of its own, so deleting here puts the route in exactly the state
+     * the race produces.
+     */
+    const realQuery = ctx.pool.query.bind(ctx.pool);
+    let armed = true;
+    (ctx.pool as { query: unknown }).query = async (...args: unknown[]) => {
+      const sql = typeof args[0] === 'string' ? args[0] : '';
+      const result = await (realQuery as (...a: unknown[]) => Promise<unknown>)(...args);
+      if (armed && /FROM valuation_comments c/.test(sql) && /c\.id = \$1/.test(sql)) {
+        armed = false;
+        await (realQuery as (...a: unknown[]) => Promise<unknown>)(
+          'DELETE FROM valuation_comments WHERE id = $1',
+          [commentId],
+        );
+      }
+      return result;
+    };
+
+    try {
+      const res = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/comments/${commentId}`,
+        headers: authHeader(ops.token),
+        payload: { body: 'the wording nobody will ever read' },
+      });
+      expect(res.statusCode).toBe(404);
+    } finally {
+      (ctx.pool as { query: unknown }).query = realQuery;
+    }
+
+    // And nothing on the spine claims the edit happened.
+    const { rows } = await ctx.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'comment_edited' AND payload->>'comment_id' = $2`,
+      [valuationId, commentId],
+    );
+    expect(rows[0]!.n).toBe('0');
+  });
+});
