@@ -168,9 +168,33 @@ function refuseTransition(reason: StageTransitionRefusal, from: string, to: stri
  * past SLA in Analysis" — so a mis-assignment sends one client's engagement
  * status to an unrelated one.
  *
- * Stricter than the reviewer check on `POST /workflow/reassign`, which only
- * asks that the user exist, and deliberately so: nothing automatically mails a
- * reviewer their queue, and this sweep runs on a timer.
+ * AND A CLOSED ACCOUNT IS THE ONE IT DID NOT CATCH (R416, methodology M3).
+ * This docstring used to end by calling itself "stricter than the reviewer
+ * check on `POST /workflow/reassign`, which only asks that the user exist".
+ * That stopped being true when `assertAssignable` was written: every other door
+ * that hands somebody work — the reviewer on reassign, on bulk and on `PATCH
+ * /valuations/:id`, and a review task's assignee — asks `assignableUser`, which
+ * refuses a **deactivated** account as well as a suspended one. This door asked
+ * neither directly. It caught suspension only as a side effect of `isOps`,
+ * because `ignored` subtracts every grant; `deleted_at` subtracts nothing from
+ * a role set, so a closed account walked straight through.
+ *
+ * Which is the axis this guard exists for. `analystChaseBlock` names `closed`
+ * first among the reasons the overdue sweep may not write to an assignee, and
+ * `deleted_at` is what the console's deactivation and SCIM's `active: false`
+ * both stamp. So the engagement could be handed, today, to an account the
+ * platform had already cut off from everything else: the pipeline board shows
+ * it owned, the sweep declines to chase anybody, and the SLA quietly stops
+ * being enforced on a file that looks assigned. `engagementAnalystLifecycle`
+ * had already written down the belief that this could not happen — "a test
+ * that assigned an already-closed analyst would pass on the route's own
+ * refusal" — with nothing in the route making it so.
+ *
+ * Checked before `isOps`, because a closed account keeps its roles: asked the
+ * other way round it would pass the ops test and fall out of the function
+ * having been refused nothing. The sentence is `assertAssignable`'s, for the
+ * reason that helper exists — the reader needs to know the id was right and the
+ * account is not, or they will go and check the id.
  */
 async function assertAssignableAnalyst(pool: pg.Pool, analystId: string): Promise<void> {
   const invalid = (detail: string): Error =>
@@ -189,6 +213,16 @@ async function assertAssignableAnalyst(pool: pg.Pool, analystId: string): Promis
     throw invalid(
       'There is no user with that id — the account may have been deleted since the list was ' +
         'loaded. Reload the page and pick the analyst again.',
+    );
+  // Separate from the missing case, and before the ops check: see the note
+  // above. Folding it into "there is no user with that id" is the refusal
+  // `assignableUser` says sends the reader off to re-check an id that was
+  // right.
+  if (user.deleted_at !== null)
+    throw invalid(
+      'That account is deactivated, so it cannot be assigned as the analyst — the overdue ' +
+        'sweep would not write to it and nothing about the engagement would reach them. Pick ' +
+        'someone else, or have an administrator restore the account first.',
     );
   // `isOps` rather than the role set directly: a suspended (`ignored`) account
   // keeps its `admin`/`reviewer` row, so the bare set says yes to somebody who
