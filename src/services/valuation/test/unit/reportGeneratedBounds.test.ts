@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   contentFromManagedTemplate,
   instantiateTemplate,
+  managedTemplateOverruns,
+  REPORT_HEADING_MAX,
+  REPORT_MAX_SECTIONS,
+  REPORT_SECTION_HTML_MAX,
   REPORT_TITLE_MAX,
   templateForKind,
 } from '../../src/domain/report.js';
@@ -65,5 +69,83 @@ describe('what a report generator produces fits the door that saves it', () => {
   it('the save door bounds the title by the shared constant', () => {
     const source = readFileSync(new URL('../../src/routes/reports.ts', import.meta.url), 'utf8');
     expect(source).toContain('title: nonBlankText(1, REPORT_TITLE_MAX)');
+  });
+});
+
+/**
+ * The other half of the same gap: the section count, the heading and the
+ * section HTML. A managed template body is an ops-authored megabyte with no
+ * schema between it and the stored report, and `contentFromManagedTemplate`
+ * splits it on every top-level `<h1>` it finds.
+ */
+describe('a managed template that composes an unsavable body is refused', () => {
+  const chapters = (n: number) =>
+    Array.from({ length: n }, (_, i) => `<h1>Chapter ${i + 1}</h1><p>Text.</p>`).join('');
+
+  it('accepts a body that composes within every editor bound', () => {
+    expect(managedTemplateOverruns({ name: 'ok', body: chapters(REPORT_MAX_SECTIONS) })).toEqual([]);
+  });
+
+  /** The finding: 80 headings in a body the create door accepts is 80 sections. */
+  it('names the section count when the split runs past the report ceiling', () => {
+    const [first, ...rest] = managedTemplateOverruns({ name: 'long', body: chapters(80) });
+    expect(rest).toEqual([]);
+    expect(first).toContain('80 sections');
+    expect(first).toContain(String(REPORT_MAX_SECTIONS));
+  });
+
+  it('names an over-long heading', () => {
+    const overruns = managedTemplateOverruns({
+      name: 'wide',
+      body: `<h1>${'H'.repeat(REPORT_HEADING_MAX + 1)}</h1><p>Text.</p>`,
+    });
+    expect(overruns).toHaveLength(1);
+    expect(overruns[0]).toContain('heading 1');
+    expect(overruns[0]).toContain(String(REPORT_HEADING_MAX));
+  });
+
+  it('names an over-long section body', () => {
+    const overruns = managedTemplateOverruns({
+      name: 'deep',
+      body: `<h1>One</h1><p>${'B'.repeat(REPORT_SECTION_HTML_MAX)}</p>`,
+    });
+    expect(overruns).toHaveLength(1);
+    expect(overruns[0]).toContain('section 1');
+    expect(overruns[0]).toContain(String(REPORT_SECTION_HTML_MAX));
+  });
+
+  /**
+   * Measured for the *widest* engagement, not the one in front of the author.
+   * A heading whose `{{company_name}}` fits today would overrun months later,
+   * on a valuation whose analyst has no idea a template is why they are stuck.
+   */
+  it('accounts for what a variable fills to, not what the marker costs', () => {
+    const body = `<h1>Valuation of {{company_name}}</h1><p>Text.</p>`;
+    expect(body.length).toBeLessThan(REPORT_HEADING_MAX);
+    const overruns = managedTemplateOverruns({ name: 'filled', body });
+    expect(overruns).toHaveLength(1);
+    expect(overruns[0]).toContain('heading 1');
+  });
+
+  /** Each door that can put a body in front of a report runs the check. */
+  it('is called on create, on patch and on activate', () => {
+    const source = readFileSync(new URL('../../src/routes/templates.ts', import.meta.url), 'utf8');
+    expect(source.match(/refuseUnsavableBody\(/g) ?? []).toHaveLength(4); // 1 definition + 3 doors
+  });
+});
+
+/**
+ * The two doors read one set of numbers, so the ceiling the generator is
+ * measured against cannot drift from the one the editor enforces.
+ */
+describe('the save door bounds a section by the shared constants', () => {
+  const source = readFileSync(new URL('../../src/routes/reports.ts', import.meta.url), 'utf8');
+
+  it.each([
+    ['heading', 'heading: nonBlankText(1, REPORT_HEADING_MAX)'],
+    ['section html', 'html: z.string().max(REPORT_SECTION_HTML_MAX)'],
+    ['section count', '.max(REPORT_MAX_SECTIONS)'],
+  ])('%s', (_field, spelling) => {
+    expect(source).toContain(spelling);
   });
 });

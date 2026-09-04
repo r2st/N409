@@ -1,5 +1,5 @@
 import { esc } from './exhibitHtml.js';
-import type { ValuationKind, ValuationState } from './valuation.js';
+import { VALUATION_KINDS, type ValuationKind, type ValuationState } from './valuation.js';
 
 /**
  * Report domain: versioned templates (features.md — "bound to template
@@ -150,6 +150,30 @@ export interface ReportContent {
  * for the two composers; `reportGeneratedBounds.test.ts` holds them to it.
  */
 export const REPORT_TITLE_MAX = 500;
+
+/**
+ * The editor's ceilings on a report body, shared with everything that
+ * *generates* one.
+ *
+ * `PutBody` in routes/reports.ts is the only schema a report body ever meets,
+ * and it is on the door an analyst saves through — never on the door a
+ * generator writes through. These three numbers are what that schema accepts:
+ * they are exported so the generators can be held to the same figures rather
+ * than to a copy of them.
+ *
+ * The section count is not arbitrary. `sanitizeHtml`'s own note reasons about
+ * "50 sections of 100,000 characters — the largest body the schema accepts",
+ * and `reportScale.test.ts` builds exactly that body as the render ceiling. A
+ * managed template can compose a body past all three, so that sentence was
+ * true only of bodies that arrive by PUT.
+ */
+export const REPORT_MAX_SECTIONS = 50;
+
+/** Per {@link REPORT_MAX_SECTIONS}: `heading` is `nonBlankText(1, 300)`. */
+export const REPORT_HEADING_MAX = 300;
+
+/** Per {@link REPORT_MAX_SECTIONS}: `html` is `z.string().max(100_000)`. */
+export const REPORT_SECTION_HTML_MAX = 100_000;
 
 export const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   'p',
@@ -2623,4 +2647,71 @@ export function contentFromManagedTemplate(
   if (sections.length === 0)
     sections.push({ key: 'body', heading: 'Report', html: sanitizeHtml(fillHtml(template.body)) });
   return { title: `${template.name} — ${vars.company_name}`, sections };
+}
+
+/**
+ * The worst engagement a template will ever be used on.
+ *
+ * A managed template's body is checked before it is stored, but what it
+ * *composes* depends on the valuation it is filled for, and the check has to
+ * hold for all of them. So every variable is set to the longest value its own
+ * door accepts: `company_name` is `.max(300)` on both valuation create and
+ * patch, `valuation_ref` is a 26-character ULID, `date` is `YYYY-MM-DD`, and
+ * `currency` is an ISO code. `kind` is the longest of the fifteen.
+ *
+ * Worst case rather than typical, deliberately: a template that only overruns
+ * for the company with the long name would overrun it months later, on an
+ * engagement whose analyst has no idea a template author is why they cannot
+ * save.
+ */
+function widestTemplateVars(): ReportTemplateVars {
+  const kind = [...VALUATION_KINDS].sort((a, b) => b.length - a.length)[0] as ValuationKind;
+  return {
+    company_name: 'W'.repeat(300),
+    kind,
+    valuation_ref: '0'.repeat(26),
+    date: '2026-12-31',
+    currency: 'USD',
+  };
+}
+
+/**
+ * Why a managed template body would compose a report the editor cannot save.
+ *
+ * The gap this closes (R421, methodology M6): `contentFromManagedTemplate`
+ * splits an ops-authored body on its top-level `<h1>`s, and nothing bounded
+ * the result. A megabyte of body — which `CreateBody` accepts — is 80 chapters
+ * if it carries 80 headings, each of them as long as the author cares to make
+ * it, and none of that meets a schema on the way in. The stored report was
+ * then over `REPORT_MAX_SECTIONS`, and every subsequent `PUT .../report` was
+ * refused: an analyst locked out of editing their own report by a template
+ * they cannot see, told only that an array may hold at most 50 elements.
+ *
+ * Refused at the authoring door rather than at report creation, because that
+ * is the only place a person can act on it. Truncating the body, dropping
+ * chapters past the fiftieth, or clamping a heading would each publish a
+ * report that is not the template ops wrote — and the failure would still be
+ * silent, just later and in the deliverable.
+ *
+ * Returns one message per bound crossed, in the order a reader would fix
+ * them; empty means the template composes a savable body for every engagement.
+ */
+export function managedTemplateOverruns(template: { name: string; body: string }): string[] {
+  const content = contentFromManagedTemplate(template, widestTemplateVars());
+  const problems: string[] = [];
+  if (content.sections.length > REPORT_MAX_SECTIONS)
+    problems.push(
+      `splits into ${content.sections.length} sections on its top-level <h1> headings; a report holds at most ${REPORT_MAX_SECTIONS}`,
+    );
+  const longHeading = content.sections.findIndex((s) => s.heading.length > REPORT_HEADING_MAX);
+  if (longHeading !== -1)
+    problems.push(
+      `heading ${longHeading + 1} is ${content.sections[longHeading]!.heading.length} characters once filled for the longest company name; the limit is ${REPORT_HEADING_MAX}`,
+    );
+  const longHtml = content.sections.findIndex((s) => s.html.length > REPORT_SECTION_HTML_MAX);
+  if (longHtml !== -1)
+    problems.push(
+      `section ${longHtml + 1} is ${content.sections[longHtml]!.html.length} characters of HTML once filled; the limit is ${REPORT_SECTION_HTML_MAX}`,
+    );
+  return problems;
 }

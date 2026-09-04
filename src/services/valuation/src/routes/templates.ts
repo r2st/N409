@@ -20,6 +20,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { REPORT_TEMPLATE_BODY_LIMIT } from './bodyLimits.js';
+import { managedTemplateOverruns } from '../domain/report.js';
 
 /**
  * Report template management (M4, P1 #20). Versioned like "409a.v53":
@@ -59,6 +60,27 @@ const ListQuery = z.object({
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Report templates are operations-only');
+}
+
+/**
+ * Refuses a template body that would compose a report the editor cannot save.
+ *
+ * The body is the input; the report is what it becomes, and only the report
+ * meets a schema. `managedTemplateOverruns` measures the composed shape
+ * against the editor's own ceilings — see its note for what an over-long body
+ * did to the analyst who inherited it.
+ *
+ * Called on every door that can put a body in front of a report: `POST` and
+ * `PATCH`, which write one, and `activate`, which is where a draft written
+ * before this check starts composing reports for real.
+ */
+function refuseUnsavableBody(name: string, body: string | null | undefined): void {
+  if (body == null) return;
+  const overruns = managedTemplateOverruns({ name, body });
+  if (overruns.length === 0) return;
+  throw problems.unprocessable(
+    `This template would compose a report the editor cannot save: it ${overruns.join('; and ')}.`,
+  );
 }
 
 /**
@@ -111,6 +133,7 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
       requireOps(principal);
       const parsed = CreateBody.safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid template', parsed.error);
+      refuseUnsavableBody(parsed.data.name, parsed.data.body);
       const template = await createTemplateVersion(deps.pool, {
         ...parsed.data,
         createdBy: principal.id,
@@ -140,6 +163,7 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
       if (template.status !== 'draft') {
         throw problems.conflict('Only draft templates are editable — create a new version instead');
       }
+      refuseUnsavableBody(template.name, parsed.data.body);
       const updated = await updateDraftTemplate(deps.pool, id, parsed.data);
       if (!updated) throw problems.conflict('Template is no longer a draft');
       await audit('template_updated', principal.id, updated, { fields: Object.keys(parsed.data) });
@@ -155,6 +179,7 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (template.status === 'archived') {
       throw problems.conflict('Archived versions cannot be re-activated — create a new version');
     }
+    refuseUnsavableBody(template.name, template.body);
     const activated = await activateTemplate(deps.pool, id);
     await audit('template_activated', principal.id, activated ?? template);
     return { template: serialize(activated ?? template) };

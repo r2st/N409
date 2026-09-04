@@ -9,6 +9,9 @@ import {
   contentFromManagedTemplate,
   DELIVERED_REPORT_STATES,
   instantiateTemplate,
+  REPORT_HEADING_MAX,
+  REPORT_MAX_SECTIONS,
+  REPORT_SECTION_HTML_MAX,
   REPORT_TITLE_MAX,
   reportStatusFor,
   sanitizeContent,
@@ -81,8 +84,8 @@ import { REPORT_BODY_LIMIT } from './bodyLimits.js';
 const SectionSchema = z
   .object({
     key: z.string().min(1).max(100),
-    heading: nonBlankText(1, 300),
-    html: z.string().max(100_000),
+    heading: nonBlankText(1, REPORT_HEADING_MAX),
+    html: z.string().max(REPORT_SECTION_HTML_MAX),
     /**
      * Optional so every client that predates the toggle keeps saving valid
      * bodies, and so a section the analyst has never touched carries no key at
@@ -128,7 +131,7 @@ const PutBody = z
         sections: z
           .array(SectionSchema)
           .min(1)
-          .max(50)
+          .max(REPORT_MAX_SECTIONS)
           .superRefine((sections, ctx) => {
             const seen = new Set<string>();
             for (const [i, section] of sections.entries()) {
