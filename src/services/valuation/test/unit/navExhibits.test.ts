@@ -133,6 +133,68 @@ describe('fund NAV exhibits', () => {
     expect(out).toContain('28.6%');
   });
 
+  /**
+   * The share count the mark was struck on, against the one the row now
+   * records (R411, methodology M4).
+   *
+   * `PATCH /funds/:id/positions/:pid` exists so a holding entered wrong can be
+   * corrected, and `fund_marks` cascades from the position rather than being
+   * recomputed by it. So the schedule prints the current quantity beside a fair
+   * value measured on the old one, and the NAV sums those stored figures. The
+   * module discloses rather than restates, which is the same rule the mark-date
+   * note beside it follows.
+   */
+  describe('a quantity that moved after the mark', () => {
+    const withMarkedQuantity = (positionQuantity: string, markQuantity: unknown): FundReportData => ({
+      fund,
+      positions: [
+        {
+          position: position({ id: 'p1', company_name: 'Northwind Robotics', quantity: positionQuantity }),
+          mark: mark({ position_id: 'p1', inputs: { quantity: markQuantity, quoted_price: 0.9 } }),
+        },
+      ],
+      lpTerms,
+    });
+
+    it('says so when the holding no longer records the count the mark used', () => {
+      const out = html(buildFundExhibits(withMarkedQuantity('2000000', 1_000_000), ctx));
+      expect(out).toContain('1 of 1 holdings record a quantity that differs');
+      expect(out).toContain('Northwind Robotics');
+      // Disclosed, not restated: the recorded figure still stands.
+      expect(out).toContain('$900,000');
+    });
+
+    it('says nothing when the mark was struck on the count the holding records', () => {
+      const out = html(buildFundExhibits(withMarkedQuantity('1000000', 1_000_000), ctx));
+      expect(out).not.toContain('record a quantity that differs');
+    });
+
+    /*
+     * A `calibrated_opm` mark prices a modelled equity value and stores no
+     * quantity, and a mark taken before the column existed stores none either.
+     * Neither is a holding whose count moved, and reporting them as one would
+     * put a change nobody made on a signed exhibit.
+     */
+    it('says nothing about a mark that records no quantity at all', () => {
+      const out = html(buildFundExhibits(withMarkedQuantity('2000000', undefined), ctx));
+      expect(out).not.toContain('record a quantity that differs');
+    });
+
+    it('says nothing about a holding that has never been marked', () => {
+      const out = html(
+        buildFundExhibits(
+          {
+            fund,
+            positions: [{ position: position({ id: 'p1', quantity: '2000000' }), mark: null }],
+            lpTerms,
+          },
+          ctx,
+        ),
+      );
+      expect(out).not.toContain('record a quantity that differs');
+    });
+  });
+
   describe('the date each mark speaks for', () => {
     /*
      * `latestMarks` takes the newest mark a holding has, whatever day it falls

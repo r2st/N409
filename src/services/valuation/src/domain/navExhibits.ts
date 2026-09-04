@@ -146,6 +146,17 @@ interface MarkedPosition {
   /** False when the position has never been marked and is carried at cost. */
   marked: boolean;
   measurementDate: string | null;
+  /**
+   * The share count the mark beside this holding was struck on, when the
+   * technique records one.
+   *
+   * `routes/funds.ts` stores it: a `market` mark is `quantity x quoted_price`
+   * and a `last_round` mark is `quantity x round_price_per_share`, and both
+   * default the quantity to the holding's own. A `calibrated_opm` mark prices
+   * a modelled value and has no share count in it, so this is null there and
+   * nothing below asks a question of it.
+   */
+  markedQuantity: number | null;
 }
 
 /**
@@ -168,6 +179,7 @@ function markedPositions(data: FundReportData): MarkedPosition[] {
       fairValue: mark ? (num(mark.fair_value) ?? costBasis) : costBasis,
       marked: mark !== null,
       measurementDate: mark ? isoDate(mark.measurement_date) : null,
+      markedQuantity: mark ? num(mark.inputs?.quantity) : null,
     };
   });
 }
@@ -231,6 +243,46 @@ function markDateNote(positions: MarkedPosition[], ctx: ExhibitContext): string 
   return sentences.length === 0 ? null : sentences.join(' ');
 }
 
+/**
+ * When a holding's share count has moved since the mark beside it was struck
+ * (R411, methodology M4).
+ *
+ * `fund_marks` cascades from the position and nothing recomputes it: `PATCH
+ * /funds/:id/positions/:pid` exists so an analyst can correct a holding entered
+ * wrong, and editing `quantity` leaves every mark already taken against the old
+ * one. The schedule then prints the *current* quantity in one column and the
+ * *stored* fair value in another, and the NAV rollup underneath sums those
+ * stored figures — so a holding corrected from 1,000 units to 2,000 is stated
+ * at a fair value struck on half of what the row says it holds, at an implied
+ * price per unit that appears nowhere and is half the quote the mark used.
+ *
+ * Disclosed rather than corrected, which is this module's standing rule and the
+ * one `markDateNote` above follows: these exhibits render what was recorded and
+ * must not restate it. Re-marking is the analyst's move and it is one POST.
+ *
+ * Only the techniques that record a share count. A `calibrated_opm` mark prices
+ * a modelled equity value and carries no quantity, so it has nothing to
+ * disagree with — and a mark that predates the column reads as null and is
+ * skipped, rather than being reported as a change nobody made.
+ */
+function markQuantityNote(positions: MarkedPosition[]): string | null {
+  const moved = positions.filter(
+    (p) => p.marked && p.markedQuantity !== null && p.markedQuantity !== p.quantity,
+  );
+  if (moved.length === 0) return null;
+  const names = moved
+    .slice(0, 3)
+    .map((p) => esc(p.name))
+    .join(', ');
+  const rest = moved.length > 3 ? `, and ${moved.length - 3} more` : '';
+  return (
+    `${moved.length} of ${positions.length} holdings record a quantity that differs from the one ` +
+    `their most recent mark was measured on (${names}${rest}). The fair value stated for each is ` +
+    'the figure that was recorded, not a restatement at the current quantity; re-mark the holding ' +
+    'to state it at the count shown.'
+  );
+}
+
 function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitContext): ReportPdfSection | null {
   if (positions.length === 0) return null;
   const rows = positions.map((p) => [
@@ -253,6 +305,7 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
   // it has not been marked rather than left to infer it from a zero gain.
   const unmarked = positions.filter((p) => !p.marked).length;
   const dateNote = markDateNote(positions, ctx);
+  const quantityNote = markQuantityNote(positions);
 
   return section('Exhibit — Portfolio Schedule', [
     P(
@@ -289,6 +342,7 @@ function portfolioScheduleExhibit(positions: MarkedPosition[], ctx: ExhibitConte
         )
       : null,
     dateNote === null ? null : P(dateNote),
+    quantityNote === null ? null : P(quantityNote),
   ]);
 }
 
