@@ -10,7 +10,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams, type ValuationParamsRow } from '../repos/params.js';
 import { listComparableItems } from '../repos/comparableItems.js';
 import { upsertOverwrite } from '../repos/overwrites.js';
-import { OVERWRITE_FIELDS_BY_KEY } from '../domain/overwrites.js';
+import { OVERWRITE_FIELDS_BY_KEY, validateOverwriteValue } from '../domain/overwrites.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import {
   findVolatilityEstimate,
@@ -83,6 +83,28 @@ const ESTIMATE_TIMEOUT_MS = 15_000;
  */
 const MAX_SERIES = 20;
 
+/**
+ * The `volatility` override field, and why this file needs it.
+ *
+ * Adopting an estimate writes `overwrites` for this field — see the apply
+ * route below — and `domain/overwrites.ts` declares a range for it:
+ * `{ min: 0.05, max: 3 }`. That range is enforced by `validateOverwriteValue`,
+ * which `routes/overwrites.ts` calls and this file did not, so the two doors
+ * onto one cell disagreed about what may be in it. `manual_override` was
+ * `gt(0).lt(5)`, wider at both ends, and an estimate pinned at 4.5 was adopted
+ * into a field whose own schema endpoint tells the overwrites tab the maximum
+ * is 3 — a value that screen then refuses to save back.
+ *
+ * Read once here rather than at each use: the field is a constant of that
+ * module, so an absent one is a programming error, and this is the point where
+ * it is cheap to say so.
+ */
+const VOLATILITY_FIELD = (() => {
+  const def = OVERWRITE_FIELDS_BY_KEY.get('volatility');
+  if (!def) throw new Error('The volatility override field is not defined');
+  return def;
+})();
+
 const EstimateBody = z
   .object({
     method: z.enum(VOLATILITY_METHODS).default('historical'),
@@ -94,7 +116,11 @@ const EstimateBody = z
      * recorded in the same table, with the same peer measurements beside it,
      * rather than as an unexplained number in a params field.
      */
-    manual_override: z.number().gt(0).lt(5).nullish(),
+    manual_override: z
+      .number()
+      .min(VOLATILITY_FIELD.min ?? 0)
+      .max(VOLATILITY_FIELD.max ?? Number.MAX_SAFE_INTEGER)
+      .nullish(),
   })
   .strict();
 
@@ -488,12 +514,31 @@ export function registerVolatilityRoutes(
       const estimate = await findVolatilityEstimate(deps.pool, valuation.id, estimateId);
       if (!estimate) throw problems.notFound();
 
-      const def = OVERWRITE_FIELDS_BY_KEY.get('volatility');
-      // The field is a constant of domain/overwrites.ts, so this is a
-      // programming error rather than a request the caller can fix. Thrown
-      // rather than answered, so it reaches the error handler as a 500 and the
-      // logs as a stack — a route that quietly wrote nothing would be worse.
-      if (!def) throw new Error('The volatility override field is not defined');
+      const def = VOLATILITY_FIELD;
+      /*
+       * The check `routes/overwrites.ts` makes on the same cell.
+       *
+       * This route imposes a figure on `volatility` exactly as a hand-typed
+       * override does — `upsertOverwrite` below, then `applyEngineInputs` — and
+       * it was the one of the two doors that never asked the field whether the
+       * figure was in range. `validateOverwriteValue`'s own note says the range
+       * "applies to `value` — the figure the analyst is imposing, which becomes
+       * the valuation's input and has to be one the model can stand behind",
+       * and this is that figure arriving by the other route.
+       *
+       * `manual_override` is bounded at the estimate door now, so the reachable
+       * case here is a *derived* recommendation: a peer set whose median sigma
+       * lands outside the range is a real measurement worth recording and not a
+       * figure to price a §409A off, so it is refused at adoption rather than
+       * at the run that produced it.
+       */
+      const outOfRange = validateOverwriteValue(def, estimate.recommended);
+      if (outOfRange) {
+        throw problems.unprocessable(
+          `This estimate recommends a volatility of ${estimate.recommended}, which cannot be ` +
+            `applied: ${outOfRange}.`,
+        );
+      }
 
       const before = appliedVolatility(await findParams(deps.pool, valuation.id));
       await upsertOverwrite(deps.pool, {
