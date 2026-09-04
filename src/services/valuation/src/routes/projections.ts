@@ -9,7 +9,7 @@ import { InternalServiceError, postJson, toProblem } from '../clients/internal.j
 import { PROJECTION_TERMINAL_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { applyEngineInputsWithin, findParams } from '../repos/params.js';
+import { applyEngineInputsWithin, findParams, lockParams } from '../repos/params.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import {
   findProjection,
@@ -503,23 +503,9 @@ export function registerProjectionRoutes(
       const run = await findProjection(deps.pool, valuation.id, projectionId);
       if (!run) throw problems.notFound();
 
-      const params = await findParams(deps.pool, valuation.id);
-      if (!params) throw problems.notFound();
-      const beforeIncome = adoptedIncome(params.engine_inputs);
-      const before = beforeIncome.flows;
-
-      const engineInputs = (params.engine_inputs ?? {}) as Record<string, unknown>;
-      const income =
-        engineInputs.income && typeof engineInputs.income === 'object'
-          ? { ...(engineInputs.income as Record<string, unknown>) }
-          : {};
-
       const revenues = run.projections.map((p) => p.revenue).filter((r) => Number.isFinite(r));
       const terminalEbitda = run.projections.at(-1)?.ebitda ?? null;
-
-      income.free_cash_flows = run.free_cash_flows;
       const wroteRevenues = revenues.length === run.free_cash_flows.length;
-      if (wroteRevenues) income.revenues = revenues;
 
       /*
        * A terminal-year EBITDA of zero or less is not a figure an exit multiple
@@ -538,29 +524,6 @@ export function registerProjectionRoutes(
        * record the basis as `fcff`, which is at least a denominator it names.
        */
       const adoptedMetric = terminalEbitda !== null && terminalEbitda > 0 ? terminalEbitda : null;
-      income.terminal_metric = adoptedMetric;
-      income.terminal_metric_basis = adoptedMetric === null ? null : 'ebitda';
-      /*
-       * The four fields just written, against the schema that owns the
-       * document — see `unstorableAdoption`. Checked after `terminal_metric`
-       * has been settled above, so the one field this route already guards is
-       * guarded once and the other three are guarded at all.
-       */
-      const unstorable = unstorableAdoption({
-        free_cash_flows: income.free_cash_flows,
-        // Only when this adoption set it. A revenue line the *analyst* left in
-        // the section is not this route's to refuse a run over.
-        ...(wroteRevenues ? { revenues: income.revenues } : {}),
-        terminal_metric: income.terminal_metric,
-        terminal_metric_basis: income.terminal_metric_basis,
-      });
-      if (unstorable) {
-        throw problems.unprocessable(
-          `This run cannot be adopted: ${unstorable}. The engagement's forecast is unchanged.`,
-        );
-      }
-
-      const afterIncome = adoptedIncome({ income });
 
       /*
        * BOTH WRITES OR NEITHER (R404, methodology M5).
@@ -586,15 +549,80 @@ export function registerProjectionRoutes(
        * The `projection_applied` admin event stays outside, with the estate's
        * other `recordAdminEvent` call sites; see `routes/volatility.ts`.
        */
-      const applied = await withTransaction(deps.pool, async (client) => {
+      const { applied, beforeIncome, afterIncome } = await withTransaction(deps.pool, async (client) => {
+        /*
+         * THE SECTION THIS ADOPTION MERGES INTO, READ UNDER THE ROW LOCK
+         * (R411, methodology M4).
+         *
+         * `applyEngineInputs` merges with jsonb `||`, which replaces a
+         * top-level key wholesale, so writing `{ income: {…} }` would drop
+         * every other field of the section — `discount_rate`,
+         * `terminal_growth`, `terminal_multiple`, the figures an analyst
+         * chose. It does not, because the adoption copies the stored section
+         * forward and writes its four fields into the copy. That copy is a
+         * read-modify-write, and it used to be read on the pool before the
+         * transaction was even opened: `withTransaction` waits for a
+         * connection, and a pool under contention is exactly the condition in
+         * which a second writer exists. A `PATCH /engine-inputs` landing in
+         * that gap was reverted whole, silently, by an adoption that never
+         * mentions a discount rate — and the DCF then concluded on a rate
+         * nobody had chosen.
+         *
+         * `lockParams` is `findParams` under the same `FOR UPDATE`
+         * `patchParamsWithin` takes, inside the transaction that writes. A
+         * concurrent editor either committed before this read or waits behind
+         * it. The refusals below move in with it, which is where they belong —
+         * both are about the document as it will actually be written, and a
+         * rolled-back transaction leaves the forecast exactly as the messages
+         * promise.
+         */
+        const params = await lockParams(client, valuation.id);
+        if (!params) throw problems.notFound();
+        const beforeIncome = adoptedIncome(params.engine_inputs);
+
+        const engineInputs = (params.engine_inputs ?? {}) as Record<string, unknown>;
+        const income =
+          engineInputs.income && typeof engineInputs.income === 'object'
+            ? { ...(engineInputs.income as Record<string, unknown>) }
+            : {};
+        income.free_cash_flows = run.free_cash_flows;
+        if (wroteRevenues) income.revenues = revenues;
+        income.terminal_metric = adoptedMetric;
+        income.terminal_metric_basis = adoptedMetric === null ? null : 'ebitda';
+
+        /*
+         * The four fields just written, against the schema that owns the
+         * document — see `unstorableAdoption`. Checked after `terminal_metric`
+         * has been settled above, so the one field this route already guards is
+         * guarded once and the other three are guarded at all.
+         */
+        const unstorable = unstorableAdoption({
+          free_cash_flows: income.free_cash_flows,
+          // Only when this adoption set it. A revenue line the *analyst* left in
+          // the section is not this route's to refuse a run over.
+          ...(wroteRevenues ? { revenues: income.revenues } : {}),
+          terminal_metric: income.terminal_metric,
+          terminal_metric_basis: income.terminal_metric_basis,
+        });
+        if (unstorable) {
+          throw problems.unprocessable(
+            `This run cannot be adopted: ${unstorable}. The engagement's forecast is unchanged.`,
+          );
+        }
+
         await applyEngineInputsWithin(
           client,
           valuation.id,
           { income },
           { actorType: 'human', actorId: principal.id, source: 'api' },
         );
-        return markProjectionApplied(client, valuation.id, projectionId, principal.id);
+        return {
+          applied: await markProjectionApplied(client, valuation.id, projectionId, principal.id),
+          beforeIncome,
+          afterIncome: adoptedIncome({ income }),
+        };
       });
+      const before = beforeIncome.flows;
       await audit(valuation, principal, 'projection_applied', {
         projection_id: projectionId,
         from: before,

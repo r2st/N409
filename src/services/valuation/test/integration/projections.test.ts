@@ -457,6 +457,68 @@ describe.skipIf(!dbUp)('financial projection', () => {
     expect(after.free_cash_flows).toEqual(created.free_cash_flows);
   });
 
+  /**
+   * …including the ones saved while the adoption was queueing (R411, M4).
+   *
+   * The test above proves the copy-forward exists; this one proves it reads the
+   * row it is about to write. `applyEngineInputs` merges with jsonb `||`, which
+   * replaces `income` wholesale, so the adoption keeps an analyst's
+   * `discount_rate` only by copying the stored section forward — and that read
+   * used to happen on the pool, before `withTransaction` had even asked for a
+   * connection. A pool waiting for one is exactly the condition under which a
+   * second writer exists, so a `PATCH /engine-inputs` landing in that gap was
+   * reverted whole by an adoption that never mentions a discount rate, and the
+   * DCF then concluded on a rate nobody had chosen.
+   *
+   * Driven, not raced: a second connection holds the params row while the
+   * adoption is in flight, saves the methodology, and commits. The adoption is
+   * behind the lock either way — the question this asks is whether it reads
+   * before or after it takes it.
+   */
+  it('keeps a methodology saved while the adoption was waiting for the row (R411)', async () => {
+    const target = await newValuation('LockedMergeCo');
+    const created = (await run(HEALTHY, ops.token, target)).json().projection;
+
+    const holder = await ctx.pool.connect();
+    let applied;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM valuation_params WHERE valuation_id = $1 FOR UPDATE', [target]);
+
+      const inFlight = apply(created.id, ops.token, target);
+      // Wait until the request is actually blocked on the row rather than
+      // guessing at a delay; a fixed sleep is the thing that goes flaky.
+      for (let i = 0; i < 200; i += 1) {
+        const { rows } = await ctx.pool.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND state = 'active' AND pid <> pg_backend_pid()`,
+        );
+        if (Number(rows[0]!.n) > 0) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+
+      // The analyst's save lands first, and commits.
+      await holder.query(
+        `UPDATE valuation_params
+            SET engine_inputs = engine_inputs || '{"income":{"discount_rate":0.18}}'::jsonb,
+                version = version + 1
+          WHERE valuation_id = $1`,
+        [target],
+      );
+      await holder.query('COMMIT');
+      applied = await inFlight;
+    } finally {
+      holder.release();
+    }
+
+    expect(applied.statusCode).toBe(200);
+    const after = await income(target);
+    // Read after the lock, so the rate the analyst just saved is carried
+    // forward rather than written over.
+    expect(after.discount_rate).toBe(0.18);
+    expect(after.free_cash_flows).toEqual(created.free_cash_flows);
+  });
+
   it('reports nothing to recalculate when the adoption moved nothing', async () => {
     const target = await newValuation('IdempotentCo');
     const created = (await run(HEALTHY, ops.token, target)).json().projection;
