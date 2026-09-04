@@ -113,6 +113,83 @@ const banded = (key: string) => {
 };
 /** Treasury publishes thirteen constant-maturity tenors; 100 leaves room for any of them. */
 const MAX_CURVE_POINTS = 100;
+
+/**
+ * A Treasury curve, held to the shape the engine will actually interpolate.
+ *
+ * The map is `{ maturity_years: yield }`, and the *keys* were checked by
+ * nothing: `z.record` bounds the values, the refine below bounds how many there
+ * are, and the comment beside it says "the engine reads the keys as numbers
+ * whether they arrive as strings or not" — which is an assumption about the
+ * keys, not a check on them. `wacc._normalize_curve` is where they are actually
+ * read, and it refuses four things this door stored under a 200:
+ *
+ *   * a key that is not a number — `{ "5 years": 0.04 }`, or a tenor written
+ *     `"5y"`, `"2Y"`, `"30-year"`;
+ *   * a key that is not positive — `{ "0": 0.04 }`, overnight expressed as
+ *     zero, and `{ "-1": 0.04 }`;
+ *   * two keys that coerce to the same maturity — its own docstring gives the
+ *     case, `{ "5": 0.04, "5.0": 0.05 }`, "interpolating strictly between them
+ *     divides by `m1 - m0` == 0";
+ *   * an empty curve — the branch `wacc.risk_free_rate` keeps deliberately
+ *     distinct from an absent one, so that clearing the last tenor is not
+ *     silently answered from the placeholder curve.
+ *
+ * Each of those is the shape R406 closed for `dlom`: the PATCH returns 200, the
+ * engagement looks configured, and the 422 arrives on whoever next presses
+ * Calculate — about a build-up input they may not have entered, named in the
+ * engine's vocabulary rather than the form's. It is worse here than for a
+ * discount, because the curve is *persisted and re-sent on every compute*: one
+ * bad tenor stops every calculation on the engagement until somebody finds it.
+ *
+ * The four checks are the engine's, restated at the door that stores them, and
+ * the coercion is deliberately the same one: `_num` is `float(value)`, which
+ * takes `" 5 "` and `"1e1"` and refuses `"5y"` and `""`. `Number()` agrees on
+ * all of those except the empty string, which it reads as 0 and which the
+ * positivity check then refuses anyway.
+ */
+const TreasuryCurve = z
+  .record(z.number().min(0).max(1))
+  .superRefine((curve, ctx) => {
+    const keys = Object.keys(curve);
+    if (keys.length > MAX_CURVE_POINTS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `At most ${MAX_CURVE_POINTS} treasury-curve points`,
+      });
+      return;
+    }
+    if (keys.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'A treasury curve with no tenors cannot be interpolated — omit treasury_curve to use the default curve.',
+      });
+      return;
+    }
+    const seen = new Map<number, string>();
+    for (const key of keys) {
+      const maturity = key.trim() === '' ? Number.NaN : Number(key);
+      if (!Number.isFinite(maturity) || maturity <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `Treasury-curve keys are maturities in years, so “${key}” is not one — a positive number, as in {"5": 0.042}.`,
+        });
+        continue;
+      }
+      const clash = seen.get(maturity);
+      if (clash !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `“${key}” and “${clash}” are the same maturity (${maturity}), and two yields at one tenor cannot be interpolated between.`,
+        });
+        continue;
+      }
+      seen.set(maturity, key);
+    }
+  });
 /** One override per market multiple in play, with headroom. */
 const MAX_CUSTOM_RANGES = 100;
 
@@ -292,19 +369,12 @@ export const ParamsPatchBody = z
         // terminal-value maths divides by it.
         forecast_horizon_years: banded('forecast_horizon_years').gt(0).optional(),
         risk_free_rate_override: z.number().min(0).max(1).optional(),
-        // { "5": 0.042 } — maturity in years to yield. The engine reads the
-        // keys as numbers whether they arrive as strings or not.
-        // Bounded on both axes. Every yield is already range-checked; the key
-        // count was not, and this map is persisted to `valuation_params` and
-        // re-sent to the engine on every compute. A curve is a dozen maturities
-        // — Treasury publishes thirteen — so 100 is generous and 50,000 (what a
-        // 1 MB body buys) is not a curve.
-        treasury_curve: z
-          .record(z.number().min(0).max(1))
-          .refine((v) => Object.keys(v).length <= MAX_CURVE_POINTS, {
-            message: `At most ${MAX_CURVE_POINTS} treasury-curve points`,
-          })
-          .optional(),
+        // { "5": 0.042 } — maturity in years to yield, bounded on all three
+        // axes: the yields by `z.record`, the point count and the maturities
+        // themselves by `TreasuryCurve`. This map is persisted to
+        // `valuation_params` and re-sent to the engine on every compute, so
+        // anything wrong with it is wrong with every calculation from here on.
+        treasury_curve: TreasuryCurve.optional(),
         company_specific_premium: z.number().min(-1).max(1).optional(),
         size_premium_override: z.number().min(-1).max(1).optional(),
         cost_of_debt: z.number().min(0).max(1).optional(),
