@@ -319,6 +319,33 @@ describe('AdminRetentionPage', () => {
     await screen.findByText('Sweep complete: 12 archived, 3 held.');
   });
 
+  /*
+   * R414 (M5). `SweepResult` carries `purged` — outbox rows `sweepOutbox`
+   * deletes outright, taking their delivery events by cascade — and the note
+   * read `archived` and `skipped_hold` only. Archival has a Restore button
+   * three rows down; this half has nothing, and it was the half the control
+   * did not mention.
+   */
+  it('names the outbox rows the sweep destroyed', async () => {
+    mockApi(() => jsonResponse({ result: { archived: 0, skipped_hold: 0, purged: 431 } }));
+    renderPage();
+    await loaded();
+
+    await userEvent.click(screen.getByRole('button', { name: /Run archival sweep/i }));
+    await screen.findByText(
+      'Sweep complete: 0 archived, 0 held, 431 outbox messages deleted for good.',
+    );
+  });
+
+  it('says nothing about deletions when there were none', async () => {
+    mockApi(() => jsonResponse({ result: { archived: 2, skipped_hold: 0, purged: 0 } }));
+    renderPage();
+    await loaded();
+
+    await userEvent.click(screen.getByRole('button', { name: /Run archival sweep/i }));
+    await screen.findByText('Sweep complete: 2 archived, 0 held.');
+  });
+
   it('reports a failed sweep rather than reading as a no-op success', async () => {
     // Regression: the sweep path had no catch either — a failed sweep looked
     // exactly like a sweep that found nothing to archive.

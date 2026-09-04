@@ -324,11 +324,38 @@ export function AdminRetentionPage() {
       setNote(null);
       setError(null);
       try {
-        const { result } = await api<{ result: { archived: number; skipped_hold: number } }>(
-          '/admin/retention/run',
-          { method: 'POST' },
+        /*
+         * THE HALF THAT CANNOT BE UNDONE WAS THE HALF NOT REPORTED (R414,
+         * methodology M5). `SweepResult` carries three numbers and this note
+         * read two of them. `archived` is reversible and has a Restore button
+         * three rows down; `purged` is `sweepOutbox`, which the route's own
+         * comment calls "the destructive one" — outbox rows deleted outright
+         * under the `email_outbox` policy, taking `email_delivery_events` with
+         * them by cascade.
+         *
+         * So the sentence an administrator got after pressing the button
+         * described only the recoverable work, and a pass that destroyed a
+         * year of client correspondence and archived nothing said "Sweep
+         * complete: 0 archived, 0 held." The deletions are in the decision log
+         * this page reloads underneath, which is where the audit answer lives —
+         * but the operator is owed the number by the control they just used,
+         * not by a table they have to go and read.
+         *
+         * `?? 0` because this note must not turn an older build's body into a
+         * claim that nothing was deleted; a build that does not send the field
+         * simply keeps the sentence it had.
+         */
+        const { result } = await api<{
+          result: { archived: number; skipped_hold: number; purged?: number };
+        }>('/admin/retention/run', { method: 'POST' });
+        const purged = result.purged ?? 0;
+        setNote(
+          `Sweep complete: ${result.archived} archived, ${result.skipped_hold} held` +
+            (purged > 0
+              ? `, ${purged} outbox message${purged === 1 ? '' : 's'} deleted for good`
+              : '') +
+            '.',
         );
-        setNote(`Sweep complete: ${result.archived} archived, ${result.skipped_hold} held.`);
         await load();
       } catch (err) {
         setError(describeActionFailure(err, 'Could not run the archival sweep.'));
