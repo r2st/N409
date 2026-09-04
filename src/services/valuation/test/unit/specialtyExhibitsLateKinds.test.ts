@@ -55,13 +55,47 @@ describe('ASC 820 fair value measurement', () => {
     expect(exhibit().heading).toContain('820-10-50');
   });
 
-  it('prints the hierarchy with each level as a share of the total', () => {
+  it('prints the hierarchy with each level as a share of the categorised total', () => {
     const html = exhibit().html;
     expect(html).toContain('$4,200,000'); // level 1
     expect(html).toContain('$2,650,000'); // level 2
     expect(html).toContain('$7,550,000'); // level 3
-    expect(html).toContain('$17,500,000'); // total
-    expect(html).toContain('43.1%'); // level 3 as a share
+    expect(html).toContain('$14,400,000'); // the three levels, footed
+    expect(html).toContain('52.4%'); // level 3 as a share of what the table shows
+  });
+
+  /*
+   * R407 (M2): the three levels sum to the *categorised* total. A
+   * NAV-practical-expedient position is inside `total_fair_value` and outside
+   * the hierarchy (ASC 820-10-35-59), so footing this table at the statement
+   * total published an Amount column that did not add to its own total and a
+   * percentage column that did not add to the 100.0% beside it — 24.0 + 15.1 +
+   * 43.1 = 82.2 on the sample, against a footed 100.0%.
+   */
+  it('foots the hierarchy at a total its own rows add up to', () => {
+    const html = exhibit().html;
+    expect(html).toContain('Total categorised in the fair value hierarchy');
+    // 4,200,000 + 2,650,000 + 7,550,000 = 14,400,000, and the shares of it.
+    expect(html).toContain('29.2%'); // level 1
+    expect(html).toContain('18.4%'); // level 2
+    expect(html).toContain('52.4%'); // level 3 — sums to 100.0%
+    // The statement total is reached only through the reconciling line.
+    expect(html).not.toContain('43.1%');
+  });
+
+  it('keeps footing at the statement total when nothing is held at NAV', () => {
+    // With no expedient line, categorised *is* the total and the foot says so.
+    const noNav = {
+      ...SAMPLE_820_RESULT,
+      by_level: { level_1: 4_200_000, level_2: 2_650_000, level_3: 7_550_000 },
+      categorized_fair_value: 14_400_000,
+      total_fair_value: 14_400_000,
+      nav_practical_expedient: { fair_value: 0, position_count: 0, note: 'n/a' },
+    };
+    const html = only('820', noNav).html;
+    expect(html).toContain('Total fair value');
+    expect(html).not.toContain('Total categorised in the fair value hierarchy');
+    expect(html).toContain('52.4%');
   });
 
   it('reconciles the NAV practical expedient to the statement total', () => {

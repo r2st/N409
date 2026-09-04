@@ -1043,28 +1043,59 @@ function fairValue820Exhibit(
   const navAmount = num(nav?.fair_value);
   const categorised = num(specialty.categorized_fair_value);
 
+  /*
+   * THE HIERARCHY TABLE FOOTS AT THE CATEGORISED TOTAL, NOT THE STATEMENT
+   * TOTAL (round 407, methodology M2).
+   *
+   * A NAV-practical-expedient position is inside `total_fair_value` and
+   * outside the three levels — the engine's own aggregation says so
+   * (`fair_value_820`: "outside the table but inside the total", ASC
+   * 820-10-35-59), which is the whole reason the reconciling line below
+   * exists. Striking this table's percentages on `total` and footing it at
+   * `total` therefore published a schedule that failed both of the checks a
+   * reader runs on it: the Amount column did not add to its own total, and the
+   * percentage column did not add to the 100.0% printed beside it.
+   *
+   * A portfolio of $2m Level 1, $3m Level 2, $5m Level 3 and a $10m fund held
+   * at NAV printed 10.0% / 15.0% / 25.0% under a footed "100.0%", over an
+   * Amount column summing to $10m against a stated $20m total. Every figure in
+   * it was individually right.
+   *
+   * Summed from the rows rather than read from `categorized_fair_value` so the
+   * denominator is by construction the amounts printed above it, including on
+   * a stored run from before the engine reported that field.
+   */
+  const levelRows = [
+    ['Level 1 — quoted prices in active markets', 'level_1'],
+    ['Level 2 — other observable inputs', 'level_2'],
+    ['Level 3 — unobservable inputs', 'level_3'],
+  ].map(([caption, key]) => ({ caption: caption!, amount: num(byLevel[key!]) ?? 0 }));
+  const categorisedTotal = levelRows.reduce((sum, r) => sum + r.amount, 0);
+  const navReconciles = navAmount !== null && navAmount !== 0;
+
   const hierarchy = table({
     head: ['Fair value hierarchy', 'Amount', '% of total'],
-    rows: [
-      ['Level 1 — quoted prices in active markets', 'level_1'],
-      ['Level 2 — other observable inputs', 'level_2'],
-      ['Level 3 — unobservable inputs', 'level_3'],
-    ].map(([caption, key]) => {
-      const amount = num(byLevel[key!]) ?? 0;
-      return [caption!, shown(amount, ctx), total > 0 ? formatPercent(amount / total) : '—'];
-    }),
-    foot: ['Total fair value', shown(total, ctx), '100.0%'],
+    rows: levelRows.map((r) => [
+      r.caption,
+      shown(r.amount, ctx),
+      categorisedTotal > 0 ? formatPercent(r.amount / categorisedTotal) : '—',
+    ]),
+    foot: [
+      navReconciles ? 'Total categorised in the fair value hierarchy' : 'Total fair value',
+      shown(categorisedTotal, ctx),
+      '100.0%',
+    ],
   });
 
   // Only when there is one. The NAV expedient line reconciles the hierarchy to
   // the statement total (820-10-35-59) and reads as a fourth level if it is
   // printed at zero for a portfolio that holds no such investment.
   const navLine =
-    navAmount !== null && navAmount !== 0
+    navReconciles
       ? table({
           head: ['Reconciling item', 'Amount'],
           rows: [
-            ['Categorised in the hierarchy', categorised === null ? '—' : shown(categorised, ctx)],
+            ['Categorised in the hierarchy', shown(categorised ?? categorisedTotal, ctx)],
             ['Measured at net asset value as a practical expedient', shown(navAmount, ctx)],
           ],
           foot: ['Total per the statement of financial position', shown(total, ctx)],
