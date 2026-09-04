@@ -85,6 +85,12 @@ const DECISION_SETS = [
   // take. A capped answer here is not a short list, it is a purge that
   // leaves engagements behind and a preview that said it would not.
   'valuationPurge.ts:findValuationIdsByCompanyName',
+  // The campaigns that hold a template against deletion, which R374 put in the
+  // 409 by name because "referenced by an auto email campaign" is the reason
+  // without the referent. The list *is* the remedy: capped, an administrator
+  // detaches the five they were shown, presses delete again and is refused by
+  // the sixth — the same dead end R374 removed, one round trip further in.
+  'communications.ts:campaignsUsingTemplate',
 ];
 
 const BOUNDED: Record<string, Bound> = {
@@ -144,6 +150,10 @@ const BOUNDED: Record<string, Bound> = {
   'params.ts:findParamsByValuationIds': {
     bound: 'caller',
     why: 'One params row per valuation id handed in.',
+  },
+  'params.ts:findParamsHeadsByValuationIds': {
+    bound: 'caller',
+    why: 'The narrow twin of the reader above, over the same UNIQUE (valuation_id): one row per id handed in.',
   },
   'users.ts:findUsersByIds': {
     bound: 'caller',
