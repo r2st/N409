@@ -16,6 +16,7 @@ import {
   type FetchFn,
   type HrisProvider,
   type ProviderCredentials,
+  type RejectedGrant,
 } from '../clients/hris.js';
 import {
   existingGrantExternalIds,
@@ -126,6 +127,16 @@ export interface HrisSyncOutcome {
    * so `found + rejected` is what the provider actually sent.
    */
   grants_rejected: number;
+  /**
+   * Which of them, and why — a prefix, capped in `clients/hris.ts`. `grants_
+   * rejected` alone names a count and not a record; a roster of hundreds is
+   * not a population an analyst can scan by eye looking for the handful that
+   * came up short, and "check the record in the provider" with nothing to
+   * search for is not something a person can act on.
+   */
+  grants_rejected_detail: RejectedGrant[];
+  /** True when `grants_rejected` is larger than `grants_rejected_detail.length`. */
+  grants_rejected_detail_truncated: boolean;
   external_company_name: string | null;
 }
 
@@ -432,6 +443,8 @@ export async function syncHrisConnection(
     grants_created: created,
     grants_skipped: skipped,
     grants_rejected: pull.rejected,
+    grants_rejected_detail: pull.rejectedDetail,
+    grants_rejected_detail_truncated: pull.rejectedDetailTruncated,
     external_company_name: pull.external_company_name,
   };
   try {

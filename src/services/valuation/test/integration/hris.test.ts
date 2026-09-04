@@ -421,6 +421,72 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     expect(grants.map((g) => g.external_id)).toEqual(['good-1']);
   });
 
+  /**
+   * R433, M19: `grants_rejected: 1` on its own names nothing an analyst can
+   * search for in the provider. The wire response now carries which record
+   * and why, over the wire and not only in the unit-level mapper.
+   */
+  it('names the rejected grant on the wire, not just its count', async () => {
+    rosterBody = {
+      companyName: 'Acme',
+      employees: [
+        {
+          id: 'bad',
+          fullName: 'Bad Record',
+          workEmail: 'bad@acme.com',
+          equityGrants: [{ id: 'bad-1', optionsGranted: 100, strikePrice: -5, grantDate: '2025-03-01' }],
+        },
+      ],
+    };
+    const v = await connectedValuation();
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    expect(pull.json()).toMatchObject({
+      grants_rejected: 1,
+      grants_rejected_detail: [
+        { employee: 'Bad Record', external_id: 'bad-1', reason: 'exercise price is negative or implausibly large' },
+      ],
+      grants_rejected_detail_truncated: false,
+    });
+  });
+
+  /**
+   * The regression this round caught: a rejected-for-its-name grant used to
+   * put that same unstorable name straight into the detail array, which is
+   * serialised into `last_sync_summary` — a jsonb column that refuses a NUL
+   * byte exactly as `grantee_name` does. The pull would have failed *because*
+   * it was reporting the very record it was refusing to store.
+   */
+  it('does not fail the sync while reporting a rejected grant whose own name is unstorable', async () => {
+    rosterBody = {
+      companyName: 'Acme',
+      employees: [
+        {
+          id: 'bad',
+          fullName: `Ada${String.fromCharCode(0)}Lovelace`,
+          workEmail: 'bad@acme.com',
+          equityGrants: [{ id: 'bad-1', optionsGranted: 100, strikePrice: 1, grantDate: '2025-03-01' }],
+        },
+      ],
+    };
+    const v = await connectedValuation();
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    expect(pull.statusCode).toBe(200);
+    expect(pull.json()).toMatchObject({
+      grants_rejected: 1,
+      grants_rejected_detail: [
+        { employee: '(name could not be stored)', external_id: 'bad-1', reason: 'the employee name could not be stored' },
+      ],
+    });
+  });
+
   it('leaves the connection healthy after rejecting a record, so the next sync runs', async () => {
     rosterBody = {
       companyName: 'Acme',

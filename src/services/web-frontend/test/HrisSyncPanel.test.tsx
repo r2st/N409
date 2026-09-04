@@ -119,6 +119,52 @@ describe('HrisSyncPanel (feature 11)', () => {
     expect(await screen.findByText(/2 grants were skipped/)).toBeInTheDocument();
   });
 
+  it('names the employee and the reason for a rejected grant, not just the count', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/hris/rippling/pull': () =>
+        jsonResponse({
+          roster_count: 12,
+          grants_found: 6,
+          grants_created: 5,
+          grants_skipped: 0,
+          grants_rejected: 1,
+          grants_rejected_detail: [
+            { employee: 'Ada Lovelace', external_id: 'g-1', reason: 'exercise price is negative or implausibly large' },
+          ],
+          grants_rejected_detail_truncated: false,
+        }),
+    });
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Import now' }));
+    expect(
+      await screen.findByText(/Ada Lovelace \(exercise price is negative or implausibly large\)/),
+    ).toBeInTheDocument();
+  });
+
+  it('folds the remainder into a count once the named examples run out', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/hris/rippling/pull': () =>
+        jsonResponse({
+          roster_count: 12,
+          grants_found: 6,
+          grants_created: 1,
+          grants_skipped: 0,
+          grants_rejected: 5,
+          grants_rejected_detail: [
+            { employee: 'Ada Lovelace', external_id: 'g-1', reason: 'no usable grant date' },
+            { employee: 'Grace Hopper', external_id: 'g-2', reason: 'option count is out of range' },
+            { employee: 'Hedy Lamarr', external_id: 'g-3', reason: 'no option count on the record, or zero' },
+          ],
+          grants_rejected_detail_truncated: false,
+        }),
+    });
+    renderPanel(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Import now' }));
+    expect(await screen.findByText(/, and 2 more\. Check these records in the provider\./)).toBeInTheDocument();
+  });
+
   it('says nothing about rejected grants when the provider sent none', async () => {
     const user = userEvent.setup();
     mockApi({

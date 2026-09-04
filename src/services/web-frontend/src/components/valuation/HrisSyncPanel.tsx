@@ -41,6 +41,12 @@ interface ProviderStatus {
   configured: boolean;
   connection: Connection | null;
 }
+interface RejectedGrant {
+  employee: string;
+  external_id: string | null;
+  reason: string;
+}
+
 interface PullResult {
   roster_count: number;
   grants_found: number;
@@ -55,6 +61,38 @@ interface PullResult {
    * grants imported" and has no way to know two are missing.
    */
   grants_rejected: number;
+  /**
+   * Which of them, and why — a prefix. A count on its own names nothing an
+   * analyst can search for in a roster of hundreds; "check the record in the
+   * provider" with no record named is not an instruction anyone can follow.
+   */
+  grants_rejected_detail: RejectedGrant[];
+  grants_rejected_detail_truncated: boolean;
+}
+
+/** How many named examples the sync note shows inline before falling back to "and N more". */
+const REJECTED_GRANTS_SHOWN = 3;
+
+/**
+ * "5 grants were skipped" told an analyst nothing to go search for in a
+ * roster of hundreds. Names up to {@link REJECTED_GRANTS_SHOWN} of them with
+ * the reason the importer gave, and folds the rest into a count — an older
+ * server that answers with no detail array falls back to the count-only
+ * sentence this replaced.
+ */
+function describeRejectedGrants(r: PullResult): string {
+  const label = r.grants_rejected === 1 ? 'grant was' : 'grants were';
+  const shown = (r.grants_rejected_detail ?? []).slice(0, REJECTED_GRANTS_SHOWN);
+  if (shown.length === 0) {
+    return `${r.grants_rejected} ${label} skipped — the provider's record could not be stored; check the record in the provider.`;
+  }
+  const examples = shown.map((d) => `${d.employee} (${d.reason})`).join('; ');
+  const remainder = r.grants_rejected - shown.length;
+  return (
+    `${r.grants_rejected} ${label} skipped — the provider's record could not be stored: ${examples}` +
+    (remainder > 0 ? `, and ${remainder} more` : '') +
+    '. Check these records in the provider.'
+  );
 }
 
 /**
@@ -156,9 +194,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
       const r = await api<PullResult>(`/valuations/${valuationId}/hris/${provider}/pull`, { method: 'POST' });
       setNote(
         `Synced ${r.roster_count} employees · ${r.grants_created} grants imported, ${r.grants_skipped} already present.` +
-          (r.grants_rejected
-            ? ` ${r.grants_rejected} ${r.grants_rejected === 1 ? 'grant was' : 'grants were'} skipped — the provider's record could not be stored; check the record in the provider.`
-            : ''),
+          (r.grants_rejected ? ` ${describeRejectedGrants(r)}` : ''),
       );
       onImported();
       await load();

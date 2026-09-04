@@ -268,6 +268,55 @@ describe('the import is held to the bounds POST /grants enforces', () => {
     expect(rejected).toBe(1);
   });
 
+  /**
+   * R433, M19: a count alone does not tell an analyst which employee's grant
+   * to go check in the provider, or why. `rejectedDetail` is the answer, and
+   * each reason names the fact that actually failed rather than a category
+   * noun that fits all seven.
+   */
+  it.each([
+    [{ optionsGranted: 3_000_000_000 }, 'option count is out of range', 'g1'],
+    [{ optionsGranted: 0 }, 'no option count on the record, or zero', 'g1'],
+    [{ strikePrice: -0.01 }, 'exercise price is negative or implausibly large', 'g1'],
+    [{ id: 'g'.repeat(4000) }, "the provider's id for this grant could not be stored", null],
+    [{ grantDate: '0000-03-01' }, 'no usable grant date', 'g1'],
+  ])('names which fact failed: %s -> %s', (patch, reason, externalId) => {
+    const { rejectedDetail } = withGrant({ ...GOOD_GRANT, ...patch });
+    expect(rejectedDetail).toEqual([{ employee: 'Ada Lovelace', external_id: externalId, reason }]);
+  });
+
+  it('names the employee even when the id it was rejected under is unstorable', () => {
+    const { rejectedDetail } = withGrant({ ...GOOD_GRANT, id: `g${NUL}1` });
+    expect(rejectedDetail).toEqual([
+      { employee: 'Ada Lovelace', external_id: null, reason: "the provider's id for this grant could not be stored" },
+    ]);
+  });
+
+  /**
+   * The bug this test caught: `rejectedDetail` first carried the raw provider
+   * name verbatim, and a name is exactly the field this grant was rejected
+   * for not being storable — so the detail array itself then carried the
+   * same unstorable string into `last_sync_summary` (a jsonb column) and into
+   * the pull's own JSON response.
+   */
+  it('substitutes a fallback label rather than repeating the unstorable name', () => {
+    const { rejectedDetail } = withGrant(GOOD_GRANT, {
+      fullName: `Ada${NUL}Lovelace`,
+      firstName: null,
+      lastName: null,
+    });
+    expect(rejectedDetail).toEqual([
+      { employee: '(name could not be stored)', external_id: 'g1', reason: 'the employee name could not be stored' },
+    ]);
+  });
+
+  it('caps the named examples independently of the count, past MAX_REJECTED_DETAIL', () => {
+    const grants = Array.from({ length: 25 }, (_, i) => ({ ...GOOD_GRANT, id: `bad-${i}`, strikePrice: -1 }));
+    const { rejected, rejectedDetail } = mapEmployees({ employees: [employee({ equityGrants: grants })] });
+    expect(rejected).toBe(25);
+    expect(rejectedDetail).toHaveLength(20);
+  });
+
   it('still imports a grant for an employee the provider named nothing', () => {
     // 'Unknown' is the mapper's long-standing fallback for a record with no
     // name at all, and it is storable — so this is not the case above.

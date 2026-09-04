@@ -297,18 +297,44 @@ export interface HrisPull {
   grants: MappedGrant[];
   /** Grants the provider sent that this platform will not store. */
   rejected: number;
+  /**
+   * Which of them, and why — a prefix, capped at {@link MAX_REJECTED_DETAIL}.
+   * `rejected` alone tells an analyst a number came up short of what the
+   * provider reported and nothing about which employee to go check, and a
+   * roster is exactly the population where "5 of 400" is not a search an
+   * analyst can do by eye.
+   */
+  rejectedDetail: RejectedGrant[];
+  /** True when `rejected` is larger than `rejectedDetail.length`. */
+  rejectedDetailTruncated: boolean;
 }
+
+/** One grant the provider sent that this platform declined to store. */
+export interface RejectedGrant {
+  employee: string;
+  /** Storable form of the provider's own id, when it had one worth keeping. */
+  external_id: string | null;
+  reason: string;
+}
+
+/** Named examples are a display list, not the accounting figure — capped like every other one. */
+const MAX_REJECTED_DETAIL = 20;
 
 /**
  * Normalise a provider equity grant into the ASC 718 grant shape. Providers
  * expose vesting as {months, cliff, frequency}; sensible 48/12/1 defaults fill
  * gaps (the analyst can adjust after import).
+ *
+ * Returns the reason for a grant this function declines, rather than a bare
+ * `null`: the checks below are independent facts about the provider's record,
+ * and the reason is what turns `rejectedDetail` from a name with no diagnosis
+ * into something an analyst can go fix at the source.
  */
 function mapGrant(
   raw: Record<string, unknown>,
   granteeName: string,
   granteeEmail: string | null,
-): MappedGrant | null {
+): { grant: MappedGrant } | { reason: string } {
   const options = toNum(raw.optionsGranted ?? raw.shares ?? raw.quantity);
   const grantDate = toDate(raw.grantDate ?? raw.issueDate ?? raw.date);
   // `String(raw.id)` turned an object into `"[object Object]"` and a 5 KB
@@ -316,20 +342,24 @@ function mapGrant(
   // idempotent, so an unstorable one is not a field to drop — it is a grant
   // that would be re-imported on every pass.
   const externalId = storableText(raw.id ?? raw.grantId, MAX_EXTERNAL_ID);
-  if (!options || options <= 0 || !grantDate || !externalId) return null;
+  if (!options || options <= 0) return { reason: 'no option count on the record, or zero' };
+  if (!grantDate) return { reason: 'no usable grant date' };
+  if (!externalId) return { reason: "the provider's id for this grant could not be stored" };
   // `Math.round` first, because that is the value the column receives:
   // `1e300` is a perfectly finite number and an `integer` it is not.
   const optionsCount = Math.round(options);
-  if (!Number.isSafeInteger(optionsCount) || optionsCount < 1 || optionsCount > INT4_MAX) return null;
+  if (!Number.isSafeInteger(optionsCount) || optionsCount < 1 || optionsCount > INT4_MAX)
+    return { reason: 'option count is out of range' };
   // `grantee_name` is `NOT NULL`, so an unstorable one has nothing to fall back
   // to; the manual route bounds it at 200 and so does this.
   const name = storableText(granteeName, MAX_GRANTEE_NAME);
-  if (!name) return null;
+  if (!name) return { reason: 'the employee name could not be stored' };
   // The strike is a `numeric CHECK (>= 0)` and the form stops at 1e9. Refused
   // rather than clamped: a price is the grant's economics, and a clamped one is
   // a number nobody chose sitting in an ASC 718 expense calculation.
   const exercisePrice = toNum(raw.strikePrice ?? raw.exercisePrice) ?? 0;
-  if (exercisePrice < 0 || exercisePrice > MAX_EXERCISE_PRICE) return null;
+  if (exercisePrice < 0 || exercisePrice > MAX_EXERCISE_PRICE)
+    return { reason: 'exercise price is negative or implausibly large' };
   const vesting = (raw.vesting ?? raw.vestingSchedule ?? {}) as Record<string, unknown>;
   // Bounded to the same range the grant routes enforce in zod. This path wrote
   // whatever the provider sent straight onto the row, so a schedule `POST
@@ -342,20 +372,22 @@ function mapGrant(
     frequencyMonths: toNum(vesting.frequencyMonths ?? vesting.frequency) ?? undefined,
   });
   return {
-    external_id: externalId,
-    grantee_name: name,
-    // Nulled rather than refused, unlike the name: the column is nullable, the
-    // manual route accepts a grant without one, and an address that is not an
-    // address identifies nobody — so the grant is still worth importing and the
-    // absence is visible on the row.
-    grantee_email: granteeEmail,
-    grant_date: grantDate,
-    options_count: optionsCount,
-    exercise_price: exercisePrice,
-    vesting_start_date: toDate(vesting.startDate ?? raw.vestingStartDate) ?? grantDate,
-    vesting_months: months.vestingMonths,
-    cliff_months: months.cliffMonths,
-    frequency_months: months.frequencyMonths,
+    grant: {
+      external_id: externalId,
+      grantee_name: name,
+      // Nulled rather than refused, unlike the name: the column is nullable, the
+      // manual route accepts a grant without one, and an address that is not an
+      // address identifies nobody — so the grant is still worth importing and the
+      // absence is visible on the row.
+      grantee_email: granteeEmail,
+      grant_date: grantDate,
+      options_count: optionsCount,
+      exercise_price: exercisePrice,
+      vesting_start_date: toDate(vesting.startDate ?? raw.vestingStartDate) ?? grantDate,
+      vesting_months: months.vestingMonths,
+      cliff_months: months.cliffMonths,
+      frequency_months: months.frequencyMonths,
+    },
   };
 }
 
@@ -369,11 +401,14 @@ export function mapEmployees(payload: unknown): {
   grants: MappedGrant[];
   /** Grants the provider sent that this platform will not store — see the bounds above. */
   rejected: number;
+  /** Which of them, and why — a prefix. See {@link RejectedGrant}. */
+  rejectedDetail: RejectedGrant[];
 } {
   const p = (payload ?? {}) as Record<string, unknown>;
   const people = records(p.employees ?? p.people);
   const roster: RosterEmployee[] = [];
   const grants: MappedGrant[] = [];
+  const rejectedDetail: RejectedGrant[] = [];
   let rejected = 0;
   for (const emp of people) {
     const name =
@@ -398,11 +433,26 @@ export function mapEmployees(payload: unknown): {
     });
     for (const g of records(emp.equityGrants ?? emp.grants ?? emp.equity)) {
       const mapped = mapGrant(g, name, email);
-      if (mapped) grants.push(mapped);
-      else rejected++;
+      if ('grant' in mapped) {
+        grants.push(mapped.grant);
+      } else {
+        rejected++;
+        if (rejectedDetail.length < MAX_REJECTED_DETAIL) {
+          rejectedDetail.push({
+            // `name` is the raw provider string, and this is a report going
+            // out to a jsonb column and a JSON body — the same "what this
+            // platform can store" question `mapGrant` already asked of it,
+            // which is why the fallback below is exactly the record whose
+            // own name was the reason for the rejection.
+            employee: storableText(name, MAX_GRANTEE_NAME) ?? '(name could not be stored)',
+            external_id: storableText(g.id ?? g.grantId, MAX_EXTERNAL_ID),
+            reason: mapped.reason,
+          });
+        }
+      }
     }
   }
-  return { roster, grants, rejected };
+  return { roster, grants, rejected, rejectedDetail };
 }
 
 /**
@@ -494,12 +544,20 @@ export async function fetchRosterAndGrants(
   const pages = await fetchEmployeePages(provider, tokens.accessToken, fetchFn);
   const roster: RosterEmployee[] = [];
   const grants: MappedGrant[] = [];
+  const rejectedDetail: RejectedGrant[] = [];
   let rejected = 0;
   for (const page of pages) {
     const mapped = mapEmployees(page);
     roster.push(...mapped.roster);
     grants.push(...mapped.grants);
     rejected += mapped.rejected;
+    // Capped again at the walk's level: each page already stops at
+    // MAX_REJECTED_DETAIL, and a roster of several pages must not multiply
+    // that into a list longer than the one a single page would have produced.
+    for (const d of mapped.rejectedDetail) {
+      if (rejectedDetail.length >= MAX_REJECTED_DETAIL) break;
+      rejectedDetail.push(d);
+    }
   }
   // The company name is a property of the connection, not of a page, so the
   // first page that names one wins — the later pages of a cursor walk routinely
@@ -516,5 +574,7 @@ export async function fetchRosterAndGrants(
     roster,
     grants,
     rejected,
+    rejectedDetail,
+    rejectedDetailTruncated: rejected > rejectedDetail.length,
   };
 }
