@@ -6,7 +6,7 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { REVIEW_TASK_KINDS, REVIEW_TASK_STATUSES } from '../domain/pipeline.js';
 import { findValuationById } from '../repos/valuations.js';
 import { createTask, findTaskById, listTasks, patchTask } from '../repos/tasks.js';
-import { assertAssignable } from '../domain/assignee.js';
+import { assertAssignable, assigneeFilter } from '../domain/assignee.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
@@ -60,7 +60,7 @@ const PatchBody = z
 
 const ListQuery = z.object({
   valuation_id: ulidField().optional(),
-  assignee: z.string().optional(), // 'me' or a user id
+  assignee: assigneeFilter().optional(),
   status: z.enum(REVIEW_TASK_STATUSES).optional(),
   overdue: flagParam(),
   page: pageParam(),

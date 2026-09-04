@@ -194,6 +194,22 @@ describe.skipIf(!dbUp)('M1 core pipeline API', () => {
       expect(tasks[0].id).toBe(taskId);
     });
 
+    /*
+     * The same rule as `GET /reviews` (R419, M19): a malformed id was not an
+     * error at any layer — `= $1` against a `ulid` column leaves the domain's
+     * CHECK off the parameter — so a truncated or mistyped assignee answered
+     * "nothing assigned to them" about somebody with a full queue.
+     */
+    it('refuses a task assignee filter that is neither "me" nor a user id', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/tasks?assignee=not-a-user-id',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json().detail).toContain('assignee');
+    });
+
     it('moves status and stamps started/completed timestamps', async () => {
       const start = await app.inject({
         method: 'PATCH',

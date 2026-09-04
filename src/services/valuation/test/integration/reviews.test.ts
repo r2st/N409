@@ -88,6 +88,34 @@ describe.skipIf(!dbUp)('review workflow API', () => {
       expect(ids).not.toContain(otherId);
     });
 
+    /*
+     * An empty queue is a meaningful answer here — it is what "this reviewer
+     * has nothing outstanding" looks like — so a filter that silently matches
+     * nothing is the worst possible way for a malformed id to fail (R419, M19).
+     * `= $1` against a `ulid` column does not apply the domain's CHECK to the
+     * parameter, so nothing below this route was ever going to notice.
+     */
+    it('refuses an assignee filter that is neither "me" nor a user id', async () => {
+      for (const bad of ['Me', 'alex@example.com', '01J', '']) {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/reviews?assignee=${encodeURIComponent(bad)}`,
+          headers: authHeader(ops.token),
+        });
+        expect(res.statusCode, `${JSON.stringify(bad)} → ${res.body}`).toBe(400);
+        expect(res.json().detail).toContain('assignee');
+      }
+    });
+
+    it('still takes a real user id', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/reviews?assignee=${reviewer.id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    });
+
     it('is operations-only', async () => {
       const res = await ctx.app.inject({
         method: 'GET',

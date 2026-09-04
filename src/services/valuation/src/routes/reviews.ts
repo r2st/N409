@@ -13,6 +13,7 @@ import { findValuationById, patchValuation } from '../repos/valuations.js';
 import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
 import { onStateChanged, type EmailTransport, type TransitionRenderDeps } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { assigneeFilter } from '../domain/assignee.js';
 import { pageParam } from '../domain/pagination.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
@@ -30,7 +31,7 @@ const DecisionBody = z.object({
 });
 
 const QueueQuery = z.object({
-  assignee: z.string().optional(), // 'me' or a user id
+  assignee: assigneeFilter().optional(),
   page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
