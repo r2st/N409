@@ -514,7 +514,13 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
       // Too little left to be worth dialling; the request would only run into
       // the deadline and report a timeout instead of getting on with the work.
       if (remaining < MIN_ATTEMPT_MS) {
-        throw new DelegationError('timeout', null, 'no budget left after waiting for a render slot');
+        throw new DelegationError(
+          'timeout',
+          null,
+          'no budget left after waiting for a render slot',
+          undefined,
+          false,
+        );
       }
       return postForPdf(url, input, via, remaining);
     });
@@ -523,11 +529,34 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
     return pdf;
   } catch (err) {
     const reason = err instanceof DelegationError ? err.reason : 'unreachable';
-    breaker.recordFailure(
-      err instanceof DelegationError && err.status !== null
-        ? classifyStatus(err.status)
-        : classifyFailure(err),
-    );
+    if (err instanceof DelegationError && !err.dialled) {
+      /*
+       * The probe is handed back, not spent (R424, methodology M3).
+       *
+       * `acquire()` above takes the half-open trial slot, and this arm is the
+       * one path past it that never reaches the report unit: the budget was
+       * gone by the time a render slot came free. Recorded as a failure it
+       * classified `permanent('unclassified')` — the error carries no cause,
+       * no code and no status — which a half-open breaker treats as "the trial
+       * answered badly" and re-opens on, restarting the thirty-second cooldown
+       * and naming the dependency in `openedBy`, the state gauge and the log.
+       *
+       * Nothing here is a fact about the report unit. The queue only backs up
+       * while renders are being delegated, and the breaker only admits one at
+       * a time — so the wait this timed out on is the tail of the *previous*
+       * stall, held by requests issued before the trip. The probe that would
+       * have found the service healthy is consumed by the outage that is
+       * already over, and the next one thirty seconds later can be consumed
+       * the same way.
+       */
+      breaker.releaseTrial();
+    } else {
+      breaker.recordFailure(
+        err instanceof DelegationError && err.status !== null
+          ? classifyStatus(err.status)
+          : classifyFailure(err),
+      );
+    }
     // Warn, not error: nothing is broken from the client's point of view — the
     // bytes are about to be produced here. What is broken is the offload, and
     // the message says which of the two so an operator is not sent looking for
@@ -571,6 +600,15 @@ class DelegationError extends Error {
      * for as long as it stayed down. The one thing the breaker exists to stop.
      */
     cause?: unknown,
+    /**
+     * Whether the report unit was actually called.
+     *
+     * False on the one arm that gives up after `acquire()` and before the
+     * request — see the note at that arm. A failure that never left this
+     * process says nothing about the dependency, and the breaker is told so
+     * rather than being handed a verdict it would read as the trial call's.
+     */
+    readonly dialled: boolean = true,
   ) {
     super(message, { cause });
   }

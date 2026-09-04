@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MetricsRegistry } from '@n409/shared';
 import { buildApp as buildReportApp, RenderBody } from '@n409/report';
 import { renderReportPdf as renderLocally, type ReportPdfInput } from '@n409/report/pdf';
@@ -403,6 +403,55 @@ describe('the offload is bounded, because delegating removed the bound it had', 
       await renderReportPdf(tiny(), { fetchFn: answeringFetch(500, 'boom') });
       expect(delegationConcurrency()).toEqual({ active: 0, pending: 0 });
     }
+  });
+
+  it('does not spend the breaker\u2019s recovery probe on a render that never dialled', async () => {
+    configureReportRenderer(REPORT);
+    const breaker = circuits.get('report');
+    for (let i = 0; i < 5; i++) {
+      await renderReportPdf(tiny(), { fetchFn: failingFetch(connectionRefused()) });
+    }
+    expect(breaker.snapshot().state).toBe('open');
+
+    // Past the cooldown, so the breaker will admit exactly one trial call. The
+    // clock is the only way in: `circuits` is the module-level registry the
+    // service uses, and its breakers run on `Date.now`.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000);
+    try {
+      expect(breaker.snapshot().state).toBe('half-open');
+
+      // A render with no budget left by the time it holds a slot. It takes the
+      // trial slot and gives up without opening a socket — which says nothing
+      // about the report unit, and used to re-open the breaker for another
+      // thirty seconds all the same.
+      let dialled = false;
+      await renderReportPdf(tiny(), {
+        timeoutMs: 0,
+        fetchFn: (async () => {
+          dialled = true;
+          throw new Error('must not be dialled');
+        }) as unknown as typeof fetch,
+      });
+      expect(dialled).toBe(false);
+      expect(breaker.snapshot().state).toBe('half-open');
+
+      // The probe is still owed, so the next render is admitted — and a report
+      // unit that has recovered is found on this cooldown rather than the next.
+      const pdf = await renderReportPdf(tiny(), {
+        fetchFn: answeringFetch(200, Buffer.from('%PDF-1.7\n')),
+      });
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      expect(breaker.snapshot().state).toBe('closed');
+    } finally {
+      clock.mockRestore();
+    }
+    // The abandoned render is still a fallback and still counted: not dialling
+    // is a reason to leave the breaker alone, not a reason to be silent.
+    expect(renderCounts(registry)).toEqual({
+      'local:unreachable': 5,
+      'local:timeout': 1,
+      'delegated:ok': 1,
+    });
   });
 
   it('counts the wait for a slot against the render budget, not on top of it', async () => {

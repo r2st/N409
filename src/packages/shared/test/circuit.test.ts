@@ -141,6 +141,40 @@ describe('CircuitBreaker — half-open', () => {
     expect(breaker.snapshot().state).toBe('open');
   });
 
+  it('hands the trial slot back when the call was never made', () => {
+    // A caller that gives up between `acquire` and the request — its budget
+    // spent queueing for a local resource — knows nothing about the
+    // dependency. Recorded as a failure it re-opens the breaker and burns
+    // another cooldown; recorded as a success it closes one on no evidence.
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    now.ms += 30_000;
+    breaker.acquire();
+
+    breaker.releaseTrial();
+
+    // Still half-open, still owed a real trial — and the next caller can take
+    // the slot the abandoned one gave back.
+    expect(breaker.snapshot().state).toBe('half-open');
+    expect(breaker.allows()).toBe(true);
+    breaker.acquire();
+    breaker.recordSuccess();
+    expect(breaker.snapshot().state).toBe('closed');
+  });
+
+  it('releaseTrial does nothing to a closed or open breaker', () => {
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    breaker.releaseTrial();
+    expect(breaker.snapshot().state).toBe('closed');
+
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    breaker.releaseTrial();
+    expect(breaker.snapshot().state).toBe('open');
+    expect(breaker.snapshot().retryAfterMs).toBe(30_000);
+  });
+
   it('admits halfOpenMax trials when configured for more than one', () => {
     const now = { ms: 0 };
     const breaker = breakerAt(now, { halfOpenMax: 2 });
@@ -149,6 +183,35 @@ describe('CircuitBreaker — half-open', () => {
     breaker.acquire();
     breaker.acquire();
     expect(() => breaker.acquire()).toThrow(CircuitOpenError);
+  });
+});
+
+describe('CircuitBreaker — a success that arrives after the trip', () => {
+  it('keeps the reason the breaker is open', () => {
+    // The call was admitted while the breaker was closed and finished after it
+    // tripped, which is what a flapping dependency looks like from here.
+    // `openedBy` is what `UpstreamCircuitOpen`'s runbook sends an operator to
+    // read, and the page fires two minutes after the trip.
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    expect(breaker.snapshot().openedBy).toBe('syscall.ECONNREFUSED');
+
+    breaker.recordSuccess();
+
+    expect(breaker.snapshot().state).toBe('open');
+    expect(breaker.snapshot().openedBy).toBe('syscall.ECONNREFUSED');
+  });
+
+  it('clears it once the breaker actually closes', () => {
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    now.ms += 30_000;
+    breaker.acquire();
+    breaker.recordSuccess();
+    expect(breaker.snapshot().state).toBe('closed');
+    expect(breaker.snapshot().openedBy).toBeNull();
   });
 });
 

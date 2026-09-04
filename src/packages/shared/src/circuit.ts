@@ -166,7 +166,42 @@ export class CircuitBreaker {
       this.transition('closed', 'trial call succeeded');
     }
     this.consecutiveFailures = 0;
-    this.openedBy = null;
+    /*
+     * `openedBy` belongs to the open state, and only the close clears it.
+     *
+     * A success can arrive while the breaker is open: the call that reports it
+     * was admitted before the trip and finished after it, which is the ordinary
+     * shape of a dependency that is failing rather than dead. Cleared
+     * unconditionally, that straggler left the breaker open with no reason on
+     * it — and `openedBy` is exactly what `UpstreamCircuitOpen`'s runbook sends
+     * an operator to read ("the breaker snapshot and what opened it"). The page
+     * fires two minutes later and the one field that says why is null.
+     *
+     * Nothing else about the open state moves here either: a success that was
+     * never admitted is not evidence the cooldown should end, which is what
+     * {@link expireCooldown} is for.
+     */
+    if (this.state !== 'open') this.openedBy = null;
+  }
+
+  /**
+   * Hand back a trial slot for a call that was never made.
+   *
+   * `acquire` takes the half-open slot *before* the work starts, so a caller
+   * that gives up in between — its own budget spent queueing, a local
+   * precondition it only discovers once it has the slot — is holding a probe it
+   * cannot answer. Neither verdict fits: {@link recordSuccess} would close the
+   * breaker on no evidence at all, and {@link recordFailure} re-opens it (a
+   * permanent failure during a trial "says our request was wrong", and this
+   * request was never sent), restarting the cooldown on the strength of
+   * something that happened entirely inside this process — and naming the
+   * dependency as the reason in the log and the state gauge.
+   *
+   * So the slot goes back and the state stays exactly as it was: still
+   * half-open, still owed one real trial, which the next caller supplies.
+   */
+  releaseTrial(): void {
+    if (this.state === 'half-open') this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
   }
 
   /**
