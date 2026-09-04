@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 import { MetricsRegistry } from '../src/prometheus.js';
-import { READINESS_METRIC_MAX_AGE_MS, registerHealth, registerReadinessMetrics } from '../src/health.js';
+import {
+  READINESS_METRIC_MAX_AGE_MS,
+  readinessSummary,
+  registerHealth,
+  registerReadinessMetrics,
+} from '../src/health.js';
 
 /**
  * The readiness verdict, published where the alerting actually looks (R405,
@@ -167,5 +172,54 @@ describe('the readiness verdict on the scrape endpoint', () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(runs).toBe(1);
     await app.close();
+  });
+});
+
+/**
+ * The same verdict, for the surface a person reads.
+ *
+ * `/admin/system/metrics` on the valuation tier is the page an operator opens
+ * during an incident, and the first question — is this service ready, and
+ * which dependency is failing — was the one thing on it that could not be
+ * asked. `circuits` beside it is not that answer: a breaker only moves when
+ * something *calls* the upstream, so on a quiet estate every circuit reads
+ * closed and healthy over a process whose `/ready` has been 503 since the last
+ * deploy. And `/ready` is not reachable from a browser: 3001-3004 are
+ * firewalled and the reasons are gated on the internal token.
+ */
+describe('the verdict as a page may show it', () => {
+  const verdict = {
+    healthy: false,
+    detail: {
+      postgres: 'connection to server at "db.internal" (10.0.0.4), user "n409" failed',
+      ai: 'ai unreachable at http://127.0.0.1:3002/ready: ECONNREFUSED',
+      fonts: 'ok',
+    },
+    degraded: ['ai'],
+    gating: ['postgres', 'fonts'],
+    at: 1_000_000,
+  };
+
+  it('flattens every failure to `failed`, so no reason can reach a page', () => {
+    // The reason names a host, a role and an address. `/ready` withholds it
+    // from an unauthenticated caller for that reason and this surface is not a
+    // second decision about it — same rule, written once.
+    const summary = readinessSummary(verdict, 1_000_000);
+    expect(summary.checks).toEqual({ postgres: 'failed', ai: 'failed', fonts: 'ok' });
+    expect(JSON.stringify(summary)).not.toContain('10.0.0.4');
+    expect(JSON.stringify(summary)).not.toContain('ECONNREFUSED');
+  });
+
+  it('keeps the gating verdict and the degraded set apart', () => {
+    // `ai` is optional: it failed, it is named, and it is not why `ready` is
+    // false. A page that folded the two would report an outage over a
+    // dependency this service is designed to serve without.
+    const summary = readinessSummary(verdict, 1_000_000);
+    expect(summary.ready).toBe(false);
+    expect(summary.degraded).toEqual(['ai']);
+  });
+
+  it('carries the age, so a frozen verdict cannot read as a current one', () => {
+    expect(readinessSummary(verdict, 1_000_000 + 42_400).age_s).toBe(42);
   });
 });

@@ -992,6 +992,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     poolHealth: deps.poolHealth,
     errorRates,
     capabilityConfig: config,
+    // The incident view's first question. See `readinessView` there for why
+    // `circuits` beside it cannot answer it.
+    readiness,
   });
   // M4 — operations polish
   registerWorkflowRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL, settings });

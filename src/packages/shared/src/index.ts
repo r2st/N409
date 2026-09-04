@@ -70,6 +70,8 @@ export {
 export {
   registerHealth,
   registerReadinessMetrics,
+  publicChecks,
+  readinessSummary,
   probeReady,
   CHECK_FAILED,
   CHECK_OK,
@@ -80,6 +82,7 @@ export {
   READINESS_METRIC_MAX_AGE_MS,
   type ReadinessCheck,
   type ReadinessHandle,
+  type ReadinessSummary,
   type ReadinessVerdict,
 } from './health.js';
 export {

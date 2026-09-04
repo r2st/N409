@@ -124,11 +124,47 @@ export interface ReadinessHandle {
   refreshIfOlderThan(maxAgeMs: number): void;
 }
 
-/** The same snapshot with every failure flattened to `failed`. */
-function publicChecks(detail: Record<string, string>): Record<string, string> {
+/**
+ * The same check map with every failure flattened to `failed`.
+ *
+ * Exported since R405 (methodology M11) because a second surface now shows the
+ * verdict — the valuation tier's ops incident view — and the disclosure rule
+ * has to be the same one, written once. The scrubbed reason names hosts, roles
+ * and sometimes a DSN; it belongs in the journal and the token-gated `/ready`
+ * body and nowhere a page can render it.
+ */
+export function publicChecks(detail: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(detail).map(([name, status]) => [name, status === CHECK_OK ? CHECK_OK : CHECK_FAILED]),
   );
+}
+
+/** The verdict as a page may show it: never the reasons, always the age. */
+export interface ReadinessSummary {
+  ready: boolean;
+  /** Optional checks that failed. Never affects `ready`; always reported. */
+  degraded: string[];
+  /** name -> `ok` | `failed`. */
+  checks: Record<string, string>;
+  /**
+   * How old this verdict is.
+   *
+   * Carried rather than left implicit for the reason
+   * `service_readiness_age_seconds` exists: the verdict is recomputed when
+   * something asks, so one frozen at the last completed run reads exactly like
+   * a current one.
+   */
+  age_s: number;
+}
+
+/** {@link ReadinessVerdict} in the form a person may be shown. */
+export function readinessSummary(verdict: ReadinessVerdict, now: number = Date.now()): ReadinessSummary {
+  return {
+    ready: verdict.healthy,
+    degraded: verdict.degraded,
+    checks: publicChecks(verdict.detail),
+    age_s: Math.round((now - verdict.at) / 1000),
+  };
 }
 
 /**

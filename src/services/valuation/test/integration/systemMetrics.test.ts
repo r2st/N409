@@ -61,7 +61,29 @@ describe.skipIf(!dbUp)('the system metrics endpoint', () => {
     expect(body).toHaveProperty('webhooks');
     expect(body).toHaveProperty('circuits');
     expect(body).toHaveProperty('capabilities');
+    // R405, methodology M11. The first question of an incident, and the one
+    // thing on this page that could not be asked: `circuits` only moves when
+    // something calls an upstream, so on a quiet estate every breaker reads
+    // healthy over a process whose `/ready` has been failing since the deploy.
+    expect(body).toHaveProperty('readiness');
     expect(body.service).toBe('valuation');
+  });
+
+  it('reports the readiness verdict, without the reasons behind it', async () => {
+    // Two loads: the verdict is recomputed on request rather than in a scrape's
+    // synchronous collect, so the first asks and the second reads. `age_s` is
+    // what stops the second one, or the hundredth, passing for a live check.
+    await metrics(opsToken);
+    const body = (await metrics(opsToken)).json();
+    expect(body.readiness).not.toBeNull();
+    expect(body.readiness.ready).toBe(true);
+    // The public form only: every value is `ok` or `failed`, never the scrubbed
+    // reason, which names hosts and roles. Same rule as `/ready`.
+    for (const status of Object.values(body.readiness.checks as Record<string, string>)) {
+      expect(['ok', 'failed']).toContain(status);
+    }
+    expect(Object.keys(body.readiness.checks)).toContain('postgres');
+    expect(body.readiness.age_s).toBeGreaterThanOrEqual(0);
   });
 
   it('names the subsystems that are deliberately off', async () => {

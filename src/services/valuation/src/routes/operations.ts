@@ -1,7 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { buildInfo, type ErrorRates, isIsoCalendarDate, isUlid, problems, TtlCache } from '@n409/shared';
+import {
+  buildInfo,
+  type ErrorRates,
+  isIsoCalendarDate,
+  isUlid,
+  problems,
+  type ReadinessHandle,
+  READINESS_METRIC_MAX_AGE_MS,
+  readinessSummary,
+  TtlCache,
+} from '@n409/shared';
 import { canCreateValuation, canReadValuation, isOps, valuationScope } from '../auth/rbac.js';
 import { stateGroupOf, STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import {
@@ -107,8 +117,32 @@ export function registerOperationsRoutes(
      * measured" rather than as "everything is on".
      */
     capabilityConfig?: CapabilityConfig;
+    /**
+     * This process's readiness verdict, for the incident view below.
+     *
+     * Optional so a test that is not asking about it need not build one, and
+     * absent reads as "not measured" rather than as ready — the same rule the
+     * three fields beside it already follow.
+     */
+    readiness?: ReadinessHandle;
   },
 ): void {
+  /**
+   * The readiness verdict as this page may show it.
+   *
+   * `readinessSummary` rather than a second flattening here: the rule about
+   * what may be disclosed — names and pass/fail, never the scrubbed reason,
+   * which carries hosts and roles — is `/ready`'s and has to be written once.
+   */
+  const readinessView = () => {
+    // Asks for the next reading to be current, the same way a scrape does: the
+    // verdict is otherwise only recomputed when something probes `/ready`, and
+    // on this estate that is `deploy.sh` and nothing else.
+    deps.readiness?.refreshIfOlderThan(READINESS_METRIC_MAX_AGE_MS);
+    const verdict = deps.readiness?.verdict();
+    return verdict ? readinessSummary(verdict) : null;
+  };
+
   const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const namedCountsCache = new TtlCache<Record<NamedBucketKey, number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const dashboardCache = new TtlCache<Awaited<ReturnType<typeof dashboardStats>>>({
@@ -445,6 +479,28 @@ export function registerOperationsRoutes(
       // Null rather than an empty list when the config was not wired, because
       // an empty list here would read as "nothing is off".
       capabilities: deps.capabilityConfig ? optionalCapabilities(deps.capabilityConfig) : null,
+      /*
+       * And whether this process thinks it can serve at all (R405, M11).
+       *
+       * This is the page an operator opens during an incident, and the first
+       * question — is the service ready, and which dependency is failing — was
+       * the one thing on it that could not be asked. `circuits` next door is
+       * not that answer: a breaker only moves when something *calls* the
+       * upstream, so on a quiet estate every circuit reads closed and healthy
+       * over a process whose `/ready` has been 503 since the last deploy.
+       *
+       * Nor is `/ready` reachable from here. Ports 3001–3004 are firewalled and
+       * the reasons are gated on the internal token, so answering this question
+       * meant an SSH session and a curl — during the incident, by somebody who
+       * has both.
+       *
+       * The *public* form of the checks, deliberately: names and pass/fail,
+       * which is exactly what `/ready` already publishes to an unauthenticated
+       * caller. The scrubbed reason names hosts and roles and stays where it
+       * is, in the journal and the token-gated body. `null` until something has
+       * probed, because "nothing has looked" is not "ready".
+       */
+      readiness: readinessView(),
     };
   });
 
