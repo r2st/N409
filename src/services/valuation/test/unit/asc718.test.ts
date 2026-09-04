@@ -116,17 +116,65 @@ describe('asc718Grant', () => {
 
   it('measures fair value, expected-to-vest cost, and the schedule', () => {
     const r = asc718Grant(grant);
-    const fv = blackScholesMerton(grant.assumptions); // unrounded reference
+    // The stated fair value: the Black-Scholes double at the precision the
+    // result reports it, which is also the precision every reader multiplies.
+    const fv = Math.round(blackScholesMerton(grant.assumptions) * 10000) / 10000;
+    expect(r.fairValuePerOption).toBe(fv);
     expect(r.fairValuePerOption).toBeGreaterThan(0);
     // 10% *annual* turnover across a 4-year vest: 100k × 0.9⁴ = 65,610.
     expect(r.expectedToVestOptions).toBe(65610);
     // Total cost is net of forfeitures; gross uses all options.
-    expect(r.totalCompensationCost).toBeCloseTo(fv * 65610, 0);
-    expect(r.grossFairValue).toBeCloseTo(fv * 100000, 0);
+    expect(r.totalCompensationCost).toBeCloseTo(fv * 65610, 2);
+    expect(r.grossFairValue).toBeCloseTo(fv * 100000, 2);
     expect(r.schedule).toHaveLength(4);
     const total = r.schedule.reduce((s, p) => s + p.expense, 0);
     expect(total).toBeCloseTo(r.totalCompensationCost, 2);
     expect(r.assumptions.dividendYield).toBe(0);
+  });
+
+  /*
+   * The grants table and the exhibit both print FV/option, Expected to vest
+   * and Total cost on one row, and a reader reconciles the note by multiplying
+   * the first two. The cost used to be struck on the unrounded double and the
+   * unrounded expected-to-vest fraction, so the product of the printed figures
+   * was not the printed total — a discrepancy that grows with the grant size
+   * and is invisible in the row itself. Asserted exactly, not closely: the
+   * point is that the three numbers are one arithmetic statement.
+   */
+  it('states a cost that is the product of the two figures beside it', () => {
+    for (const [months, rate, options] of [
+      [48, 0.1, 100_000],
+      [72, 0.1, 100_000], // 0.9⁶ × 100k = 53,144.1 — a fractional expectation
+      [30, 0.17, 37_513], // nothing here divides evenly
+      [12, 0, 1_000_000],
+    ] as const) {
+      const r = asc718Grant({
+        ...grant,
+        vestingMonths: months,
+        forfeitureRate: rate,
+        optionsGranted: options,
+      });
+      expect(r.totalCompensationCost).toBe(
+        Math.round(r.fairValuePerOption * r.expectedToVestOptions * 100) / 100,
+      );
+      expect(r.grossFairValue).toBe(
+        Math.round(r.fairValuePerOption * r.optionsGranted * 100) / 100,
+      );
+      // Four decimals, always — the precision the tab and the exhibit print.
+      expect(r.fairValuePerOption).toBe(Math.round(r.fairValuePerOption * 10000) / 10000);
+      expect(Number.isInteger(r.expectedToVestOptions)).toBe(true);
+    }
+  });
+
+  /*
+   * The other half of the same rounding: a count rounded to zero beside a
+   * positive cost. One option with a 60% expected forfeiture over a year is a
+   * real grant, and the row said "0 expected to vest — $0.44".
+   */
+  it('a grant whose expectation rounds to no options costs nothing', () => {
+    const r = asc718Grant({ ...grant, optionsGranted: 1, vestingMonths: 12, forfeitureRate: 0.6 });
+    expect(r.expectedToVestOptions).toBe(0);
+    expect(r.totalCompensationCost).toBe(0);
   });
 
   it('vesting of 0 months expenses immediately', () => {

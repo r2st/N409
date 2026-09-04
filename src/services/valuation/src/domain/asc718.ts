@@ -140,6 +140,8 @@ export interface AmortizationPeriod {
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+/** Per-unit precision, as `asc718Public.ts` states it: four decimals, always. */
+const round4 = (n: number): number => Math.round(n * 10000) / 10000;
 
 /**
  * Straight-line amortization of `totalCost` over `vestingMonths`, bucketed at
@@ -253,16 +255,43 @@ export function expectedToVestFraction(annualForfeitureRate: number, vestingMont
  * amortization schedule over the vesting period.
  */
 export function asc718Grant(grant: Asc718Grant): Asc718Result {
-  const fairValuePerOption = blackScholesMerton(grant.assumptions);
+  /*
+   * THE COST IS THE PRODUCT OF THE TWO STATED FIGURES (R415, methodology M2).
+   *
+   * The grants table draws three columns — FV/option, Expected to vest, Total
+   * cost — and the exhibit that quotes the same grant draws the same three
+   * (`sampleEngagements.ts`). The first is stated to four decimals and the
+   * second to whole options, and the third used to be struck on neither: it
+   * multiplied the unrounded Black-Scholes double by the unrounded
+   * expected-to-vest fraction, so a reviewer multiplying the row's own two
+   * numbers did not get the row's own third one. On a 100,000-option grant
+   * measured at $1.09375234 the table read `$1.0938 x 65,610 = $71,764`
+   * against a recomputation of $71,768 — four dollars decided by digits the
+   * schedule does not print, on the line an ASC 718 note is reconciled from.
+   *
+   * The same resolution `esppFairValue` took for the same shape: the stated
+   * components are the authority, not a separately-rounded arithmetic on
+   * figures nobody can see. Both factors here are disclosed quantities — the
+   * grant-date fair value is measured once and reported at four decimals, and
+   * "options expected to vest" is a count of awards — so the cost is their
+   * product and the row ties by construction.
+   *
+   * It also closes the small-grant contradiction the rounded count carried on
+   * its own: a single option with a 60% expected forfeiture printed "0
+   * expected to vest" beside a positive compensation cost.
+   */
+  const fairValuePerOption = round4(blackScholesMerton(grant.assumptions));
   const options = Math.max(0, grant.optionsGranted);
-  const expectedToVest = options * expectedToVestFraction(grant.forfeitureRate ?? 0, grant.vestingMonths);
+  const expectedToVest = Math.round(
+    options * expectedToVestFraction(grant.forfeitureRate ?? 0, grant.vestingMonths),
+  );
   const grossFairValue = round2(fairValuePerOption * options);
   const totalCost = round2(fairValuePerOption * expectedToVest);
   return {
     label: grant.label ?? null,
-    fairValuePerOption: Math.round(fairValuePerOption * 10000) / 10000,
+    fairValuePerOption,
     optionsGranted: options,
-    expectedToVestOptions: Math.round(expectedToVest),
+    expectedToVestOptions: expectedToVest,
     grossFairValue,
     totalCompensationCost: totalCost,
     schedule: amortizationSchedule(
