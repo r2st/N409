@@ -1,4 +1,4 @@
-import { sanitizeHtml, type ReportContent } from './report.js';
+import { REPORT_SECTION_HTML_MAX, sanitizeHtml, type ReportContent } from './report.js';
 import { findReportPlaceholders, type ResolvableFigures } from './reportReadiness.js';
 import type { ValuationKind } from './valuation.js';
 
@@ -326,7 +326,22 @@ export type ApplyOutcome =
    */
   | 'suppressed'
   /** Nothing in this report answers to that key. */
-  | 'unmatched';
+  | 'unmatched'
+  /**
+   * Writing it would put the chapter past what the editor can save.
+   *
+   * The agent's result is free text with no length in its contract, and this
+   * function appends when two drafted sections map to one chapter — so a run
+   * that returned the same key a hundred times composed a chapter four times
+   * `REPORT_SECTION_HTML_MAX`. That body stored fine and then failed the
+   * editor's own `PutBody` on every subsequent save, which is an analyst
+   * locked out of a report by a draft they asked for.
+   *
+   * The chapter is left as it was, and the outcome is reported rather than
+   * folded into `empty`: "the agent had nothing to say" and "the agent said
+   * far too much" call for opposite responses from whoever reads the notice.
+   */
+  | 'too_long';
 
 export interface AppliedSection {
   /** The agent's key, which is what a caller asked for. */
@@ -472,7 +487,15 @@ export function applyNarrative(
       applied.push({ source_key: draft.key, section_key: targetKey, outcome: 'empty' });
       continue;
     }
-    next[index] = { ...next[index]!, html: alreadyFilled ? `${next[index]!.html}${html}` : html };
+    // Composed first, measured, then written. The editor's ceiling is on the
+    // *stored* chapter, so the append case has to be measured after the join —
+    // two drafts that each fit can still cross it together.
+    const composed = alreadyFilled ? `${next[index]!.html}${html}` : html;
+    if (composed.length > REPORT_SECTION_HTML_MAX) {
+      applied.push({ source_key: draft.key, section_key: targetKey, outcome: 'too_long' });
+      continue;
+    }
+    next[index] = { ...next[index]!, html: composed };
     filledHere.add(targetKey);
     changed = true;
     applied.push({

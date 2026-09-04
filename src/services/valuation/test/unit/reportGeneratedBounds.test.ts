@@ -10,6 +10,7 @@ import {
   REPORT_TITLE_MAX,
   templateForKind,
 } from '../../src/domain/report.js';
+import { applyNarrative, draftedSectionsFrom } from '../../src/domain/narrativeApply.js';
 import { VALUATION_KINDS } from '../../src/domain/valuation.js';
 
 /**
@@ -147,5 +148,58 @@ describe('the save door bounds a section by the shared constants', () => {
     ['section count', '.max(REPORT_MAX_SECTIONS)'],
   ])('%s', (_field, spelling) => {
     expect(source).toContain(spelling);
+  });
+});
+
+/**
+ * The third generator: the narrative agent's apply.
+ *
+ * `draftedSectionsFrom` reads free text out of `ai_jobs.result` with no length
+ * in its contract, and `applyNarrative` *appends* when two drafted sections map
+ * to one chapter — so a run that returned the same key a hundred times composed
+ * a chapter several times the editor's ceiling, stored it, and locked the
+ * analyst out of the report they had asked it to draft.
+ */
+describe('an AI narrative cannot compose a chapter past the editor ceiling', () => {
+  const draftsInto = (key: string, count: number, chars: number) =>
+    draftedSectionsFrom({
+      sections: Array.from({ length: count }, (_, i) => ({ key, body: `${'X'.repeat(chars)} ${i}` })),
+    });
+
+  const applyTo409a = (drafts: ReturnType<typeof draftsInto>) =>
+    applyNarrative(instantiateTemplate(templateForKind('409a'), varsFor('409a')), drafts, {
+      kind: '409a',
+      overwrite: true,
+    });
+
+  /** The finding: 200 drafts of 2,000 characters used to concatenate to ~400,000. */
+  it('stops appending before the chapter crosses it, and says so', () => {
+    const out = applyTo409a(draftsInto('market_approach', 200, 2_000));
+    for (const section of out.content.sections) {
+      expect(section.html.length).toBeLessThanOrEqual(REPORT_SECTION_HTML_MAX);
+    }
+    expect(out.applied.some((a) => a.outcome === 'too_long')).toBe(true);
+    // What did fit is kept: the refusal is per draft, not per run.
+    expect(out.changed).toBe(true);
+    expect(out.applied.some((a) => a.outcome === 'written')).toBe(true);
+  });
+
+  /** A single draft over the ceiling leaves the chapter exactly as it was. */
+  it('leaves the chapter untouched rather than storing a truncation of it', () => {
+    const before = instantiateTemplate(templateForKind('409a'), varsFor('409a'));
+    const out = applyNarrative(before, draftsInto('market_approach', 1, REPORT_SECTION_HTML_MAX + 1), {
+      kind: '409a',
+      overwrite: true,
+    });
+    expect(out.changed).toBe(false);
+    expect(out.applied.map((a) => a.outcome)).toEqual(['too_long']);
+    expect(out.content.sections).toEqual(before.sections);
+  });
+
+  /** An ordinary draft is unaffected — the bound is not a new refusal path. */
+  it('writes a draft that fits', () => {
+    const out = applyTo409a(draftsInto('market_approach', 1, 500));
+    expect(out.applied.map((a) => a.outcome)).toEqual(['written']);
+    expect(out.changed).toBe(true);
   });
 });

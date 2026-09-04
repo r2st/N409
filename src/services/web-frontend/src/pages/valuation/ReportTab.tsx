@@ -301,11 +301,22 @@ export function ReportTab() {
       }>(`/valuations/${valuation.id}/report/narrative`, { method: 'POST', body: {} });
       const written = res.applied.filter((a) => a.outcome === 'written').length;
       const kept = res.applied.filter((a) => a.outcome === 'kept').length;
+      // A draft too long to store is left out of the report entirely, so it has
+      // to be said. Counted separately from `kept` because the analyst's next
+      // move is the opposite one: `kept` means their prose survived, this means
+      // a chapter they asked for is still unwritten.
+      const tooLong = res.applied.filter((a) => a.outcome === 'too_long').length;
+      const overlong =
+        tooLong > 0
+          ? ` · ${tooLong} draft${tooLong === 1 ? ' was' : 's were'} too long to store and ` +
+            `${tooLong === 1 ? 'that section was' : 'those sections were'} left unchanged.`
+          : '';
       setNotice(
         res.changed
           ? `Drafted ${written} section${written === 1 ? '' : 's'} as version ${res.version}` +
-              (kept > 0 ? ` · ${kept} you had already written were left alone.` : '.')
-          : 'Nothing to draft — every section the agent covers has already been written.',
+              (kept > 0 ? ` · ${kept} you had already written were left alone.` : '.') +
+              overlong
+          : 'Nothing to draft — every section the agent covers has already been written.' + overlong,
       );
       await load();
     });
