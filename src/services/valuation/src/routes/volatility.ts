@@ -27,6 +27,7 @@ import {
   isoDate,
   measuredCount,
   resolveWindow,
+  MIN_BARS_BY_METHOD,
   seriesFromBars,
   shapeEstimate,
   VOLATILITY_METHODS,
@@ -391,7 +392,7 @@ export function registerVolatilityRoutes(
             reason:
               method === 'parkinson'
                 ? 'no complete high/low history over the window'
-                : 'fewer than two usable closing prices over the window',
+                : `fewer than ${MIN_BARS_BY_METHOD[method]} usable closing prices over the window`,
           });
           continue;
         }

@@ -3,6 +3,7 @@ import {
   MAX_RECORDABLE_VOLATILITY,
   measuredCount,
   resolveWindow,
+  MIN_BARS_BY_METHOD,
   seriesFromBars,
   shapeEstimate,
   volatilityNarrative,
@@ -100,6 +101,34 @@ describe('seriesFromBars', () => {
     expect(seriesFromBars('AAA', [bar(10)], 'historical')).toBeNull();
     expect(seriesFromBars('AAA', [{ close: null }, { close: 0 }], 'historical')).toBeNull();
     expect(seriesFromBars('AAA', 'not-an-array', 'historical')).toBeNull();
+  });
+
+  // R407 (M2): the floor is the estimator's, not a shared two. Close-to-close
+  // and EWMA divide by `returns.length - 1`, which is zero on two closes, so
+  // the engine refuses the *request* — every other peer's measurable history
+  // with it. Excluded here instead.
+  it('rejects a two-close series for the estimators that need three', () => {
+    expect(seriesFromBars('AAA', [bar(10), bar(11)], 'historical')).toBeNull();
+    expect(seriesFromBars('AAA', [bar(10), bar(11)], 'ewma')).toBeNull();
+    expect(seriesFromBars('AAA', [bar(10), bar(11), bar(12)], 'historical')?.prices).toEqual([
+      10, 11, 12,
+    ]);
+    expect(seriesFromBars('AAA', [bar(10), bar(11), bar(12)], 'ewma')?.prices).toEqual([
+      10, 11, 12,
+    ]);
+  });
+
+  it('still measures a two-bar range series, which parkinson can price', () => {
+    // Parkinson reads each bar's own high/low, so it has no sample-variance
+    // denominator to divide by and two bars is a measurement.
+    const s = seriesFromBars('AAA', [bar(10), bar(11)], 'parkinson');
+    expect(s?.prices).toHaveLength(2);
+    expect(s?.highs).toHaveLength(2);
+    expect(s?.lows).toHaveLength(2);
+  });
+
+  it('states the floor each estimator is actually held to', () => {
+    expect(MIN_BARS_BY_METHOD).toEqual({ historical: 3, ewma: 3, parkinson: 2 });
   });
 });
 
@@ -341,8 +370,11 @@ describe('volatility on inputs from outside this service', () => {
   });
 
   it('skips a bar that is not an object at all', () => {
-    const series = seriesFromBars('AAA', [null, 'x', 7, bar(10), bar(11)], 'historical');
-    expect(series?.prices).toEqual([10, 11]);
+    // Three closes, not two: the close-to-close floor is the engine's sample
+    // standard deviation (see MIN_BARS_BY_METHOD). What this asserts is that
+    // the junk entries are skipped, not that a short series survives.
+    const series = seriesFromBars('AAA', [null, 'x', 7, bar(10), bar(11), bar(12)], 'historical');
+    expect(series?.prices).toEqual([10, 11, 12]);
   });
 
   it('refuses a Parkinson series whose highs and lows do not line up', () => {

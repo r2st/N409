@@ -168,14 +168,45 @@ function fin(value: unknown): number | null {
 }
 
 /**
+ * The shortest series each estimator can actually measure, in bars.
+ *
+ * These are the engine's own floors, restated on this side of the wire so a
+ * peer too short to measure is *excluded* rather than sent to be refused.
+ *
+ * `historical` and `ewma` both take a **sample** standard deviation over the
+ * log returns, so they need two returns and therefore three closes —
+ * `volatility.historical_volatility` raises "historical volatility needs at
+ * least 3 prices" on anything shorter, and `ewma_volatility` says the same.
+ * `parkinson` reads the high/low range of each bar independently and needs one
+ * pair; two is kept because a range volatility struck off a single trading day
+ * is a number, not a measurement.
+ */
+export const MIN_BARS_BY_METHOD: Record<RequestedVolatilityMethod, number> = {
+  historical: 3,
+  ewma: 3,
+  parkinson: 2,
+};
+
+/**
  * Closes (and the high/low legs) out of one feed response.
  *
  * A bar missing any leg the requested estimator needs drops the whole bar, not
  * just the leg: the three series are positionally paired inside the engine, and
  * a highs array one element shorter than its lows would silently pair each
- * day's high with the next day's low. Two closes is the engine's own floor for
- * a measurable series, and fewer than that is reported as an unusable ticker
- * rather than sent to be rejected.
+ * day's high with the next day's low. A series shorter than the estimator's
+ * floor is reported as an unusable ticker rather than sent to be rejected.
+ *
+ * THE FLOOR HAD TO BE THE ESTIMATOR'S, NOT A SHARED TWO (round 407, M2). This
+ * kept every series of two or more closes and described two as "the engine's
+ * own floor for a measurable series". It is the floor for `parkinson` only.
+ * Close-to-close and EWMA divide by `returns.length - 1`, which is zero on a
+ * two-close series, so the engine refuses one — and it refuses the whole
+ * request, not the one peer. A peer that listed two days before the valuation
+ * date, or whose feed served two bars of a 365-day window, therefore took a
+ * nine-peer estimate down with it: 422 "historical volatility needs at least 3
+ * prices", with the eight measurable peers thrown away and nothing naming the
+ * ticker that caused it. Excluded here, the same request answers on the eight
+ * and lists the ninth under `excluded` with a reason.
  */
 export function seriesFromBars(
   ticker: string,
@@ -203,7 +234,7 @@ export function seriesFromBars(
     if (high !== null) highs.push(high);
     if (low !== null) lows.push(low);
   }
-  if (prices.length < 2) return null;
+  if (prices.length < MIN_BARS_BY_METHOD[method]) return null;
   if (method === 'parkinson') {
     if (highs.length !== prices.length || lows.length !== prices.length) return null;
     return { ticker, prices, highs, lows };
