@@ -266,7 +266,7 @@ export async function exchangeCode(
     if (!conns.ok) {
       throw providerRefused(PROVIDER_LABELS[provider], 'organisation lookup', conns);
     }
-    const list = await readJsonArray(conns);
+    const { list, unusable } = await readJsonArray(conns, PROVIDER_LABELS[provider]);
     // `readJsonArray` guarantees a list and nothing about what is in it,
     // so both of these were whatever Xero's JSON had at those keys. They
     // land on `accounting_connections` as `text` *and* in the connect
@@ -282,10 +282,34 @@ export async function exchangeCode(
       // An empty list is the consent screen finishing with no organisation
       // ticked, which is a thing a person does and can undo. Said in those
       // terms rather than as a missing field, because the fix is theirs.
-      throw new IntegrationError(
+      const refusal = new IntegrationError(
         `${PROVIDER_LABELS[provider]} did not return an organisation for this connection — ` +
           'reconnect and choose the organisation to share',
       );
+      /*
+       * AND WHY THERE WAS NO ORGANISATION (R405, methodology M11).
+       *
+       * The sentence above is R301's and stays: reconnecting is the operator's
+       * move whether the consent screen was finished with nothing ticked or a
+       * proxy answered `/connections` with an error page. What it cannot do is
+       * tell those apart, and until now nothing could. `readJsonArray` degrades
+       * an unparseable, non-array or oversized body to an empty list, silently,
+       * so all three arrived here as "no organisation came back" — and the one
+       * line the callback writes, `req.log.warn({ err, provider }, 'accounting
+       * token exchange failed')`, names the half of the exchange that had just
+       * succeeded.
+       *
+       * That difference is the whole diagnosis. A consent screen with nothing
+       * ticked is fixed by reconnecting; a body this deployment cannot parse is
+       * reproduced by it exactly, one spent authorisation code at a time, with
+       * nothing anywhere naming the cause.
+       *
+       * Carried as `cause` rather than folded into the message: pino's error
+       * serializer appends it, so the existing log line gains the reason
+       * without the refusal the operator reads changing at all.
+       */
+      if (unusable) refusal.cause = new Error(unusable);
+      throw refusal;
     }
   }
   return tokens;

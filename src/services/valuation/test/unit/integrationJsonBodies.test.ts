@@ -189,6 +189,49 @@ describe('Xero connect refuses without a tenant', () => {
     );
   });
 
+  it('carries the reason the list was unusable, where the message cannot', async () => {
+    /*
+     * R405, methodology M11. The sentence above is right and unchanged — the
+     * operator's move is to reconnect either way — and it is also the whole of
+     * what anybody had. Three different incidents reached it: a consent screen
+     * finished with nothing ticked, a proxy's HTML error page in front of
+     * `/connections`, and a body over the read cap. Only the first is fixed by
+     * reconnecting; the other two are reproduced by it, one spent
+     * authorisation code at a time.
+     *
+     * The one line the callback writes is `req.log.warn({ err, provider },
+     * 'accounting token exchange failed')`, and pino's error serializer
+     * appends `cause` to the message it renders — so this is the reason
+     * arriving in the journal without the refusal changing.
+     */
+    const fetchFn = vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes('/connections') ? html() : json({ access_token: 'at' }),
+    ) as unknown as typeof fetch;
+
+    const err = await accountingExchange('xero', creds, 'https://cb', 'code', fetchFn).catch(
+      (e: unknown) => e,
+    );
+    expect((err as Error).message).toMatch(/Xero did not return an organisation/);
+    expect(((err as Error).cause as Error | undefined)?.message).toBe(
+      'Xero returned a non-JSON response',
+    );
+  });
+
+  it('leaves the refusal causeless when the organisation list was simply empty', async () => {
+    // The case the sentence is actually about. A `cause` here would invent a
+    // provider fault out of a person not ticking a box, which is the same
+    // conflation from the other side.
+    const fetchFn = vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes('/connections') ? json([]) : json({ access_token: 'at' }),
+    ) as unknown as typeof fetch;
+
+    const err = await accountingExchange('xero', creds, 'https://cb', 'code', fetchFn).catch(
+      (e: unknown) => e,
+    );
+    expect((err as Error).message).toMatch(/Xero did not return an organisation/);
+    expect((err as Error).cause).toBeUndefined();
+  });
+
   it('still reads the tenant when /connections answers properly', async () => {
     const fetchFn = vi.fn(async (url: RequestInfo | URL) =>
       String(url).includes('/connections')
@@ -229,16 +272,31 @@ describe('readJson', () => {
 });
 
 describe('readJsonArray', () => {
-  it('returns the parsed array', async () => {
-    await expect(readJsonArray(json([{ tenantId: 't-1' }]))).resolves.toEqual([{ tenantId: 't-1' }]);
+  it('returns the parsed array, and says the body was usable', async () => {
+    await expect(readJsonArray(json([{ tenantId: 't-1' }]))).resolves.toEqual({
+      list: [{ tenantId: 't-1' }],
+      unusable: null,
+    });
+  });
+
+  it('says nothing was wrong with a list that is legitimately empty', async () => {
+    // The whole point of `unusable` (R405, methodology M11): a consent screen
+    // finished with no organisation ticked and a proxy's HTML error page both
+    // produce an empty list, and only one of them is fixed by reconnecting.
+    await expect(readJsonArray(json([]))).resolves.toEqual({ list: [], unusable: null });
   });
 
   it.each([
-    ['unparseable', () => html()],
-    ['an object', () => json({ tenantId: 't-1' })],
-    ['null', () => json(null)],
-  ])('degrades %s to an empty list rather than throwing', async (_label, make) => {
-    await expect(readJsonArray(make())).resolves.toEqual([]);
+    ['unparseable', () => html(), 'Xero returned a non-JSON response'],
+    ['an object', () => json({ tenantId: 't-1' }), 'Xero returned an unexpected response body'],
+    ['null', () => json(null), 'Xero returned an unexpected response body'],
+  ])('degrades %s to an empty list, and names why', async (_label, make, reason) => {
+    await expect(readJsonArray(make(), 'Xero')).resolves.toEqual({ list: [], unusable: reason });
+  });
+
+  it('names the provider in the reason, so a log line reads as theirs', async () => {
+    const { unusable } = await readJsonArray(html(), 'Rippling');
+    expect(unusable).toMatch(/^Rippling /);
   });
 });
 
@@ -319,10 +377,13 @@ describe('a provider answering with more body than we agreed to hold', () => {
     await expect(readJson(json({ pad: padding }), 'Xero')).resolves.toEqual({ pad: padding });
   });
 
-  it('degrades an endless array body to an empty list, like every other unusable one', async () => {
+  it('degrades an endless array body to an empty list, and reports the cap', async () => {
     // `readJsonArray` is best-effort by contract — see the Xero /connections
-    // case above. Oversize is one more body it cannot use, not a new outcome.
+    // case above. Oversize is one more body it cannot use, and since R405 it
+    // is one more body that says so rather than passing for an empty list.
     const { res } = endless();
-    await expect(readJsonArray(res)).resolves.toEqual([]);
+    const { list, unusable } = await readJsonArray(res, 'Xero');
+    expect(list).toEqual([]);
+    expect(unusable).toMatch(/^Xero /);
   });
 });

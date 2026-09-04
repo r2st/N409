@@ -540,21 +540,59 @@ function parseJsonObject(text: string, label: string): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
+/** A provider's list body, and whether it was one. */
+export interface JsonArrayBody {
+  /** The parsed list, or `[]` for a body this could not use. */
+  list: unknown[];
+  /**
+   * Null when the body was a usable array; otherwise why it was not.
+   *
+   * THE HALF THAT WAS MISSING (R405, methodology M11). The degrade below is
+   * right and stays — see the note on {@link readJsonArray} — but it was
+   * silent, and the caller then had no way to tell a body it could not use
+   * from a list that was legitimately empty. Those are different incidents
+   * with different remedies and the connect flow reported them as one: a
+   * proxy's HTML error page in front of `/connections`, and a Xero consent
+   * screen finished with no organisation ticked, both arrived at "reconnect
+   * and choose the organisation to share". The first is a sentence that
+   * cannot be acted on — the operator reconnects, spending a fresh one-time
+   * code each time, and reproduces it exactly — and the one log line the
+   * callback writes for it says `accounting token exchange failed`, which is
+   * the half of the exchange that had just worked.
+   *
+   * Short, and the provider's label rather than a stack: this is carried as
+   * the refusal's `cause`, which pino appends to the serialized message.
+   */
+  unusable: string | null;
+}
+
 /**
  * The array-bodied variant — Xero's `/connections` answers with a bare list.
- * Returns `[]` rather than throwing: every caller treats the connections list
- * as best-effort org identification, not as a reason to fail the connection.
+ * Degrades to `[]` rather than throwing: every caller treats the connections
+ * list as best-effort org identification, not as a reason to fail the
+ * connection outright.
  *
  * Best-effort covers the oversized body too: the cap still stops the read, and
- * the empty list this returns is the same answer an unparseable one gets.
+ * the empty list this returns is the same answer an unparseable one gets — but
+ * `unusable` now says which, so the caller can report the cause even where it
+ * words the refusal the same way.
  */
-export async function readJsonArray(res: Response): Promise<unknown[]> {
+export async function readJsonArray(res: Response, label = 'The provider'): Promise<JsonArrayBody> {
+  let text: string;
   try {
-    const body: unknown = JSON.parse(await readCappedText(res, 'The provider'));
-    return Array.isArray(body) ? body : [];
-  } catch {
-    return [];
+    text = await readCappedText(res, label);
+  } catch (err) {
+    // The cap, in practice: `readCappedText` throws only `oversizeResponse`.
+    return { list: [], unusable: err instanceof Error ? err.message : `${label} sent an unreadable body` };
   }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return { list: [], unusable: `${label} returned a non-JSON response` };
+  }
+  if (!Array.isArray(body)) return { list: [], unusable: `${label} returned an unexpected response body` };
+  return { list: body, unusable: null };
 }
 
 /**
