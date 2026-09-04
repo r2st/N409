@@ -1070,6 +1070,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     pool,
     documentsDir: config.DOCUMENTS_DIR,
     transport,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    settings,
     limiter: deps.partnerApiLimiter,
     orgLimiter:
       deps.partnerApiOrgLimiter !== undefined

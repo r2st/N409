@@ -41,7 +41,7 @@ import {
 import { listDocuments } from '../repos/documents.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { applyValuationState } from '../domain/applyState.js';
-import type { EmailTransport } from '../hooks/stateChange.js';
+import type { EmailTransport, TransitionRenderDeps } from '../hooks/stateChange.js';
 import { WORKFLOW_TRANSITIONS } from '../domain/workflow.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { findPartnerIdentity } from '../repos/branding.js';
@@ -304,11 +304,27 @@ export function registerPartnerApiRoutes(
      * tests that do not assert on mail do not have to build one.
      */
     transport?: EmailTransport;
+    /**
+     * THE TWO RENDER DEPS THE SUBMIT PATH ALSO OWES (R408, methodology M3).
+     *
+     * `TransitionRenderDeps` is spread across every module that fires
+     * `onStateChanged`, and this one never declared it. `POST
+     * /valuations/{id}/submit` walks `pending → started → onboarding_completed
+     * → user_finished`, and entering `started` emails the owner "We've started
+     * your 409A valuation" — a client-facing message whose template may name
+     * `{{valuation_link}}` and `{{support_email}}`.
+     *
+     * Without these two `valuationLinkVars` renders the link as the empty
+     * string, so the first message a partner's client receives about their
+     * engagement pointed nowhere. `routes/workflow.ts` carried the same fault
+     * from the other direction — it *had* both on `deps` and dropped them at the
+     * call — and the shared type is what makes the two one question.
+     */
     limiter?: FixedWindowRateLimiter;
     /** Per-partner ceiling. `null` disables it; undefined takes the default. */
     orgLimiter?: FixedWindowRateLimiter | null;
     scan?: ScanPolicy;
-  },
+  } & TransitionRenderDeps,
 ): void {
   const limiter =
     deps.limiter ?? new FixedWindowRateLimiter(PARTNER_API_RATE_LIMIT, PARTNER_API_RATE_WINDOW_MS);
@@ -1015,7 +1031,13 @@ export function registerPartnerApiRoutes(
         // to express an idempotency guarantee.
         for (let i = from; i < SUBMIT_PATH.indexOf(SUBMIT_TARGET); i += 1) {
           valuation = await applyValuationState(
-            { pool: deps.pool, transport: deps.transport, log: app.log },
+            {
+              pool: deps.pool,
+              transport: deps.transport,
+              log: app.log,
+              publicBaseUrl: deps.publicBaseUrl,
+              settings: deps.settings,
+            },
             valuation,
             SUBMIT_PATH[i + 1]!,
             actorFor(principal),

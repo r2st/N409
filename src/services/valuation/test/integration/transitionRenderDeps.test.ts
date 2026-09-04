@@ -1,7 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  SEEDED_PASSWORD,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -119,6 +127,94 @@ describe.skipIf(!dbUp)('a transition fired from the workflow routes', () => {
     expect(res.json().results[0]).toMatchObject({ id, ok: true, state: 'drafted' });
 
     expect(pairs(await draftReadyBody(id))).toEqual({
+      link: `${BASE}/valuations/${id}`,
+      pay: `${BASE}/valuations/${id}`,
+      support: SUPPORT_EMAIL,
+    });
+  });
+});
+
+/**
+ * The same question at the partner API's own door.
+ *
+ * `POST /api/partner/v1/valuations/{id}/submit` walks the engagement from
+ * `pending` to `user_finished` through `applyValuationState`, and entering
+ * `started` emails the owner. That module never declared `TransitionRenderDeps`
+ * at all, so there was nothing on `deps` to forward and nothing to notice: the
+ * first message a partner's client ever receives about their engagement pointed
+ * nowhere.
+ */
+describe.skipIf(!dbUp)('a transition fired from the partner API', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let pool: pg.Pool;
+  let client: Awaited<ReturnType<typeof seedUser>>;
+  let apiKey: string;
+  let partnerId: string;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    app = ctx.app;
+    pool = ctx.pool;
+    partnerId = await seedPartner(ctx, 'Acme Advisors');
+    client = await seedUser(ctx, {
+      email: 'owner@partnerclient.example',
+      roles: ['valuation_user'],
+      partnerId,
+    });
+    // Before the first request through the app: `SystemSettingsStore` caches for
+    // a five-second TTL, so a read that lands first serves the packaged default
+    // for the rest of this block.
+    await pool.query(
+      `INSERT INTO system_settings (key, value) VALUES ('support_email', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify(SUPPORT_EMAIL)],
+    );
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId });
+    const minted = await app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${partnerId}/tokens`,
+      headers: authHeader(admin.token),
+      payload: { current_password: SEEDED_PASSWORD, name: 'R408 probe' },
+    });
+    expect(minted.statusCode).toBe(201);
+    apiKey = minted.json().secret as string;
+
+    await pool.query(
+      `UPDATE communication_templates SET subject = $1, body = $2, enabled = true WHERE key = 'valuation_started'`,
+      ['Started', PROBE],
+    );
+  }, 60_000);
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  it('puts a real link in the client email its submit sends', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: '409a', company_name: 'Partner Probe Co' },
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().valuation.id as string;
+    await pool.query('UPDATE valuations SET partner_id = $2 WHERE id = $1', [id, partnerId]);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/valuations/${id}/submit`,
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().valuation.state).toBe('user_finished');
+
+    const { rows } = await pool.query<{ body: string }>(
+      `SELECT body FROM email_outbox WHERE valuation_id = $1 AND template_key = 'valuation_started'`,
+      [id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(pairs(rows[0]!.body)).toEqual({
       link: `${BASE}/valuations/${id}`,
       pay: `${BASE}/valuations/${id}`,
       support: SUPPORT_EMAIL,
