@@ -73,9 +73,22 @@ def _allowlist_of(app_dir: Path) -> set[str]:
     and a correctly logged field by the formatter's.
     """
     source = (app_dir / "observability.py").read_text(encoding="utf-8")
-    body = re.search(r"_EXTRA_KEYS\s*=\s*\((.*?)\)", source, re.S)
+    # Closed on the `)` in the first column, not on the first `)` anywhere.
+    #
+    # Every entry in these lists is introduced by a paragraph arguing for it, and
+    # a paragraph is prose: the moment one of them contained a bracketed aside —
+    # a type name, a pair of example values — the non-greedy `(.*?)\)` ended the
+    # tuple there and this function returned a *prefix* of the allowlist. The
+    # keys after the cut then read as offenders, which is the loud half; the
+    # quiet half is that a shorter allowlist is a census asking less than it
+    # says it does, which is this estate's recurring shape.
+    body = re.search(r"_EXTRA_KEYS\s*=\s*\((.*?)\n\)", source, re.S)
     assert body, f"no _EXTRA_KEYS in {app_dir}"
-    return set(re.findall(r'"([^"]+)"', body.group(1)))
+    keys = set(re.findall(r'"([^"]+)"', body.group(1)))
+    # Vacuity guard: a parser that lost the tuple would otherwise report every
+    # correctly logged field on the tier as an unlisted one.
+    assert len(keys) >= 14, f"{app_dir}: only parsed {sorted(keys)}"
+    return keys
 
 
 def test_no_call_site_logs_a_key_the_formatter_will_drop():

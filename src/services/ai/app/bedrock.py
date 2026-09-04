@@ -419,6 +419,50 @@ def _refusal(model_id: str, resp: httpx.Response) -> BedrockError:
     return BedrockError(message)
 
 
+def _announce_refusal(failure: BedrockError, model_id: str) -> None:
+    """The two refusals that reach a caller as a 4xx, and so are recorded nowhere.
+
+    The Bedrock half of `openrouter._announce_chain_refusal` (R428, methodology
+    M11) — read that one for the argument. This provider is the reason it is
+    written twice rather than shared: R246 found Bedrock escaping three guards
+    written against OpenRouter, and a second provider that answers a spent
+    quota in silence is the same shape again.
+
+    Two differences, both from `_refusal` above: there is one model rather than
+    a chain, so there is no candidate count worth reporting and the log line
+    names the model; and a 429 here is a *throttle* on an account rather than a
+    free allowance being spent, which is the same situation for whoever reads
+    it — every AI feature on the platform stops — and a different remedy, so
+    `provider` is on the line to say which one this is.
+    """
+    if isinstance(failure, BedrockRateLimited):
+        _log.warning(
+            "Bedrock refused on quota; no AI feature on this platform can run until the throttle clears",
+            extra={
+                "event": "llm_quota_exhausted",
+                "provider": "bedrock",
+                "model": model_id,
+                "detail": str(failure),
+            },
+        )
+    elif isinstance(failure, BedrockRequestRejected):
+        # A local, not `failure.status` inline — see the note on the OpenRouter
+        # twin: `test_observability` polices the *expression* assigned to
+        # `status`, because that field is only filterable if every writer means
+        # an HTTP status by it.
+        status = failure.status
+        _log.warning(
+            "Bedrock refused the request; a retired model id or a prompt it will not serve",
+            extra={
+                "event": "llm_models_refused",
+                "provider": "bedrock",
+                "model": model_id,
+                "status": status,
+                "detail": str(failure),
+            },
+        )
+
+
 # ── Credential verification ──────────────────────────────────────────────────
 
 _key_lock = threading.Lock()
@@ -641,6 +685,7 @@ def chat(
                 # fingerprint, so nothing else would have re-asked. Dropping
                 # the memo makes the next probe go and look.
                 reset_key_cache()
+            _announce_refusal(refusal, model_id)
             raise refusal
         try:
             data = resp.json()

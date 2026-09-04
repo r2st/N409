@@ -1073,6 +1073,45 @@ groups:
           summary: '{{ $labels.job }} is degrading on its model or research provider ({{ $labels.event }})'
           runbook: 'journalctl -u n409-ai --since -1h | grep {{ $labels.event }} — the `detail` field carries the provider''s own words. openrouter_key is answered by OPENROUTER_API_KEY; llm_prose_fallback by the model id in `model`'
 
+      # The endings the 4xx rule left silent (R428, methodology M11).
+      #
+      # `errors.py` logs the 5xx failures and states why it leaves 4xx alone:
+      # "those describe the request, the caller was told, and their rate is set
+      # by whoever is making the mistakes". True of a malformed body, and not
+      # true of either of these. `llm_quota_exhausted` is every configured model
+      # refusing on 429 — the allowance is counted against the *key*, so the
+      # chain is spent as a whole and every AI feature on the platform stops at
+      # once — and it left no line anywhere: the per-attempt warnings above name
+      # a candidate, the chain's verdict was raised and never written down, and
+      # the response is a 429, which `UpstreamErrorRate` deliberately excludes
+      # as "a bug in a route, not an outage in a dependency".
+      #
+      # `page`, unlike its neighbours, because there is no degraded mode behind
+      # it: extraction, narrative and research all fail outright, and the remedy
+      # (raise the allowance, or point OPENROUTER_MODELS at ids that are still
+      # served) is one an operator applies in minutes.
+      - alert: LlmQuotaExhausted
+        expr: increase(log_degraded_events_total{event="llm_quota_exhausted"}[15m]) > 0
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: 'every model {{ $labels.job }} is configured with is refusing on quota — all AI features are down'
+          runbook: 'journalctl -u n409-ai --since -1h | grep llm_quota_exhausted — `detail` carries each candidate''s own refusal and `provider` says which account is throttled. Raise the OpenRouter allowance, or set OPENROUTER_API_KEY to a paid key'
+
+      # The other 4xx ending, at a threshold rather than on the first one: a
+      # single oversized prompt is a request fault and reaches here honestly,
+      # so one is not news. A run of them is `OPENROUTER_MODELS` naming ids the
+      # provider has retired — this deployment's commonest configuration fault,
+      # and one that looks from the outside exactly like the model being bad at
+      # its job, because every pipeline answers 422 with the provider's words.
+      - alert: LlmModelsRefusingRequests
+        expr: increase(log_degraded_events_total{event="llm_models_refused"}[30m]) > 5
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} is having its requests refused by every model it asks'
+          runbook: 'journalctl -u n409-ai --since -1h | grep llm_models_refused — `status` separates a retired model id (404) from a prompt over the context length (400/413); the ids in force are OPENROUTER_MODELS and BEDROCK_MODEL'
+
       # The configuration half, and the reason it is a rule at all: every one of
       # these is a value that *failed to parse and fell back to a default*, so
       # the deployment is running on numbers nobody chose while looking exactly

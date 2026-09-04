@@ -97,6 +97,24 @@ _EXTRA_KEYS = (
     "relative_error",
     "tolerance",
     "paths",
+    # Which calculation a line is about (R428, methodology M11).
+    #
+    # `main._call_engine` writes it on the one line this tier emits about a 4xx,
+    # under a comment saying why the line exists at all: the caller "cannot act
+    # on `unsupported operand type ... for *: 'str' and 'float'`. Kept for
+    # whoever can". Naming the calculation is the whole of what makes it
+    # actionable — there are forty engine endpoints and the message names none
+    # of them — and the formatter was dropping the field, which is exactly the
+    # failure the note at the top of this list describes: from the call site a
+    # silently discarded field reads the same as a logged one. The line has been
+    # going out since R320 saying only that *some* calculation was handed a
+    # value it could not use.
+    #
+    # Engine-only, like `relative_error` and `tolerance` above: `path` is the
+    # URL an access-log line was served under and this is the calculation label
+    # — `qsbs`, `backsolve` — a route handed its helper, so folding the two
+    # together is the model-id overloading this list was widened to undo.
+    "endpoint",
     # What a market-feed line is about: the feed method — prices, financials or
     # multiples — and the symbol it was asked for. Added in R305 with the first
     # log line this tier's `app/engine` package has ever written — a fallback

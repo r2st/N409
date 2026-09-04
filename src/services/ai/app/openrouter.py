@@ -544,6 +544,77 @@ def _classify(
     return RequestRejected(joined, next((s for s in statuses if s != 429), None))
 
 
+def _announce_chain_refusal(failure: OpenRouterError, statuses: list[int | None]) -> None:
+    """The two chain verdicts that reach a caller as a 4xx, and so are recorded nowhere.
+
+    WHY THIS EXISTS (R428, methodology M11). `errors.py` states the rule that
+    leaves them silent, and states it correctly for the population it was
+    written about: "4xx stays unlogged. Those describe the request, the caller
+    was told, and their rate is set by whoever is making the mistakes." Two of
+    this chain's endings are 4xx and neither is that.
+
+    * `RateLimited` is every configured candidate answering 429 — and
+      `llm_http.py` says why the fall-through is theatre: "OpenRouter's free
+      allowance is counted against the *key*, so a spent quota refuses every
+      model in the chain". `main._rate_limited` says the rest of it out loud:
+      the service is "perfectly healthy and merely out of allowance". That is
+      not one caller's mistake; it is every AI feature on the platform stopping
+      at once, and the remedy is an operator raising the allowance.
+    * `RequestRejected` is every candidate answering some other 4xx, and its own
+      docstring names an unknown or retired model id (404) beside the
+      context-length case. A free model id going stale is this deployment's
+      commonest configuration fault; the fix is `OPENROUTER_MODELS`, not the
+      prompt.
+
+    Neither had a record anywhere. The per-attempt lines above are `warning`s
+    about a *candidate*, and the chain's verdict — the thing that decides which
+    of these two situations an operator is in — was raised and never written
+    down. The 5xx endings do get a line, from `install_error_handlers`; these
+    took the one exit that skips it.
+
+    So they are logged here rather than at the FastAPI arms in `main.py`,
+    because there are three of those arms (`pipelines`, `research`,
+    `anonymize`) and only one place the verdict is drawn. `warning` puts both
+    into `log_degraded_events_total{event,level}` by construction — the counter
+    reads every warning-or-worse line carrying an `event` — which is the only
+    channel on this box an alert can be built on.
+
+    `statuses` is reported as a count and not a list: the label set on the
+    counter is `event` and `level`, the journal line is where the diagnosis
+    happens, and the number of candidates that were asked is what separates a
+    one-model deployment from a chain that walked eight ids and was refused by
+    all of them. `detail` carries the provider's own words via the exception
+    message, redacted on the way out like every other `detail`.
+    """
+    if isinstance(failure, RateLimited):
+        _log.warning(
+            "every configured model refused on quota; no AI feature on this platform can run until the allowance resets",
+            extra={
+                "event": "llm_quota_exhausted",
+                "provider": "openrouter",
+                "count": len(statuses),
+                "detail": str(failure),
+            },
+        )
+    elif isinstance(failure, RequestRejected):
+        # Bound to a local rather than written as `failure.status` inline, which
+        # `test_observability` refuses: `status` is the field an operator filters
+        # with `status >= 500`, and it only answers if every writer means an HTTP
+        # status by it. The census reads the expression, so the expression has to
+        # be one of the shapes that always is.
+        status = failure.status
+        _log.warning(
+            "every configured model refused the request; a retired model id or a prompt no candidate will serve",
+            extra={
+                "event": "llm_models_refused",
+                "provider": "openrouter",
+                "status": status,
+                "count": len(statuses),
+                "detail": str(failure),
+            },
+        )
+
+
 def _completion_text(data: dict) -> str:
     """The assistant text out of a chat-completions body, or "" if it isn't there.
 
@@ -697,6 +768,7 @@ def chat(
                 finish_reason=finish_reason,
             )
         failure = _classify(errors, statuses, retry_after_s)
+        _announce_chain_refusal(failure, statuses)
         if isinstance(failure, AuthenticationFailed):
             # Same reason as the Bedrock arm: /ready memoises its answer for a
             # minute, and a chain that every candidate rejected the key on has
