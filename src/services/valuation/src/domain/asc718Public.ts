@@ -151,6 +151,23 @@ export interface LatticeResult {
  * A constant annual post-vesting exit rate optionally forfeits still-unexercised
  * options each step (they lapse worthless once out-of-the-money, or are exercised
  * if in-the-money), which pulls the expected term in as issuers observe.
+ *
+ * THE EXIT RATE HAS TO REACH BOTH FIGURES (round 407, methodology M2). It used
+ * to be applied in the forward probability sweep and nowhere else, so it moved
+ * `expectedTermYears` and left `fairValue` bit-identical: on a $30 at-the-money
+ * ten-year grant vesting over four at 45% vol, an exit rate of 0, 15% and even
+ * 100% a year all priced at $15.9202, against expected terms of 8.06, 7.86 and
+ * 7.27 years. The two returned fields were answers from two different models,
+ * and an issuer disclosing the shortened term beside the unshortened value is
+ * disclosing a term its own fair value does not rest on.
+ *
+ * A holder who leaves realises `max(S − K, 0)` there and then — exercising if
+ * the option is in the money, forfeiting it if not — which is exactly what the
+ * paragraph above describes and is strictly worse than continuing, so the value
+ * falls with the term. The forward sweep absorbs the same mass on the same
+ * rule: it used to thin only the in-the-money nodes, leaving every
+ * out-of-the-money leaver alive in the tree to be counted at the full
+ * contractual term, which is the one place a departure cannot land.
  */
 export function binomialLattice(args: {
   underlying: number;
@@ -210,6 +227,14 @@ export function binomialLattice(args: {
         next[j] = cont;
         flags[j] = false;
       }
+      // The post-vest exit hazard, in the value as well as in the term. A
+      // leaver takes `max(S − K, 0)` at this node instead of continuing. From
+      // step 1, because the forward sweep thins the mass arriving at a node
+      // and nothing arrives at the root; a barrier node is unaffected either
+      // way, since there the two payoffs are the same number.
+      if (vested && exitPerStep > 0 && i >= 1) {
+        next[j] = (1 - exitPerStep) * (next[j] ?? 0) + exitPerStep * Math.max(0, s - k);
+      }
     }
     exercisesAt[i] = flags;
     value = next;
@@ -235,13 +260,17 @@ export function binomialLattice(args: {
         nextProb[j] = (nextProb[j] ?? 0) + mass * (1 - pClamped);
       }
     }
-    // Constant post-vest exit hazard: a slice of surviving in-the-money mass
-    // exercises early each step once vested.
+    // Constant post-vest exit hazard: a slice of the surviving mass leaves each
+    // step once vested — in the money it exercises, out of the money it lapses.
+    // Both end the option's life at this node, which is why the hazard is no
+    // longer conditioned on moneyness: thinning only the in-the-money nodes
+    // left every out-of-the-money leaver in the tree to be counted at the full
+    // contractual term, and reported a longer expected term for a workforce
+    // that turns over faster.
     if (i + 1 >= vestStep && exitPerStep > 0) {
       for (let j = 0; j <= i + 1; j++) {
-        const s = price(i + 1, j);
         const here = nextProb[j] ?? 0;
-        if (s > k && here > 0) {
+        if (here > 0) {
           const leave = here * exitPerStep;
           nextProb[j] = here - leave;
           expTerm += leave * (i + 1) * dt;

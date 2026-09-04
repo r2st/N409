@@ -101,6 +101,15 @@ describe('ASC 718 public models — degenerate inputs', () => {
       const some = binomialLattice({ ...base, postVestExitRate: 0.15 });
       // Leaving early can only shorten the expected term.
       expect(some.expectedTermYears).toBeLessThan(none.expectedTermYears);
+      /*
+       * R407 (M2): and it has to reach the value as well. The hazard used to be
+       * applied in the forward probability sweep only, so `expectedTermYears`
+       * moved and `fairValue` came back bit-identical at every rate — 0, 15%
+       * and 100% a year all priced one grant at the same figure. A holder who
+       * leaves realises max(S − K, 0) instead of continuing, which is strictly
+       * worse than continuing, so the value falls with the term.
+       */
+      expect(some.fairValue).toBeLessThan(none.fairValue);
 
       // Out-of-range rates are clamped, not trusted: a negative hazard would
       // add probability mass and a rate above 1 would remove more than exists.
@@ -110,6 +119,34 @@ describe('ASC 718 public models — degenerate inputs', () => {
       expect(finite(excessive.expectedTermYears)).toBe(true);
       expect(excessive.expectedTermYears).toBeGreaterThan(0);
       expect(excessive.expectedTermYears).toBeLessThanOrEqual(base.contractualTermYears);
+      expect(finite(excessive.fairValue)).toBe(true);
+      expect(excessive.fairValue).toBeGreaterThan(0);
+    });
+
+    // Both figures come off one model, so they have to move together and in the
+    // same direction at every rate — not merely differ from the unhazarded case.
+    it('lowers the value and the term monotonically as the exit rate rises', () => {
+      const runs = [0, 0.05, 0.15, 0.5, 1].map((rate) =>
+        binomialLattice({ ...base, postVestExitRate: rate }),
+      );
+      for (let i = 1; i < runs.length; i += 1) {
+        expect(runs[i]!.fairValue).toBeLessThan(runs[i - 1]!.fairValue);
+        expect(runs[i]!.expectedTermYears).toBeLessThan(runs[i - 1]!.expectedTermYears);
+      }
+      // A leaver never does better than a holder who stays, and never worse
+      // than nothing: the value stays inside the no-hazard bound and above
+      // intrinsic.
+      expect(runs[runs.length - 1]!.fairValue).toBeLessThan(runs[0]!.fairValue);
+      expect(runs[runs.length - 1]!.fairValue).toBeGreaterThanOrEqual(
+        Math.max(0, base.underlying - base.strike),
+      );
+    });
+
+    it('leaves both figures untouched when nobody leaves', () => {
+      // The hazard is opt-in, so the default path has to be the arithmetic it
+      // always was — the fix must not move a stored ASC 718 disclosure.
+      const { postVestExitRate: _omit, ...noRate } = { ...base, postVestExitRate: 0 };
+      expect(binomialLattice(noRate)).toEqual(binomialLattice({ ...base, postVestExitRate: 0 }));
     });
 
     it('prices a deeply out-of-the-money grant to a finite figure', () => {
