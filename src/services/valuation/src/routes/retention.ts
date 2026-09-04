@@ -695,6 +695,17 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
           stage: c.stage,
           credited_seconds: c.creditedSeconds,
         }));
+        // The third write, and the same argument as the second one line up:
+        // `review_tasks.due_at` is the ops worklist's SLA clock and it ran
+        // through the withdrawal too, so a restored engagement's open tasks
+        // came back late by the length of it — sorted to the top of the queue
+        // R342 had just taken them out of. Reported beside the stage credit
+        // because the two are one repair described at two grains.
+        const tasksCredited = result.taskDueCredited.map((c) => ({
+          valuation_id: c.valuationId,
+          tasks: c.tasks,
+          credited_seconds: c.creditedSeconds,
+        }));
         await recordActions(deps.pool, [
           {
             dataType: 'valuation',
@@ -705,6 +716,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
               archived_at: valuation.archived_at.toISOString(),
               acknowledged_rearchival: parsed.data.acknowledge_rearchival === true,
               sla_credited: slaCredited,
+              tasks_credited: tasksCredited,
             },
           },
         ]);
@@ -712,6 +724,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
           archived_at: valuation.archived_at.toISOString(),
           acknowledged_rearchival: parsed.data.acknowledge_rearchival === true,
           sla_credited: slaCredited,
+          tasks_credited: tasksCredited,
         });
         // The pair to the retirement route's announcement, in the same place
         // and the same order: the spine first, then the outside world. A
@@ -723,10 +736,16 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
         return {
           restored,
           sla_credited: slaCredited,
+          tasks_credited: tasksCredited,
           valuation: await findValuationById(deps.pool, id),
         };
       }
-      return { restored, sla_credited: [], valuation: await findValuationById(deps.pool, id) };
+      return {
+        restored,
+        sla_credited: [],
+        tasks_credited: [],
+        valuation: await findValuationById(deps.pool, id),
+      };
     },
   );
 

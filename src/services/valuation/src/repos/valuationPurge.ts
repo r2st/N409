@@ -181,6 +181,86 @@ async function creditEngagementsForRetirement(
   return rows;
 }
 
+/**
+ * The other clock a withdrawal ran through (R408, methodology M3).
+ *
+ * {@link creditEngagementsForRetirement} states the argument in full for
+ * `engagements.stage_entered_at`: "Retirement stops none of them — it moves
+ * `archived_at` and nothing else, which is the same fact that produced the
+ * 'board and sweep drop retired engagements' filter: the readers are filtered,
+ * the clock is not." `review_tasks` is that sentence one table over, and it was
+ * left out because it got its reader filter in a different round (R342) from
+ * the one that noticed the clock (R363).
+ *
+ * `review_tasks.due_at` is the ops worklist's SLA. `overdue` is computed from
+ * it in SQL, the console has an overdue-only tab, and `listTasks` sorts by
+ * `due_at ASC` so the latest work is what an operator sees first. R342 took
+ * withdrawn engagements' tasks *out* of that queue and — deliberately — left
+ * them on the engagement's own panel, which is exactly the shape that hides
+ * this: nothing chases the task while the file is withdrawn, so the clock runs
+ * unwatched.
+ *
+ * An engagement retired in error and restored three months later therefore
+ * comes back with every open task ninety days late, sorted to the top of the
+ * queue it just rejoined and counted in the overdue tab. That sentence is false
+ * in the same way the engagement one was: no work was owed for any of those
+ * hours, because R89 refused every write to the file.
+ *
+ * Same shift, same guards, same reasoning. Only tasks the `overdue` predicate
+ * can reach are moved — a `done` or `cancelled` task's clock already stopped,
+ * and rewriting its due date would falsify a closed record to tidy a number
+ * nothing reads. `created_at < was_archived_at` is the twin of the stage
+ * version's `stage_entered_at < archived_at`: a task raised after the
+ * withdrawal has not been waiting through it and must not be pushed into the
+ * future by a repair meant to be neutral.
+ *
+ * Reported per engagement rather than per task, because that is the grain the
+ * retention trail and the restore's answer already speak in — and because a
+ * two-hundred-id batch would otherwise put a row per task on the ledger. The
+ * count is what a reader needs to reconcile the queue against the log.
+ */
+async function creditTasksForRetirement(
+  client: pg.PoolClient,
+  restored: readonly { id: string; was_archived_at: Date }[],
+): Promise<TaskSlaCredit[]> {
+  if (restored.length === 0) return [];
+  const { rows } = await client.query<{ valuationId: string; creditedSeconds: number }>(
+    `UPDATE review_tasks t
+        SET due_at = t.due_at + (now() - r.was_archived_at),
+            updated_at = now()
+       FROM (SELECT unnest($1::ulid[]) AS valuation_id,
+                    unnest($2::timestamptz[]) AS was_archived_at) r
+      WHERE t.valuation_id = r.valuation_id
+        AND t.due_at IS NOT NULL
+        AND t.status IN ('open','in_progress','blocked')
+        AND t.created_at < r.was_archived_at
+      RETURNING t.valuation_id AS "valuationId",
+                round(extract(epoch FROM (now() - r.was_archived_at)))::int AS "creditedSeconds"`,
+    [restored.map((r) => r.id), restored.map((r) => r.was_archived_at)],
+  );
+  const byValuation = new Map<string, TaskSlaCredit>();
+  for (const row of rows) {
+    const seen = byValuation.get(row.valuationId);
+    if (seen) seen.tasks += 1;
+    else
+      byValuation.set(row.valuationId, {
+        valuationId: row.valuationId,
+        tasks: 1,
+        creditedSeconds: row.creditedSeconds,
+      });
+  }
+  return [...byValuation.values()];
+}
+
+/** One engagement's task clocks, moved forward by the span it was withdrawn. */
+export interface TaskSlaCredit {
+  valuationId: string;
+  /** How many still-open tasks had their due date moved. */
+  tasks: number;
+  /** Length of the withdrawal, in seconds. */
+  creditedSeconds: number;
+}
+
 /** One engagement's SLA clock, moved forward by the span it was withdrawn. */
 export interface SlaCredit {
   valuationId: string;
@@ -202,6 +282,11 @@ export interface RestoreResult {
    * when nothing was owed. See {@link creditEngagementsForRetirement}.
    */
   slaCredited: SlaCredit[];
+  /**
+   * The same repair on the *task* queue's clock. See
+   * {@link creditTasksForRetirement}.
+   */
+  taskDueCredited: TaskSlaCredit[];
 }
 
 /**
@@ -236,7 +321,8 @@ export interface RestoreResult {
  */
 export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): Promise<RestoreResult> {
   const wanted = [...new Set(ids)];
-  if (wanted.length === 0) return { restored: [], missing: [], notArchived: [], slaCredited: [] };
+  if (wanted.length === 0)
+      return { restored: [], missing: [], notArchived: [], slaCredited: [], taskDueCredited: [] };
 
   const client = await pool.connect();
   try {
@@ -281,6 +367,7 @@ export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): 
     );
 
     const slaCredited = await creditEngagementsForRetirement(client, taken);
+    const taskDueCredited = await creditTasksForRetirement(client, taken);
     await client.query('COMMIT');
     const restored = taken.map((r) => r.id);
     for (const id of restored) invalidateValuation(id);
@@ -289,6 +376,7 @@ export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): 
       missing: wanted.filter((id) => !found.includes(id)),
       notArchived: found.filter((id) => !restored.includes(id)),
       slaCredited,
+      taskDueCredited,
     };
   } catch (err) {
     // swallow: ROLLBACK in a catch that is re-raising the error that caused it.
