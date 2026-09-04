@@ -39,6 +39,7 @@ import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
@@ -99,7 +100,7 @@ export function contentDisposition(
   name: string,
   disposition: 'attachment' | 'inline' = 'attachment',
 ): string {
-  const safe = (scrubFilename(name) || 'download').slice(0, 200);
+  const safe = sliceChars(scrubFilename(name) || 'download', 200);
   // ASCII-only fallback: the quote and backslash are already gone, so what is
   // left is the characters ASCII has no spelling for.
   const ascii = safe.replace(/[^\x20-\x7E]/g, '_');

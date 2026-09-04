@@ -1,4 +1,5 @@
 import { newUlid } from '@n409/shared';
+import { sliceChars } from '../domain/textSlice.js';
 
 /**
  * Message construction for outgoing mail: MIME assembly, and the HTML half of
@@ -246,7 +247,7 @@ export interface HtmlEmailOptions {
  */
 export function renderHtmlEmail(options: HtmlEmailOptions): string {
   const brand = escapeHtml(options.brandName?.trim() || 'N409');
-  const preheader = escapeHtml(options.body.replace(/\s+/g, ' ').trim().slice(0, 140));
+  const preheader = escapeHtml(sliceChars(options.body.replace(/\s+/g, ' ').trim(), 140));
   const footer = options.footer ? `<p style="margin:0 0 8px">${escapeHtml(options.footer)}</p>` : '';
   const preferences = options.preferencesUrl
     ? `<p style="margin:0"><a href="${escapeHtml(options.preferencesUrl)}" style="color:#64748b">Manage email preferences</a></p>`

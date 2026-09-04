@@ -7,6 +7,7 @@ import {
   type BounceKind,
   type DeliveryEventKind,
 } from '../domain/emailDelivery.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 /**
  * The delivery ledger and the suppression list (migration 0163).
@@ -206,7 +207,7 @@ export async function recordSendFailure(
   // take it out of the retry it should stay in.
   if (kind === null || !isTerminalBounce(kind)) return kind;
 
-  const detail = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+  const detail = sliceChars(err instanceof Error ? err.message : String(err), 500);
   const occurredAt = new Date();
 
   await recordDeliveryEvent(db, {

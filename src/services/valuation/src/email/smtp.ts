@@ -6,6 +6,7 @@ import type { EmailOutboxRow } from '../repos/emailOutbox.js';
 import { buildMimeMessage, renderHtmlEmail, type ListUnsubscribe } from './mime.js';
 import { createUnsubscribeToken, unsubscribeUrl } from '../domain/unsubscribeToken.js';
 import type { SmtpStage } from '../domain/emailDelivery.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 /**
  * Minimal SMTP transport (remaining-gaps §6 P0 #1 — real email delivery).
@@ -231,7 +232,7 @@ async function expect(
   const reply = await dialogue.send(line);
   if (!codes.some((c) => reply.startsWith(c))) {
     throw new SmtpError(
-      `SMTP ${STAGE_LABEL[stage]} failed: ${reply.slice(0, 200)}`,
+      `SMTP ${STAGE_LABEL[stage]} failed: ${sliceChars(reply, 200)}`,
       stage,
       replyCodeOf(reply),
     );

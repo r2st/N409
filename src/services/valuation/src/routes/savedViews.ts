@@ -19,6 +19,7 @@ import { findPartnerById } from '../repos/adminUsers.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 /**
  * `saved_views` carries two unique indexes (migration 0088), and a write can
@@ -92,6 +93,15 @@ const MAX_QUERY_CHARS = 1000;
 const MAX_VIEWS_PER_USER = 50;
 
 /**
+ * The longest a saved view's name may be.
+ *
+ * Named because there are three writers of it and one of them is not a schema:
+ * the "save this partner's default view" route below takes the *partner's*
+ * name, which its own door bounds at 200, and cuts it to fit this column.
+ */
+const MAX_VIEW_NAME = 80;
+
+/**
  * Drops unknown keys, empty values and pagination, and normalises ordering so
  * two views built by different click paths compare equal. Exported for tests.
  */
@@ -112,7 +122,7 @@ export function normalizeViewQuery(raw: string): string {
 }
 
 const CreateBody = z.object({
-  name: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(MAX_VIEW_NAME),
   query: z.string().max(4000).default(''),
   visibility: z.enum(VIEW_VISIBILITIES).default('private'),
   is_default: z.boolean().default(false),
@@ -120,7 +130,7 @@ const CreateBody = z.object({
 
 const PatchBody = z
   .object({
-    name: z.string().trim().min(1).max(80).optional(),
+    name: z.string().trim().min(1).max(MAX_VIEW_NAME).optional(),
     query: z.string().max(4000).optional(),
     visibility: z.enum(VIEW_VISIBILITIES).optional(),
     is_default: z.boolean().optional(),
@@ -274,7 +284,7 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
     try {
       const row = await createSavedView(deps.pool, {
         ownerId: principal.id,
-        name: partner.name.slice(0, 80),
+        name: sliceChars(partner.name, MAX_VIEW_NAME),
         query,
         visibility: 'shared',
         isDefault: false,

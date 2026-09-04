@@ -5,6 +5,7 @@
  */
 
 import { nameColumns, rowByColumn } from './sheetColumns.js';
+import { sliceChars } from './textSlice.js';
 
 export const CAP_TABLE_EVENT_TYPES = {
   imported: 'cap_table_imported',
@@ -377,7 +378,7 @@ export function cellText(raw: unknown): string {
     : typeof raw === 'object' && raw !== null
       ? 'an object'
       : String(raw).trim();
-  return text.length > CELL_TEXT_MAX ? `${text.slice(0, CELL_TEXT_MAX)}\u2026` : text;
+  return text.length > CELL_TEXT_MAX ? `${sliceChars(text, CELL_TEXT_MAX)}\u2026` : text;
 }
 
 /**

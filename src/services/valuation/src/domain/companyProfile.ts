@@ -12,6 +12,8 @@
  *   * which of an agent's fields may be written over which existing values.
  */
 
+import { sliceChars } from './textSlice.js';
+
 /** SIC is 2-4 digits (division, major group, industry group, industry). */
 export const SIC_PATTERN = /^\d{2,4}$/;
 /** NAICS is 2-6 digits, narrowing the same way. */
@@ -90,7 +92,7 @@ function cleaned(value: unknown, field: AgentProfileField): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (trimmed === '') return null;
-  return trimmed.slice(0, LIMITS[field]);
+  return sliceChars(trimmed, LIMITS[field]);
 }
 
 function wellFormed(field: AgentProfileField, value: string): boolean {

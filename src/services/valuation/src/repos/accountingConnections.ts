@@ -5,6 +5,7 @@ import type { EventActor } from '../events/record.js';
 import { recordIntegrationConnected, recordIntegrationDisconnected } from '../events/integrationEvents.js';
 import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { AccountingProvider, ImportedFinancials, TokenSet } from '../clients/accounting.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 export interface AccountingConnectionRow {
   id: string;
@@ -140,7 +141,7 @@ export async function recordImportError(pool: pg.Pool, id: string, error: string
   await pool.query(
     `UPDATE accounting_connections SET status = 'error', last_error = $2
      WHERE id = $1 AND status <> 'revoked'`,
-    [id, error.slice(0, 500)],
+    [id, sliceChars(error, 500)],
   );
 }
 

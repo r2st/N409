@@ -47,6 +47,7 @@
  */
 
 import type { ComparableFiguresSource } from './comparables.js';
+import { sliceChars } from './textSlice.js';
 
 /** An input problem the analyst has to fix — the route maps it to a 422. */
 export class AiComparablesError extends Error {}
@@ -101,7 +102,7 @@ const MAX_ROWS = 40;
 function str(value: unknown, limit: number): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed.slice(0, limit);
+  return trimmed === '' ? null : sliceChars(trimmed, limit);
 }
 
 function fin(value: unknown): number | null {

@@ -10,6 +10,7 @@ import {
 import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { CapTableProvider, TokenSet } from '../clients/capTableSync.js';
 import { STATE_GROUPS } from '../domain/operations.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 export type SyncFrequency = 'manual' | 'daily' | 'weekly';
 
@@ -336,7 +337,7 @@ export async function recordSyncError(
       WHERE id = $1 AND status <> 'revoked' AND auth_generation = $5`,
     [
       connection.id,
-      error.slice(0, 500),
+      sliceChars(error, 500),
       opts.terminal ?? false,
       opts.retryAfterSeconds ?? null,
       connection.auth_generation,

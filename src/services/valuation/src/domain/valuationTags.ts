@@ -44,6 +44,8 @@
  * agent's tags land as *suggestions* — see `TAG_STATUSES`.
  */
 
+import { sliceChars } from './textSlice.js';
+
 /** The families a tag belongs to. Ordering is the order they are presented. */
 export const TAG_CATEGORIES = [
   'stage',
@@ -450,7 +452,7 @@ const SCAN_LIMIT = 60;
 function str(value: unknown, limit: number): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed.slice(0, limit);
+  return trimmed === '' ? null : sliceChars(trimmed, limit);
 }
 
 function confidence(value: unknown): number | null {
