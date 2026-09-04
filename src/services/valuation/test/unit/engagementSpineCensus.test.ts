@@ -119,6 +119,8 @@ const DECIDED: Record<string, string> = {
     'the outbox row is itself the record of a message, with the delivery rows and the retry ladder beside it. The engagement action that caused the send writes its own event.',
   'inbox.ts':
     'per-(reader, engagement) read state. Unread is a property of the reader — see the repo’s own note on why it is not `last_comment_at` — and no reader’s inbox is a fact about the engagement.',
+  'slaCredit.ts':
+    'the SLA repair a reopening makes, and it is recorded — by its one caller, inside the same transaction: `patchValuation` names the credited span in the `state_changed` payload, so the transition and the clocks it moved read as one line rather than two.',
   'networkItems.ts':
     'the journal of outbound calls: this is an observability record, not engagement state, and putting it on the spine would file the trail inside the thing it describes.',
 };
