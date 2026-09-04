@@ -262,11 +262,38 @@ describe.skipIf(!dbUp)('selected volatility', () => {
     expect(row.reason).toContain('guideline companies');
   });
 
-  it('adopting twice keeps the first adoption’s timestamp', async () => {
+  /**
+   * `applied_at` is when this run was *last* adopted, not when it was first.
+   *
+   * This test asserted the opposite until now, and had been failing since R388
+   * reversed the contract deliberately: `markVolatilityEstimateApplied` used to
+   * carry `WHERE applied_at IS NULL`, which made a second adoption of the same
+   * run a no-op, and that cannot hold beside R304's ordering rule — the lookup
+   * for "which run is the calculation carrying" takes the newest `applied_at`,
+   * and going back to a run already adopted once is an ordinary click. Adopt A,
+   * adopt B, go back to A: the calculation carried A while the lookup still
+   * named B. R388's own coverage went into `adoptedRunOrdering.test.ts` and
+   * this older assertion was left behind stating the rule it had just removed.
+   *
+   * Kept rather than deleted, restated: re-adopting has to move the timestamp,
+   * because that is the thing the ordering reads.
+   */
+  it('adopting the same run again moves its timestamp forward', async () => {
     const est = (await get()).json().estimates[0];
-    const first = est.applied_at;
-    await adopt(est.id);
-    expect((await get()).json().estimates[0].applied_at).toBe(first);
+    const first = est.applied_at as string;
+    expect(first).not.toBeNull();
+
+    const again = await adopt(est.id);
+    expect(again.statusCode, again.body).toBe(200);
+
+    const after = (await get()).json().estimates[0];
+    expect(after.id).toBe(est.id);
+    expect(new Date(after.applied_at as string).getTime()).toBeGreaterThanOrEqual(
+      new Date(first).getTime(),
+    );
+    // Still the adopted run, and still carrying the same figure.
+    expect(after.applied_at).not.toBeNull();
+    expect((await get()).json().applied_volatility).toBeCloseTo(est.recommended, 6);
   });
 
   it('records an analyst’s own selection against the same peer measurements', async () => {
