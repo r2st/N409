@@ -419,6 +419,13 @@ describe('every 429 this service raises states when to come back', () => {
   const ROOTS = ['services/valuation/src', 'services/web/src', 'services/report/src', 'packages'];
   const CALL = 'problems.tooManyRequests(';
 
+  /** Replaces comment bodies with spaces, preserving every offset and line. */
+  function blankComments(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/(^|[^:])\/\/[^\n]*/gm, (m, keep: string) => keep + ' '.repeat(m.length - keep.length));
+  }
+
   /**
    * True when the argument list starting at `open` has a comma at depth zero —
    * i.e. a second argument was passed. Walks the source rather than matching a
@@ -455,7 +462,14 @@ describe('every 429 this service raises states when to come back', () => {
         // Build output, and the shared package's own tests of the helper — those
         // exercise `tooManyRequests` with and without the argument on purpose.
         if (segments.includes('dist') || segments.includes('test')) continue;
-        const source = readFileSync(file, 'utf8');
+        // Comments blanked, not stripped, so every offset below still names the
+        // right line. R369's `realtimeStreams.ts` opens by quoting the very call
+        // it exists to instrument — "the route answers
+        // `problems.tooManyRequests(...)`" — and this scan read the ellipsis as
+        // a bare 429 and failed on a paragraph. A census red for a reason that
+        // cannot be fixed in the code it audits is a census people learn to
+        // ignore, which is the whole failure it was written against (R420).
+        const source = blankComments(readFileSync(file, 'utf8'));
         for (let at = source.indexOf(CALL); at !== -1; at = source.indexOf(CALL, at + 1)) {
           const open = at + CALL.length - 1;
           sites.push({
@@ -484,6 +498,19 @@ describe('every 429 this service raises states when to come back', () => {
     // The vacuity guard: a renamed helper would empty the scan and the
     // assertion above would pass by asking nothing.
     expect(callSites().length).toBeGreaterThan(15);
+  });
+
+  it('does not read a paragraph about a 429 as a 429', () => {
+    // R420. The modules that count their own refusals explain themselves by
+    // quoting the call, and half of those quotations are `(...)`. Pinned here
+    // rather than only by the green above, so a future edit to `blankComments`
+    // that stops blanking is caught by an assertion that says why.
+    const prose = '/* the route answers `problems.tooManyRequests(...)` */\n';
+    const real = "problems.tooManyRequests('nope', 30);";
+    expect(blankComments(prose + real).indexOf(CALL)).toBe((prose + real).indexOf(real));
+    // And blanking preserves offsets, so the line number a failure reports is
+    // still the line the call is on.
+    expect(blankComments(prose + real)).toHaveLength((prose + real).length);
   });
 
   it('reads the argument list rather than the line', () => {
