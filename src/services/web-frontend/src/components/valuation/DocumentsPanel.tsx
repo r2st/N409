@@ -31,8 +31,17 @@ import {
  */
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
-/** A file that never left the browser, phrased like the server's own refusal. */
-function localRejection(file: File): string | null {
+/**
+ * A file that never left the browser, phrased like the server's own refusal.
+ *
+ * Exported because this is not the only screen that posts to
+ * `POST /valuations/:id/documents`: the onboarding funnel's step 3 does too,
+ * and it is the door where the check matters most — a first-time client on a
+ * home uplink, sending the scanned incorporation documents the wizard asks
+ * for. That door had no local check at all, so the two screens onto one
+ * endpoint disagreed about what could be sent.
+ */
+export function localUploadRejection(file: File): string | null {
   if (file.size === 0) return 'the file is empty';
   if (file.size > MAX_DOCUMENT_BYTES)
     return `it is ${formatBytes(file.size)}, over the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`;
@@ -112,7 +121,7 @@ export function DocumentsPanel({
     for (const [index, file] of batch.entries()) {
       setProgress({ done: index, total: batch.length, name: file.name });
 
-      const localReason = localRejection(file);
+      const localReason = localUploadRejection(file);
       if (localReason !== null) {
         failures.push(`${file.name} — ${localReason}`);
         continue;

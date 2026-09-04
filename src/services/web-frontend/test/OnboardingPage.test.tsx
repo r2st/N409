@@ -541,6 +541,61 @@ describe('OnboardingPage — uploading documents', () => {
     expect(storedUploads()).toEqual({ cap_table: ['one.pdf', 'two.pdf'] });
   });
 
+  /**
+   * R421, methodology M6. Two screens post to `POST /valuations/:id/documents`
+   * and they disagreed about what could be sent: the documents panel refuses an
+   * oversized file in the browser, this one had no local check at all — so the
+   * client least likely to be on a fast uplink was the one who pushed 30 MB
+   * before hearing no.
+   */
+  it('refuses an oversized file without sending it, and uploads the rest', async () => {
+    const user = userEvent.setup();
+    const posted: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).includes('/documents')) {
+        const form = (init as { body?: FormData } | undefined)?.body;
+        posted.push((form?.get('file') as File).name);
+        return jsonResponse({ document: { id: 'd1' } }, 201);
+      }
+      return jsonResponse({});
+    });
+    resumeAtUploads();
+
+    const huge = new File([new Uint8Array(26 * 1024 * 1024)], 'scan.pdf', { type: 'application/pdf' });
+    await user.upload(picker(), [huge, file('ok.pdf')]);
+
+    expect(await screen.findByText(/scan\.pdf/)).toBeInTheDocument();
+    // Never sent, and the file after it was not skipped with it.
+    expect(posted).toEqual(['ok.pdf']);
+    expect(storedUploads()).toEqual({ cap_table: ['ok.pdf'] });
+  });
+
+  /**
+   * The other half: a failure part-way used to `throw` out of the whole loop,
+   * so every file after it was never attempted and the client was told nothing
+   * about them.
+   */
+  it('attempts the files after one the server refuses', async () => {
+    const user = userEvent.setup();
+    let n = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/documents')) {
+        n += 1;
+        if (n === 1) return jsonResponse({ detail: 'That file is too large.' }, 413);
+        return jsonResponse({ document: { id: `d${n}` } }, 201);
+      }
+      return jsonResponse({});
+    });
+    resumeAtUploads();
+
+    await user.upload(picker(), [file('one.pdf'), file('two.pdf'), file('three.pdf')]);
+
+    await waitFor(() => expect(screen.getByText('(2)')).toBeInTheDocument());
+    expect(storedUploads()).toEqual({ cap_table: ['two.pdf', 'three.pdf'] });
+    // One failure keeps the sentence it has always had.
+    expect(screen.getByText('That file is too large.')).toBeInTheDocument();
+  });
+
   it('adds nothing to the checklist when the very first file fails', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>

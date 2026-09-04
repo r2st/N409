@@ -7,6 +7,7 @@ import { DOCUMENT_KIND_LABELS, type DocumentKind } from '../lib/pipeline';
 import { clearDraft, loadDraft, saveDraft } from '../lib/onboardingDraft';
 import { VALUATION_KINDS, type PaymentQuote, type Valuation, type ValuationKind } from '../lib/types';
 import { Button, ErrorNote, Field, Select, TextInput } from '../components/ui';
+import { localUploadRejection } from '../components/valuation/DocumentsPanel';
 
 /**
  * Client onboarding funnel (remaining-gaps §3 #2 / §6 P0 #3) — the guided
@@ -213,28 +214,64 @@ export function OnboardingPage() {
     // server — and a client resuming the wizard uploaded the same cap table
     // twice, which is the single thing the ticks exist to prevent.
     const landed: string[] = [];
-    try {
-      for (const file of files) {
+    /*
+     * One failure does not end the batch.
+     *
+     * A `try` around the whole loop meant the first refusal skipped every file
+     * after it: a client picking five documents whose second was a 30 MB scan
+     * uploaded one, was told "Upload failed", and never learned that three
+     * perfectly good files had not been attempted. The documents panel this
+     * screen shadows has always collected per-file failures; this is the same
+     * loop, and the client at this door is the one least able to work out
+     * which of their five files the sentence was about.
+     *
+     * Two phrasings per failure, because what a reader needs depends on how
+     * many there are. One keeps the sentence it has always had:
+     * `describeActionFailure` names the operation and lets the server's own
+     * detail stand alone when there is one. Several need the filename in front
+     * of each, or the reader cannot tell which file a reason is about.
+     */
+    const failures: Array<{ name: string; whole: string; detail: string }> = [];
+    for (const file of files) {
+      // The same check the documents panel makes, for the reason its own note
+      // gives: the server can only refuse a file it has already received, and
+      // the clients at this door are the ones on the slowest connections.
+      const localReason = localUploadRejection(file);
+      if (localReason !== null) {
+        failures.push({
+          name: file.name,
+          whole: `Upload failed. ${file.name} — ${localReason}.`,
+          detail: localReason,
+        });
+        continue;
+      }
+      try {
         const data = new FormData();
         data.append('kind', docKind);
         data.append('file', file);
         await apiUpload(`/valuations/${valuation.id}/documents`, data);
         landed.push(file.name);
-      }
-    } catch (err) {
-      setError(describeActionFailure(err, 'Upload failed.'));
-    } finally {
-      if (landed.length > 0) {
-        setUploaded((u) => {
-          const next = { ...u, [docKind]: [...(u[docKind] ?? []), ...landed] };
-          // The files are on the server either way; the ticks are what a
-          // resumed wizard needs.
-          remember({ step: 2, valuation, uploaded: next });
-          return next;
+      } catch (err) {
+        failures.push({
+          name: file.name,
+          whole: describeActionFailure(err, 'Upload failed.'),
+          detail: describeRequestFailure(err),
         });
       }
-      setBusy(false);
     }
+    if (failures.length === 1) setError(failures[0]!.whole);
+    else if (failures.length > 1)
+      setError(`Upload failed. ${failures.map((f) => `${f.name} — ${f.detail}`).join('; ')}.`);
+    if (landed.length > 0) {
+      setUploaded((u) => {
+        const next = { ...u, [docKind]: [...(u[docKind] ?? []), ...landed] };
+        // The files are on the server either way; the ticks are what a
+        // resumed wizard needs.
+        remember({ step: 2, valuation, uploaded: next });
+        return next;
+      });
+    }
+    setBusy(false);
   };
 
   const uploadedCount = Object.values(uploaded).flat().length;
