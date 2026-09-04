@@ -133,16 +133,62 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
     setError(null);
     setNotice(null);
     try {
-      const { imported } = await api<{ imported: { balance_sheet_error?: string | null } }>(
-        `/valuations/${valuationId}/accounting/${provider}/import`,
-        { method: 'POST' },
+      const { imported } = await api<{
+        imported: {
+          balance_sheet_error?: string | null;
+          revenue_cents?: number | null;
+          prior_year_revenue_cents?: number | null;
+        };
+      }>(`/valuations/${valuationId}/accounting/${provider}/import`, { method: 'POST' });
+      /*
+       * "REVENUE PARAMS WERE UPDATED FROM THE P&L" WAS A CLAIM, NOT A REPORT
+       * (R414, methodology M5). The route builds its params patch out of the
+       * two figures that are not null — `revenue_cents` becomes
+       * `ytd_revenue_cents` plus `revenue_status`, `prior_year_revenue_cents`
+       * becomes `last_year_revenue_cents` — and when both are null the patch is
+       * empty and `patchParamsWithin` is never called at all. The request still
+       * answers 200, because the balance sheet and the snapshot did land, and
+       * this panel said the revenue params had been updated either way.
+       *
+       * Neither null is exotic. `parseQuickBooksProfitAndLoss` returns
+       * `prior_year_revenue_cents: null` unconditionally — QuickBooks does not
+       * give us the comparative column — so the sentence was never true of that
+       * provider. And `revenue_cents` is null whenever the P&L carried no total
+       * the parser recognised: Xero's matcher is anchored on
+       * `^total (income|revenue)$`, QuickBooks' wants a row grouped `Income`,
+       * and a pre-revenue company's statement may have neither.
+       *
+       * What the analyst is left holding is the same shape as the balance-sheet
+       * half below: an engine input that is not what the screen says it is.
+       * `ytd_revenue_cents` keeps whatever was typed in before — possibly a
+       * figure from a prior period — and the next calculation values on it,
+       * with the import log saying the ledger was read.
+       *
+       * Derived rather than asked for: the response already carries both
+       * figures, and null is exactly the condition under which the route
+       * declines to write. Read defensively so an older build's body does not
+       * become a claim of its own.
+       */
+      const gotCurrent = (imported?.revenue_cents ?? null) !== null;
+      const gotPrior = (imported?.prior_year_revenue_cents ?? null) !== null;
+      setNotice(
+        !gotCurrent && !gotPrior
+          ? 'Financials imported, but no revenue figure came through — the P&L carried no total this ' +
+              'import could read, so the revenue params are unchanged.'
+          : gotCurrent && gotPrior
+            ? 'Financials imported — this year’s and last year’s revenue were updated from the P&L.'
+            : gotCurrent
+              ? 'Financials imported — this year’s revenue was updated from the P&L. No prior-year ' +
+                'total came through, so last year’s revenue is unchanged.'
+              : 'Financials imported — last year’s revenue was updated from the P&L. No current-period ' +
+                'total came through, so this year’s revenue is unchanged.',
       );
-      setNotice('Financials imported — revenue params were updated from the P&L.');
       /*
        * The half that did not come through (round 360). The server imports the
        * P&L and the balance sheet separately: a balance sheet it could not
        * fetch or could not recognise is reported on `balance_sheet_error` and
-       * the request still succeeds, because the revenue params did update.
+       * the request still succeeds, because the P&L half of it landed (or, per
+       * the note above, did not — the two halves are reported separately).
        *
        * This panel discarded the body, so that sentence had no reader and the
        * only thing on screen was "Financials imported". The engagement is then

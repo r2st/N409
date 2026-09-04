@@ -203,7 +203,12 @@ describe('AccountingConnect — edges', () => {
       await screen.findByText('Xero');
 
       await user.click(screen.getByRole('button', { name: 'Disconnect' }));
-      expect(await screen.findByText('Could not disconnect.')).toBeInTheDocument();
+      // R350 gave every write handler the server's own refusal, with the page's
+      // sentence in front of it as the fallback — this assertion was left on the
+      // wording it replaced and has been failing since. It names both halves now
+      // so the next change to either is what fails it.
+      const said = await screen.findByText(/Could not disconnect the ledger\./);
+      expect(said.textContent).toContain('nothing was submitted');
     });
 
     it('reports a connection that could not be started for any other reason', async () => {

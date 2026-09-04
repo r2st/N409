@@ -117,15 +117,78 @@ describe('AccountingConnect (§23)', () => {
     const user = userEvent.setup();
     mockApi({
       'POST /valuations/01N409VAL000000000000000AA/accounting/xero/import': () =>
-        jsonResponse({ imported: { revenue_cents: 100 } }),
+        jsonResponse({ imported: { revenue_cents: 100, prior_year_revenue_cents: 80 } }),
     });
     renderComponent();
     await screen.findByText('Xero');
 
     await user.click(screen.getByRole('button', { name: 'Import financials' }));
     expect(
-      await screen.findByText('Financials imported — revenue params were updated from the P&L.'),
+      await screen.findByText(
+        'Financials imported \u2014 this year\u2019s and last year\u2019s revenue were updated from the P&L.',
+      ),
     ).toBeInTheDocument();
+  });
+
+  /*
+   * R414 (M5). The route writes `ytd_revenue_cents` only when `revenue_cents`
+   * is not null and `last_year_revenue_cents` only when
+   * `prior_year_revenue_cents` is not null, so both null means the params patch
+   * is empty and `patchParamsWithin` is never called. The request still answers
+   * 200 — the balance sheet and the snapshot landed — and the panel said the
+   * revenue params had been updated from the P&L regardless.
+   */
+  it('does not claim the revenue params moved when the P&L carried no total', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/accounting/xero/import': () =>
+        jsonResponse({ imported: { revenue_cents: null, prior_year_revenue_cents: null } }),
+    });
+    renderComponent();
+    await screen.findByText('Xero');
+
+    await user.click(screen.getByRole('button', { name: 'Import financials' }));
+    expect(
+      await screen.findByText(
+        'Financials imported, but no revenue figure came through \u2014 the P&L carried no total this ' +
+          'import could read, so the revenue params are unchanged.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/revenue params were updated/)).not.toBeInTheDocument();
+  });
+
+  /*
+   * `parseQuickBooksProfitAndLoss` returns `prior_year_revenue_cents: null`
+   * unconditionally — the provider does not give us the comparative column — so
+   * the old sentence was never true of a QuickBooks import.
+   */
+  it('says the prior-year figure did not come through', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/accounting/xero/import': () =>
+        jsonResponse({ imported: { revenue_cents: 100, prior_year_revenue_cents: null } }),
+    });
+    renderComponent();
+    await screen.findByText('Xero');
+
+    await user.click(screen.getByRole('button', { name: 'Import financials' }));
+    const note = await screen.findByText(/this year\u2019s revenue was updated from the P&L/);
+    expect(note.textContent).toContain('last year\u2019s revenue is unchanged');
+  });
+
+  // A build served before the two figures were read must not turn an ordinary
+  // import into a claim that nothing came through.
+  it('reads a body that carries neither figure as an ordinary import', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/accounting/xero/import': () =>
+        jsonResponse({ imported: {} }),
+    });
+    renderComponent();
+    await screen.findByText('Xero');
+
+    await user.click(screen.getByRole('button', { name: 'Import financials' }));
+    expect(await screen.findByText(/Financials imported/)).toBeInTheDocument();
   });
 
   /*
@@ -143,6 +206,7 @@ describe('AccountingConnect (§23)', () => {
         jsonResponse({
           imported: {
             revenue_cents: 100,
+            prior_year_revenue_cents: 80,
             balance_sheet_error: 'Xero balance sheet fetch failed (500)',
           },
         }),
@@ -154,7 +218,9 @@ describe('AccountingConnect (§23)', () => {
 
     // The import that did happen is still reported as one...
     expect(
-      await screen.findByText('Financials imported — revenue params were updated from the P&L.'),
+      await screen.findByText(
+        'Financials imported \u2014 this year\u2019s and last year\u2019s revenue were updated from the P&L.',
+      ),
     ).toBeInTheDocument();
     // ...and the gap in it is said out loud, in the alert voice.
     const said = await screen.findByText(
