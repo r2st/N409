@@ -725,13 +725,23 @@ groups:
           summary: 'the {{ $labels.sweep }} sweep has been failing rows for an hour'
           runbook: 'journalctl -u n409-valuation | grep ''"sweep":"{{ $labels.sweep }}"'''
 
-      # The ladder giving up. `retired` and `stranded` are the two endings no
-      # later tick revisits — an outbox row whose attempts are spent, a pipeline
-      # run abandoned mid-claim — so unlike `failed` there is no next attempt
-      # that might make this right, and one is worth a look.
+      # The ladder giving up. These are the endings no later tick revisits — an
+      # outbox row whose attempts are spent, a pipeline run abandoned mid-claim,
+      # a partner webhook delivery reaped at its ceiling — so unlike `failed`
+      # there is no next attempt that might make this right, and one is worth a
+      # look.
+      #
+      # `reaped` was missing (R412, methodology M11), and it is the ending this
+      # rule most needed: `failExhaustedDeliveries` settles a delivery
+      # `status='failed'` with its attempts spent, so a partner integration
+      # simply never receives an event the platform promised it. What made the
+      # gap invisible is that `SweepWorkFailing` reads the *other* half of the
+      # same story — the receiver refusing, tallied as `failed` — and clears
+      # itself the moment those rows run out of attempts. So the one alert on
+      # this queue went green exactly when the loss became permanent.
       - alert: SweepAbandoningWork
         expr: |
-          increase(background_sweep_items_total{outcome=~"retired|stranded"}[6h]) > 0
+          increase(background_sweep_items_total{outcome=~"retired|stranded|reaped"}[6h]) > 0
         for: 5m
         labels: { severity: ticket }
         annotations:

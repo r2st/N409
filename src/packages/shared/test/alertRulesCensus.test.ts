@@ -627,6 +627,43 @@ describe('alert rules', () => {
     );
   });
 
+  it('watches every ladder ending that nothing revisits', () => {
+    /*
+     * R412. `SweepAbandoningWork` is the one rule about a *terminal* row —
+     * "unlike `failed` there is no next attempt that might make this right" —
+     * and its selector is a list of tally field names, written by hand, in a
+     * different file from the ladders that produce them. Two of the three were
+     * there; `reaped` was not, and it is the one that matters most, because the
+     * rule that watches the same queue's retryable half (`SweepWorkFailing`,
+     * on `outcome="failed"`) *clears itself* the moment those rows run out of
+     * attempts. The queue's only alert went green exactly when the partner
+     * stopped getting its events.
+     *
+     * Pinned in both directions: each ending is asserted to still be the field
+     * its ladder returns, and the rule is asserted to name it. A rename on
+     * either side is the drift this catches, and it is the same failure the
+     * whole file is about — a selector that keeps parsing and stops matching.
+     */
+    const endings: Array<{ field: string; file: string }> = [
+      { field: 'retired', file: 'src/services/valuation/src/hooks/emailRetry.ts' },
+      { field: 'stranded', file: 'src/services/valuation/src/hooks/pipelineRetry.ts' },
+      { field: 'reaped', file: 'src/services/valuation/src/hooks/partnerWebhooks.ts' },
+    ];
+    const selector = /background_sweep_items_total\{outcome=~"([^"]+)"\}[^}]*\[6h\]/.exec(RULES)?.[1];
+    expect(selector, 'SweepAbandoningWork no longer selects an outcome list').toBeDefined();
+    const named = selector!.split('|');
+    for (const { field, file } of endings) {
+      // The tally field, still declared on the tick's return type. `sweepTally`
+      // takes the field name verbatim as the `outcome` label, so this string is
+      // the whole contract between the ladder and the rule.
+      const src = readFileSync(path.join(REPO, file), 'utf8');
+      expect(src, `${file} no longer returns a \`${field}\` tally`).toMatch(
+        new RegExp(`\\b${field}:\\s*number`),
+      );
+      expect(named, `SweepAbandoningWork does not watch \`${field}\``).toContain(field);
+    }
+  });
+
   it('pages only on the severities it declares', () => {
     const severities = new Set([...RULES.matchAll(/severity: (\w+)/g)].map((m) => m[1]!));
     // Deliberately two. A third level is where "info" alerts come from, and an
