@@ -200,7 +200,11 @@ export const OVERWRITE_FIELDS: readonly OverwriteFieldDef[] = [
     'Runway (months)',
     'Months of runway implied by cash balance and burn.',
     17,
-    { min: 0, max: 240 },
+    // The band `routes/params.ts` enforces on `valuation_params.runway_months`
+    // — the same cell, and provably so: the workbook's Liquidity field reads
+    // the column and names this key as its override (`domain/workbookTabs.ts`).
+    // See PARAMS_BAND below for why the wider of two doors is the one both keep.
+    { min: 0, max: 600 },
   ),
   f(
     'financial_metrics',
@@ -335,7 +339,9 @@ export const OVERWRITE_FIELDS: readonly OverwriteFieldDef[] = [
     'Forecast horizon (years)',
     'Number of explicitly projected years before terminal value.',
     5,
-    { min: 1, max: 15 },
+    // `routes/params.ts` accepts `wacc_inputs.forecast_horizon_years` over
+    // (0, 50]. See PARAMS_BAND.
+    { min: 0, max: 50 },
   ),
   f(
     'forecasts',
@@ -539,7 +545,9 @@ export const OVERWRITE_FIELDS: readonly OverwriteFieldDef[] = [
     'Equity risk premium',
     'Market equity risk premium (fraction).',
     0.055,
-    { min: 0, max: 0.2 },
+    // `routes/params.ts` accepts `wacc_inputs.equity_risk_premium` over [0, 1],
+    // and that is the figure the build-up runs on. See PARAMS_BAND.
+    { min: 0, max: 1 },
   ),
   f(
     'market_comparables',
@@ -601,7 +609,11 @@ export const OVERWRITE_FIELDS: readonly OverwriteFieldDef[] = [
     'Control premium',
     'Premium applied when moving from minority to control basis (fraction).',
     0.2,
-    { min: 0, max: 1 },
+    // Not a fraction of one. `routes/params.ts` says why, on the column this
+    // names: "a premium is unbounded above, and 100%+ premiums are observed".
+    // A ceiling of 1 here refused to *record* a premium the platform had
+    // already accepted and priced off. See PARAMS_BAND.
+    { min: 0, max: 10 },
   ),
   f(
     'market_comparables',
@@ -627,6 +639,65 @@ export const OVERWRITE_FIELDS: readonly OverwriteFieldDef[] = [
 export const OVERWRITE_FIELDS_BY_KEY: ReadonlyMap<string, OverwriteFieldDef> = new Map(
   OVERWRITE_FIELDS.map((def) => [def.key, def]),
 );
+
+/**
+ * PARAMS_BAND (R406, methodology M6) — the keys whose range this file and
+ * `routes/params.ts` both state, and which therefore had to be made one number.
+ *
+ * A range here is enforced by `validateOverwriteValue` and published, through
+ * the overwrites schema endpoint, as what the field will accept. For these four
+ * the *same quantity* is also written through the params screen, under a range
+ * that disagreed:
+ *
+ *   | key                    | published here | accepted by params |
+ *   | runway_months          | 0 … 240        | 0 … 600            |
+ *   | forecast_horizon_years | 1 … 15         | >0 … 50            |
+ *   | equity_risk_premium    | 0 … 0.2        | 0 … 1              |
+ *   | control_premium        | 0 … 1          | 0 … 10             |
+ *
+ * `runway_months` is the one that can be shown to be a single cell rather than
+ * a shared name: the workbook's Liquidity field reads
+ * `valuation_params.runway_months` and names this key as the override that
+ * supersedes it (`domain/workbookTabs.ts`), so an analyst looking at a stored
+ * 400 was offered an override box that refused anything over 240. The other
+ * three are the same figure by a different door — the one the engine is
+ * actually handed.
+ *
+ * Widened here rather than narrowed there, in every case, because the failure
+ * this closes is a *refusal to record*: the range says what the model can stand
+ * behind, and a figure the platform has already accepted, run and printed is
+ * one it stands behind whether or not the ceiling likes it. That is R303's
+ * argument for exempting `original_value` from the range, applied to the value
+ * itself when the other door has already let it through. `control_premium` is
+ * the clearest of the four — `routes/params.ts` states outright that "a premium
+ * is unbounded above, and 100%+ premiums are observed", and this file capped it
+ * at 100%.
+ *
+ * `routes/params.ts` now derives its bounds from these entries, so the two
+ * cannot drift apart again, and `overwriteParamsBandCensus` holds any *other*
+ * key the two files come to share to the same rule.
+ */
+export const PARAMS_DERIVED_KEYS: readonly string[] = [
+  'runway_months',
+  'forecast_horizon_years',
+  'equity_risk_premium',
+  'control_premium',
+];
+
+/**
+ * The numeric band a field publishes, for a schema that has to accept exactly
+ * what this file says it does. Throws on an unknown or unbounded key: both are
+ * programming errors, and the point of the helper is that the two files cannot
+ * quietly disagree.
+ */
+export function overwriteBand(key: string): { min: number; max: number } {
+  const def = OVERWRITE_FIELDS_BY_KEY.get(key);
+  if (!def) throw new Error(`No overwrite field "${key}"`);
+  if (def.min === undefined || def.max === undefined) {
+    throw new Error(`Overwrite field "${key}" publishes no bounded range`);
+  }
+  return { min: def.min, max: def.max };
+}
 
 /**
  * Validates a candidate value against a field's class (and numeric range).

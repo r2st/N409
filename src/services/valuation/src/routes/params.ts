@@ -10,6 +10,7 @@ import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { overwriteBand } from '../domain/overwrites.js';
 
 /**
  * Weights are accepted with up to 4 decimal places and must sum to exactly 1
@@ -60,6 +61,23 @@ const DateStr = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 const Cents = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+/**
+ * A number bounded by what the overwrites registry publishes for the same
+ * field — see PARAMS_BAND in `domain/overwrites.ts`.
+ *
+ * Four keys were bounded here *and* there, under different numbers, so the two
+ * doors onto one figure disagreed about what may be in it: a runway of 400
+ * months was enterable on this screen and unrecordable on the Overwrites tab
+ * that supersedes it, and a control premium of 1.5 — which the comment on that
+ * field below says is a real observation — was refused by the registry that
+ * publishes the field's schema. Read from the registry rather than restated, so
+ * the next edit to either moves both.
+ */
+const banded = (key: string) => {
+  const { min, max } = overwriteBand(key);
+  return z.number().min(min).max(max);
+};
 /** Treasury publishes thirteen constant-maturity tenors; 100 leaves room for any of them. */
 const MAX_CURVE_POINTS = 100;
 /** One override per market multiple in play, with headroom. */
@@ -79,7 +97,7 @@ export const ParamsPatchBody = z
     last_round_date: DateStr.nullable(),
     last_year_revenue_cents: Cents.nullable(),
     ytd_revenue_cents: Cents.nullable(),
-    runway_months: z.number().int().min(0).max(600).nullable(),
+    runway_months: banded('runway_months').int().nullable(),
     weight_asset: Weight.nullable(),
     weight_opm: Weight.nullable(),
     weight_income: Weight.nullable(),
@@ -97,7 +115,7 @@ export const ParamsPatchBody = z
      * that transaction rather than evidence for a DLOC, and the engine's
      * inversion would silently read it as a premium.
      */
-    control_premium: z.number().min(0).max(10).nullable(),
+    control_premium: banded('control_premium').nullable(),
     // The share of an observed acquisition premium attributed to synergies
     // rather than to control, removed before the inversion. 1.0 excluded: all
     // of it being synergy says control is worth nothing, which is a conclusion
@@ -235,8 +253,11 @@ export const ParamsPatchBody = z
         target_debt_to_equity: z.number().min(0).max(20).optional(),
         market_cap: z.number().min(0).max(1e15).optional(),
         tax_rate: Fraction.optional(),
-        equity_risk_premium: z.number().min(0).max(1).optional(),
-        forecast_horizon_years: z.number().gt(0).max(50).optional(),
+        equity_risk_premium: banded('equity_risk_premium').optional(),
+        // `gt(0)` rather than the registry's inclusive floor of 0: a horizon of
+        // zero years is not a short forecast, it is no forecast at all, and the
+        // terminal-value maths divides by it.
+        forecast_horizon_years: banded('forecast_horizon_years').gt(0).optional(),
         risk_free_rate_override: z.number().min(0).max(1).optional(),
         // { "5": 0.042 } — maturity in years to yield. The engine reads the
         // keys as numbers whether they arrive as strings or not.
