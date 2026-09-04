@@ -106,7 +106,25 @@ const SummaryFigure = z.object({
  * see `reportOffload.test.ts`, which puts a real report through this schema.
  */
 export const RenderBody = z.object({
-  title: z.string().min(1).max(300),
+  /**
+   * 500, because that is what the door on the other side of this wire accepts.
+   *
+   * `PUT /valuations/:id/report` bounds the authored title with
+   * `nonBlankText(1, REPORT_TITLE_MAX)`, and REPORT_TITLE_MAX is 500; a managed
+   * template composes one unasked, as `${template.name} — ${company_name}`,
+   * which is up to 403 characters for a template name at its own `.max(100)`.
+   * Both were over the 300 this used to carry, and the way that failed is the
+   * way every mismatch on this contract fails: `renderVia` answers a 422 by
+   * rendering the identical bytes in-process, so the report is correct, nothing
+   * is reported broken, and the offload is simply gone for that engagement for
+   * as long as its title is what it is.
+   *
+   * Widened here rather than clamped there. The fallback exists to produce the
+   * *same* deliverable, so a payload trimmed to fit the wire would give the two
+   * renderers different documents to draw — and 200 characters of cover title
+   * is not the cost this schema's caps are here to bound.
+   */
+  title: z.string().min(1).max(500),
   company_name: z.string().min(1).max(300),
   meta: z
     .array(z.object({ label: z.string().min(1).max(100), value: z.string().max(300) }))
@@ -199,7 +217,12 @@ export const RenderBody = z.object({
       'generated_at must be a date between year 1 and year 9999',
     )
     .optional(),
-  keywords: z.array(z.string().min(1).max(80)).max(20).optional(),
+  /**
+   * One keyword is the subject company's name, which its own door bounds at 300
+   * — see `title` above for what a cap tighter than the producing door costs.
+   * The count stays at 20: `routes/reports.ts` writes five.
+   */
+  keywords: z.array(z.string().min(1).max(300)).max(20).optional(),
 });
 
 export function buildApp(): FastifyInstance {

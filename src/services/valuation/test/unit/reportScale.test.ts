@@ -13,6 +13,7 @@ import {
   weightingChart,
 } from '../../src/domain/reportSummary.js';
 import { reportRenderPayload } from '../../src/clients/reportRender.js';
+import { REPORT_TITLE_MAX } from '../../src/domain/report.js';
 
 /**
  * What a report costs when the engagement behind it is as large as the platform
@@ -370,4 +371,89 @@ describe('the largest report the platform can be asked for', () => {
     const many = await Promise.all(Array.from({ length: 4 }, () => renderReportPdf(one)));
     for (const pdf of many) expect(pdf.length).toBe(solo.length);
   }, 60_000);
+});
+
+// ── Cover fields ─────────────────────────────────────────────────────────────
+
+/**
+ * The half of the payload that is not the body.
+ *
+ * Every assertion above measures something that grows with the *engagement* —
+ * chapters, breakpoints, prior valuations — and each of those bounds was found
+ * by measurement. The cover fields grow with nothing: a title is a title, and
+ * the keyword list is five entries however large the company is. That is
+ * exactly why nothing ever checked them, and why two of them were over the wire
+ * cap for every engagement whose name is long enough.
+ *
+ * The failure is the one this whole file exists for. `RenderBody` refuses the
+ * payload, `renderVia` logs `report offload failed; rendering in-process` and
+ * produces identical bytes locally — so the report is right, the route is
+ * right, and the offload is simply gone for that engagement, permanently,
+ * because the cause is a stored name rather than a transient.
+ *
+ * The values below are what the *producing doors* accept, so a cap tightened on
+ * either side of the wire fails here rather than in a log line nobody reads:
+ *
+ *   - `company_name` is `.trim().min(1).max(300)` on `POST /valuations`, on its
+ *     patch, and on both partner-API doors. It reaches the wire twice — as
+ *     `company_name`, and as the first keyword.
+ *   - `title` is `nonBlankText(1, REPORT_TITLE_MAX)` on `PUT .../report`, and
+ *     is also composed by `contentFromManagedTemplate` as
+ *     `${template.name} — ${company_name}` for a name of up to 100 characters.
+ */
+describe('the cover fields a report carries fit the wire contract', () => {
+  /** `routes/reports.ts`'s own `renderReportPdf` call, in its keyword half. */
+  const coverPayload = (over: { title?: string; company_name?: string; keywords?: string[] }) =>
+    reportRenderPayload({
+      title: 'Valuation Report',
+      company_name: CTX.companyName,
+      meta: [],
+      sections: [{ heading: 'H', html: '<p>x</p>' }],
+      keywords: [CTX.companyName, '409a', 'valuation', 'v1'],
+      ...over,
+    } as never);
+
+  const verdict = (over: Parameters<typeof coverPayload>[0]) => RenderBody.safeParse(coverPayload(over));
+
+  it('accepts a company name at the 300 characters its own door allows', () => {
+    const name = 'W'.repeat(300);
+    const parsed = verdict({ company_name: name, keywords: [name, '409a', 'valuation', 'v1'] });
+    expect(parsed.success, JSON.stringify(parsed.success ? [] : parsed.error.issues.slice(0, 2))).toBe(
+      true,
+    );
+  });
+
+  it('accepts a report title at REPORT_TITLE_MAX', () => {
+    const parsed = verdict({ title: 'T'.repeat(REPORT_TITLE_MAX) });
+    expect(parsed.success, JSON.stringify(parsed.success ? [] : parsed.error.issues.slice(0, 2))).toBe(
+      true,
+    );
+  });
+
+  /**
+   * The composed title, not an authored one: a managed template's `name` is
+   * `.max(100)` and the fill puts the widest company name after it, so this is
+   * a title the platform writes for the analyst rather than one anybody typed.
+   */
+  it('accepts the title a managed template composes for the widest engagement', () => {
+    const title = `${'t'.repeat(100)} — ${'W'.repeat(300)}`;
+    expect(title.length).toBeLessThanOrEqual(REPORT_TITLE_MAX);
+    const parsed = verdict({ title });
+    expect(parsed.success, JSON.stringify(parsed.success ? [] : parsed.error.issues.slice(0, 2))).toBe(
+      true,
+    );
+  });
+
+  /**
+   * The population guard. The three assertions above are about *lengths*, and a
+   * schema that stopped carrying these fields at all would satisfy every one of
+   * them — `RenderBody` strips what it is not told about, which is how the
+   * watermark came to be silently absent from the wire for five rounds.
+   */
+  it('is asserting against a schema that still carries the fields', () => {
+    const parsed = RenderBody.parse(coverPayload({}));
+    expect(parsed.title).toBe('Valuation Report');
+    expect(parsed.company_name).toBe(CTX.companyName);
+    expect(parsed.keywords).toEqual([CTX.companyName, '409a', 'valuation', 'v1']);
+  });
 });
