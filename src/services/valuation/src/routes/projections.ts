@@ -22,7 +22,7 @@ import {
 } from '../repos/projections.js';
 import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
-import { EngineInputsBody } from './engineInputs.js';
+import { unstorableEngineInputs } from './engineInputs.js';
 
 /**
  * The financial projection — the build behind the DCF's cash flows.
@@ -281,11 +281,7 @@ function numberList(value: unknown): number[] | null {
  * the section it merges into is the analyst's and may hold whatever it held.
  */
 export function unstorableAdoption(written: Record<string, unknown>): string | null {
-  const parsed = EngineInputsBody.safeParse({ income: written });
-  if (parsed.success) return null;
-  const issue = parsed.error.issues[0];
-  const field = issue && issue.path.length > 0 ? issue.path.join('.') : 'income';
-  return `${field}: ${issue?.message ?? 'invalid value'}`;
+  return unstorableEngineInputs({ income: written });
 }
 
 /** Would the calculation read different figures than it did before adoption? */

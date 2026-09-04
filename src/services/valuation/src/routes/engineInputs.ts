@@ -385,6 +385,41 @@ export const EngineInputsBody = z
     }
   });
 
+/**
+ * The fields a *non-route* writer is about to put into `engine_inputs`, checked
+ * against the schema that owns the document, or `null` when they all fit.
+ *
+ * `applyEngineInputs` is the repo call, and three routes reach it without ever
+ * passing a body through `EngineInputsBody`: the projection adoption, the
+ * roll-forward adoption, and the AI apply (which has its own narrower gate in
+ * `sanitizeExtractedInputs`). The adoption handler in `routes/projections.ts`
+ * has named the consequence since R404 — "a value into `engine_inputs` by the
+ * one path that did not check it — and the 422 then arrived on whoever next
+ * pressed Calculate, naming a field they had not touched" — and it was closed
+ * one field at a time, for `terminal_metric`.
+ *
+ * It is the same failure for every field, and the reason it keeps arriving is
+ * that the two bounds are set by different considerations and drift apart
+ * without either author being wrong. `rollforward_runs.rolled_equity_value` is
+ * bounded by `numeric(20, 2)` — below 1e18, and `requireStorableFigure` holds it
+ * there. `last_round_post_money` here is `boundedNonNegative()` — below
+ * `MAX_QUANTITY`, 9.007e15, because past 2^53 a double stops adding exactly. A
+ * rolled value between the two stores fine, adopts fine, and is refused by the
+ * financial-model form ever after.
+ *
+ * Pass only the fields the writer is actually setting: the section it merges
+ * into is the analyst's, and a value they left there is not this check's to
+ * refuse a run over. The returned string is `field.path: message`, for a
+ * refusal that says which figure to look at.
+ */
+export function unstorableEngineInputs(written: Record<string, unknown>): string | null {
+  const parsed = EngineInputsBody.safeParse(written);
+  if (parsed.success) return null;
+  const issue = parsed.error.issues[0];
+  const field = issue && issue.path.length > 0 ? issue.path.join('.') : 'engine_inputs';
+  return `${field}: ${issue?.message ?? 'invalid value'}`;
+}
+
 export type EngineInputsPatch = z.infer<typeof EngineInputsBody>;
 
 /**

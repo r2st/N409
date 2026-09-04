@@ -37,6 +37,7 @@ import {
 } from '../repos/rollforwardRuns.js';
 import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { unstorableEngineInputs } from './engineInputs.js';
 import { ulidField } from '../domain/ulidField.js';
 
 /**
@@ -483,6 +484,36 @@ export function registerRollforwardRoutes(
       // ending before the date the conclusion is stated as of.
       const supersededMovement = run.pre_populated_inputs.market_movement === undefined;
       const actor = { actorType: 'human' as const, actorId: principal.id };
+
+      /*
+       * The anchor, against the schema that owns the document it is written
+       * into — see `unstorableEngineInputs`.
+       *
+       * This adoption goes through `applyEngineInputsWithin`, the repo call, so
+       * `EngineInputsBody` never saw it, and the two bounds on this one figure
+       * are set by different considerations. `rolled_equity_value` is held to
+       * `numeric(20, 2)` by `requireStorableFigure` — below 1e18.
+       * `last_round_post_money` is `boundedNonNegative()` — below `MAX_QUANTITY`,
+       * 9.007e15, past which a double stops adding exactly. A roll-forward is
+       * `prior x (1 + rate) ** years` with the rate capped at 10, so a mistyped
+       * 1000% over a nine-year gap takes a $10M anchor to 2.3e16: storable in
+       * the run, refused by the form.
+       *
+       * Adopting it anyway is the shape `routes/projections.ts` names — "a value
+       * into `engine_inputs` by the one path that did not check it" — and the
+       * form is where it lands: `FinancialModelPanel` posts the whole model
+       * back, so every later save answers 422 on an anchor the analyst never
+       * typed. Refused here instead, before the anchor moves and before the
+       * price and the market movement beside it are cleared.
+       */
+      const unstorable = unstorableEngineInputs({
+        last_round_post_money: run.rolled_equity_value,
+      });
+      if (unstorable) {
+        throw problems.unprocessable(
+          `This run cannot be adopted: ${unstorable}. The engagement's anchor is unchanged.`,
+        );
+      }
 
       /*
        * THREE WRITES, ONE DECISION (R404, methodology M5).
