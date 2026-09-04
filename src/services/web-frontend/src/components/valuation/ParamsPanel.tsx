@@ -1380,13 +1380,17 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           {form.dloc_method !== 'studies' && (
             <Field
               label="DLOC (fraction)"
-              hint="0–1."
+              hint="0–0.9999."
               error={dlocQualitativeMissing ? 'Required for the qualitative method.' : errorFor('dloc')}
             >
               <TextInput
                 type="number"
                 min={0}
-                max={1}
+                /* MAX_STATED_DISCOUNT — the band the service publishes for this
+                   cell, and the figure the engine refuses just past. The box
+                   said 0–1 while the service took 0–0.9999 and the Overwrites
+                   tab took 0–0.9 (R413). */
+                max={0.9999}
                 step={0.01}
                 disabled={readOnly || form.dloc_method === 'control_premium'}
                 value={form.dloc}
@@ -1566,7 +1570,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           {qualitativeSelected && (
             <Field
               label="Qualitative DLOM (fraction)"
-              hint="0–1."
+              hint="0–0.9999."
               error={
                 qualitativeMissing ? 'Required for the qualitative method.' : errorFor('dlom_qualitative')
               }
@@ -1574,7 +1578,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               <TextInput
                 type="number"
                 min={0}
-                max={1}
+                max={0.9999}
                 step={0.01}
                 disabled={readOnly}
                 value={form.dlom_qualitative}

@@ -45,6 +45,37 @@ const f = (
   range?: { min?: number; max?: number },
 ): OverwriteFieldDef => ({ key, category, class: cls, label, description, example, ...range });
 
+/**
+ * The ceiling on a discount an analyst states outright — DLOM and DLOC.
+ *
+ * PARAMS_BAND's fifth key, and its sixth (R413, methodology M6). This file
+ * published `{ min: 0, max: 0.9 }` for both, and `routes/params.ts` bounded the
+ * same two cells with `StatedDiscount`, which admits anything below 1. So a
+ * DLOM of 0.95 typed on the params screen was stored, handed to the engine and
+ * printed in the report, and the Overwrites tab — whose own schema endpoint
+ * publishes this maximum as what the field accepts — then refused to record an
+ * override at the figure the platform had already concluded on.
+ *
+ * `dlom` is a single cell rather than a shared name by exactly the argument
+ * PARAMS_BAND makes for `runway_months`: the workbook's Discounts field reads
+ * `valuation_params.dlom` and names this key as the override that supersedes it
+ * (`domain/workbookTabs.ts`), so the two doors are onto one number.
+ *
+ * Widened here rather than narrowed there, as all four of PARAMS_BAND's were:
+ * `validateOverwriteValue`'s own note gives "a DLOM extracted as 0.99 because
+ * the source said 99%" as the commonest reason an override exists at all, and a
+ * 0.9 ceiling refused to record the correction *and* the figure being
+ * corrected.
+ *
+ * 0.9999 rather than 1 because that is where `routes/params.ts` already draws
+ * the line, for the engine's reason: `compute._check_discount_range` refuses a
+ * discount of 1.0, and it checks the figure *after* `_concluded_dlom`'s
+ * `round(dlom, 4)`, so 0.9999 is the largest four-decimal fraction that survives
+ * it. Stating that quantum here as a plain inclusive maximum is what lets both
+ * doors read one number instead of two spellings of nearly the same rule.
+ */
+export const MAX_STATED_DISCOUNT = 0.9999;
+
 export const OVERWRITE_FIELDS: readonly OverwriteFieldDef[] = [
   // ── Company Information (7) ────────────────────────────────────────────────
   f(
@@ -399,11 +430,11 @@ export const OVERWRITE_FIELDS: readonly OverwriteFieldDef[] = [
   ),
   f('valuation_params', 'numeric', 'dlom', 'DLOM', 'Discount for lack of marketability (fraction).', 0.28, {
     min: 0,
-    max: 0.9,
+    max: MAX_STATED_DISCOUNT,
   }),
   f('valuation_params', 'numeric', 'dloc', 'DLOC', 'Discount for lack of control (fraction).', 0.1, {
     min: 0,
-    max: 0.9,
+    max: MAX_STATED_DISCOUNT,
   }),
   f(
     'valuation_params',
@@ -654,6 +685,13 @@ export const OVERWRITE_FIELDS_BY_KEY: ReadonlyMap<string, OverwriteFieldDef> = n
  *   | forecast_horizon_years | 1 … 15         | >0 … 50            |
  *   | equity_risk_premium    | 0 … 0.2        | 0 … 1              |
  *   | control_premium        | 0 … 1          | 0 … 10             |
+ *   | dlom                   | 0 … 0.9        | 0 … 0.9999         |
+ *   | dloc                   | 0 … 0.9        | 0 … 0.9999         |
+ *
+ * The last two are R413's — see {@link MAX_STATED_DISCOUNT}. They escaped the
+ * census that was meant to catch the fifth key because `routes/params.ts`
+ * bounded them through a shared named schema (`StatedDiscount`) rather than
+ * with `z.number().min(…)` literals, and the census read the file with a regex.
  *
  * `runway_months` is the one that can be shown to be a single cell rather than
  * a shared name: the workbook's Liquidity field reads
@@ -682,6 +720,8 @@ export const PARAMS_DERIVED_KEYS: readonly string[] = [
   'forecast_horizon_years',
   'equity_risk_premium',
   'control_premium',
+  'dlom',
+  'dloc',
 ];
 
 /**

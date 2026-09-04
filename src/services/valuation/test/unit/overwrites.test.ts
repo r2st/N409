@@ -58,7 +58,7 @@ describe('overwrites registry (features.md §3.6)', () => {
 });
 
 describe('validateOverwriteValue', () => {
-  const numeric = OVERWRITE_FIELDS_BY_KEY.get('dlom')!; // min 0, max 0.9
+  const numeric = OVERWRITE_FIELDS_BY_KEY.get('dlom')!; // min 0, max MAX_STATED_DISCOUNT
   const date = OVERWRITE_FIELDS_BY_KEY.get('valuation_date')!;
   const character = OVERWRITE_FIELDS_BY_KEY.get('company_legal_name')!;
 
@@ -77,7 +77,10 @@ describe('validateOverwriteValue', () => {
 
   it('enforces numeric ranges', () => {
     expect(validateOverwriteValue(numeric, -0.1)).toMatch(/≥/);
-    expect(validateOverwriteValue(numeric, 0.95)).toMatch(/≤/);
+    // 0.95 was the ceiling case until R413 widened this cell to the band the
+    // params screen has always accepted; 1.0 is where the engine refuses.
+    expect(validateOverwriteValue(numeric, 0.95)).toBeNull();
+    expect(validateOverwriteValue(numeric, 1)).toMatch(/≤/);
   });
 
   it('rejects malformed and impossible dates', () => {

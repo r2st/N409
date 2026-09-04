@@ -3,10 +3,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_STATED_DISCOUNT,
   OVERWRITE_FIELDS_BY_KEY,
   PARAMS_DERIVED_KEYS,
   overwriteBand,
 } from '../../src/domain/overwrites.js';
+import { ParamsPatchBody } from '../../src/routes/params.js';
 
 /**
  * Two doors onto one figure, stating one range (R406, methodology M6).
@@ -91,14 +93,77 @@ describe('overwrite / params band census', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('derives the four shared keys from the registry', () => {
+  it('derives every shared key from the registry', () => {
     // The scan above cannot see a `banded(...)` call, so the wiring is asserted
     // directly: a refactor that quietly reverted one to literals fails the
-    // first test, and one that dropped the call fails this one.
+    // first test, and one that dropped the call fails this one. Either spelling
+    // counts — `banded()` wraps `overwriteBand()`, and the stated discounts
+    // read the band straight because they bind one schema to two keys.
     for (const key of PARAMS_DERIVED_KEYS) {
-      expect(source).toContain(`banded('${key}')`);
+      expect(
+        source.includes(`banded('${key}')`) || source.includes(`overwriteBand('${key}')`),
+        `${key} is listed as registry-derived but params.ts states no band for it`,
+      ).toBe(true);
       expect(() => overwriteBand(key)).not.toThrow();
     }
+  });
+
+  /**
+   * The census the regex could not run (R413, methodology M6).
+   *
+   * `literalBands` reads the source for `key: z.number()…`, so a params field
+   * bounded through a *named* schema is invisible to it — which is how `dlom`
+   * and `dloc` sat at `StatedDiscount`'s 0.9999 against a published 0.9 through
+   * the round that was written to find exactly that. This asks the parsed
+   * schema instead of the file: for every registry key the params body also
+   * accepts, probe both ends of the published band and just outside them.
+   *
+   * A key the params body does not carry is skipped rather than failed — most
+   * of the 68 override fields live on other tables and have no params cell.
+   */
+  it('accepts exactly the band it publishes, for every field both doors own', () => {
+    const shape = ParamsPatchBody.shape as Record<string, unknown>;
+    const offenders: string[] = [];
+    const probe = (key: string, value: number): boolean =>
+      ParamsPatchBody.safeParse({ [key]: value }).success;
+
+    let checked = 0;
+    for (const [key, def] of OVERWRITE_FIELDS_BY_KEY) {
+      if (!(key in shape)) continue;
+      if (def.class !== 'numeric' || def.min === undefined || def.max === undefined) continue;
+      if (DIFFERENT_CELL.has(key)) continue;
+      checked += 1;
+      // Integer-valued cells cannot be probed with a fractional epsilon; step
+      // by one instead, which is the smallest figure they distinguish.
+      const isInt = source.includes(`banded('${key}').int()`);
+      const eps = isInt ? 1 : 1e-6;
+      if (!probe(key, def.max)) offenders.push(`${key}: publishes max ${def.max}, params refuses it`);
+      if (probe(key, def.max + eps)) {
+        offenders.push(`${key}: publishes max ${def.max}, params accepts ${def.max + eps}`);
+      }
+      if (!probe(key, def.min)) offenders.push(`${key}: publishes min ${def.min}, params refuses it`);
+      if (probe(key, def.min - eps)) {
+        offenders.push(`${key}: publishes min ${def.min}, params accepts ${def.min - eps}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    // A shape change that renamed the params keys would empty the loop and pass
+    // silently; the census is only worth anything if it is actually running.
+    expect(checked).toBeGreaterThanOrEqual(6);
+  });
+
+  it('holds the stated discounts to the engine applied quantum', () => {
+    // 0.9999 is the largest four-decimal fraction `_concluded_dlom`'s
+    // `round(dlom, 4)` leaves below 1, which is where the engine refuses.
+    expect(overwriteBand('dlom')).toEqual({ min: 0, max: MAX_STATED_DISCOUNT });
+    expect(overwriteBand('dloc')).toEqual({ min: 0, max: MAX_STATED_DISCOUNT });
+    // The figure the params screen used to take and the Overwrites tab used to
+    // refuse: an extracted 95% DLOM is recordable by both doors now.
+    expect(ParamsPatchBody.safeParse({ dlom: 0.95 }).success).toBe(true);
+    expect(ParamsPatchBody.safeParse({ dloc: 0.95 }).success).toBe(true);
+    // And the one neither takes.
+    expect(ParamsPatchBody.safeParse({ dlom: 1 }).success).toBe(false);
+    expect(ParamsPatchBody.safeParse({ dlom: 0.99995 }).success).toBe(false);
   });
 
   it('publishes the band the params screen accepts', () => {

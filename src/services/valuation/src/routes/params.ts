@@ -51,14 +51,26 @@ const Fraction = z.number().min(0).max(1);
  * that take an analyst's figure without a model to cap it are `params.dlom`
  * and `dlom_method: 'qualitative'`, which is what `_concluded_dlom`'s docstring
  * names.
+ *
+ * The quantum is read from the registry rather than spelled out here (R413).
+ * `dlom` and `dloc` are both `banded` fields — the workbook's Discounts tab
+ * names each as the override that supersedes the params cell — and this door
+ * accepted up to 0.9999 while the registry published 0.9, so the two doors onto
+ * one number disagreed exactly as PARAMS_BAND's original four did. `min`/`max`
+ * rather than `lt(1)` plus a rounding refinement, because a plain inclusive
+ * band is the shape `validateOverwriteValue` enforces on the other door, and
+ * two doors can only be held to one number if they can state it the same way.
  */
-const StatedDiscount = z
-  .number()
-  .min(0)
-  .lt(1)
-  .refine((v) => Math.round(v * 1e4) / 1e4 < 1, {
-    message: 'A discount that rounds to 100% concludes the interest is worthless',
-  });
+const StatedDiscount = (() => {
+  const { min, max } = overwriteBand('dlom');
+  const dloc = overwriteBand('dloc');
+  // One schema for both cells, so a registry edit that moved only one of them
+  // would otherwise silently bind the wrong band to the other.
+  if (dloc.min !== min || dloc.max !== max) {
+    throw new Error('dlom and dloc must publish the same stated-discount band');
+  }
+  return z.number().min(min).max(max);
+})();
 /** A study year on a firm-supplied evidence table. */
 const StudyYear = z.number().int().min(1900).max(2200).optional();
 /**
