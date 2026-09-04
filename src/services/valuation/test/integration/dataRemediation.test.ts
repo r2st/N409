@@ -288,6 +288,56 @@ describe.skipIf(!dbUp)('data remediation', () => {
   });
 
   /**
+   * R412: the gate is not a fault, on any of the three surfaces.
+   *
+   * The body already distinguished the refusal's words from "Re-run failed",
+   * and the argument beside that branch — collapsing the two "would hide the
+   * publish gate doing its job" — was true of the log line and the spine row as
+   * well, where it stayed collapsed. A refusal is this console's central
+   * guarantee working, and "3 failed" is the record of an engine that dropped
+   * three runs.
+   */
+  it('records a gate refusal as a refusal rather than a failure', async () => {
+    const racedId = await createValuation('Refusal Is Not A Fault Co');
+    await staleCalculation(racedId, 1_200_000);
+    duringCompute = async () => {
+      await pool.query(`UPDATE valuations SET state = 'published' WHERE id = $1`, [racedId]);
+    };
+    let res;
+    try {
+      res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/data-remediation/rerun',
+        headers: authHeader(ops.token),
+        payload: { valuation_ids: [racedId] },
+      });
+    } finally {
+      duringCompute = null;
+    }
+    expect(res.json().refused).toBe(1);
+    expect(res.json().results[0].refused).toBe(true);
+
+    const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM admin_events
+        WHERE type = 'data_remediation_rerun'
+        ORDER BY occurred_at DESC, id DESC LIMIT 1`,
+    );
+    expect(rows[0]!.payload).toMatchObject({ succeeded: 0, refused: 1 });
+  });
+
+  it('does not call a malformed id a refusal — the gate turned nothing away', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/data-remediation/rerun',
+      headers: authHeader(ops.token),
+      payload: { valuation_ids: ['not-a-ulid'] },
+    });
+    expect(res.json().failed).toBe(1);
+    expect(res.json().refused).toBe(0);
+    expect(res.json().results[0].refused).toBe(false);
+  });
+
+  /**
    * Both queues are latest-per-valuation scans of every calculation and every
    * QA review on the platform, so both are bounded. What must survive the
    * bound is the answer to "how many are affected" — a remediation queue that

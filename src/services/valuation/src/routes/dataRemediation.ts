@@ -144,13 +144,23 @@ export function registerDataRemediationRoutes(
       findParamsByValuationIds(deps.pool, eligibleIds),
     ]);
 
-    const results: Array<{ valuation_id: string; ok: boolean; error?: string }> = [];
+    /**
+     * `refused` separates the gate from a fault, for the console and the spine
+     * (R412). A row the publish gate turned away is this route working; a row
+     * the engine dropped is not, and the two were one `failed` tally.
+     */
+    const results: Array<{ valuation_id: string; ok: boolean; refused?: boolean; error?: string }> = [];
     for (const rawId of parsed.data.valuation_ids) {
       const id = rawId.toUpperCase();
       if (!isUlid(id) || !eligible.has(id)) {
         results.push({
           valuation_id: rawId,
           ok: false,
+          // The same gate as `beforePersist` below, asked earlier — so the same
+          // word for it. A malformed id is not the gate turning anything away,
+          // it is a request this route could not read, and stays a plain
+          // failure so `refused` means one thing.
+          refused: isUlid(id),
           error: 'Not in the re-runnable queue — it may have published since this list was loaded.',
         });
         continue;
@@ -215,25 +225,65 @@ export function registerDataRemediationRoutes(
         // operator can act on: it names why this row was skipped and says
         // nothing was written. Collapsing it into "Re-run failed" beside a
         // genuine engine fault would hide the publish gate doing its job.
-        const message =
-          err instanceof InternalServiceError
+        const refused = err instanceof ApiProblem && err.status === 409;
+        const message = refused
+          ? (err as ApiProblem).detail
+          : err instanceof InternalServiceError
             ? describeForUser(err)
-            : err instanceof ApiProblem && err.status === 409
-              ? err.detail
-              : 'Re-run failed';
-        req.log.warn({ err, valuationId: id }, 'remediation re-run failed');
-        results.push({ valuation_id: id, ok: false, error: message });
+            : 'Re-run failed';
+        /*
+         * THE SAME DISTINCTION IN THE LOG (R412, methodology M11).
+         *
+         * The branch above draws it for the response body and says why —
+         * "collapsing it into 'Re-run failed' beside a genuine engine fault
+         * would hide the publish gate doing its job" — and then wrote one
+         * `warn` reading 'remediation re-run failed', with the refusal's own
+         * error attached, for both.
+         *
+         * The gate firing is not a failure. It is this route's central
+         * guarantee working: an engagement published while the batch was
+         * running, and nothing was written under its signed opinion. Filed as a
+         * warning it reads as an engine fault an operator should chase, and the
+         * one signal that a publish really did race a re-run — which is a fact
+         * about how this console is being used, and the thing a later round
+         * would want to know before widening the batch — is buried in a
+         * vocabulary that means the opposite.
+         *
+         * `info`, because nothing is wrong and nothing needs doing; its own
+         * `event` so it can be counted; and no `err`, because a refusal this
+         * route authored is not an error anybody has to read a stack for.
+         */
+        if (refused) {
+          req.log.info(
+            { event: 'remediation_rerun_refused', valuationId: id },
+            'remediation re-run refused: the engagement left the re-runnable queue mid-batch',
+          );
+        } else {
+          req.log.warn({ err, valuationId: id }, 'remediation re-run failed');
+        }
+        results.push({ valuation_id: id, ok: false, refused, error: message });
       }
     }
 
     const succeeded = results.filter((r) => r.ok).length;
+    /*
+     * `refused` on the spine row too, and not folded into `failed`.
+     *
+     * This row is the durable record of an operator re-running stored
+     * conclusions in bulk, and "22 succeeded, 3 failed" says the engine dropped
+     * three. If those three were the publish gate, the record of the one thing
+     * this console must never do — and did not do — is a number that says
+     * something went wrong instead. Additive: `failed` still counts every row
+     * that did not run, so nothing reading the old two fields changes meaning.
+     */
+    const refused = results.filter((r) => r.refused).length;
     await recordAdminEvent(deps.pool, {
       type: 'data_remediation_rerun',
       actor: actorFor(principal),
       subjectType: 'data_remediation',
       subjectLabel: 'stale_backsolve',
-      payload: { requested: results.length, succeeded, failed: results.length - succeeded },
+      payload: { requested: results.length, succeeded, failed: results.length - succeeded, refused },
     });
-    return { results, succeeded, failed: results.length - succeeded };
+    return { results, succeeded, failed: results.length - succeeded, refused };
   });
 }
