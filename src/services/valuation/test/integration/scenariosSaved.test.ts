@@ -234,6 +234,53 @@ describe.skipIf(!dbUp)('saved scenarios', () => {
       expect(res.json().scenarios).toEqual([]);
     });
 
+    /**
+     * A saved case is the answer to the run it was struck against, and the
+     * comparison table subtracts it from whatever run is official today.
+     *
+     * `baseline_calculation_id` has recorded which run that was since the table
+     * was created and nothing read it, so the first recalculation of an
+     * engagement turned every saved delta into knob-effect plus baseline drift
+     * under a column headed "Δ vs baseline" — and the drift can be the larger
+     * half. Here the second calculation *doubles* the equity value, so a bear
+     * case saved 50% below the first baseline reads as 75% below the second,
+     * and the row would have printed a loss the assumptions never caused.
+     *
+     * The row is not restated — it is what the client saved — so the flag is
+     * what changes, and the UI drops the delta on it.
+     */
+    it('marks a case whose baseline has been superseded', async () => {
+      const id = await newValuation('RecalculatedCo');
+      const runCalculation = async (discountRate: number) => {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/calculations`,
+          headers: authHeader(ops.token),
+          payload: { inputs: { ...BASE_INPUTS, income: { ...BASE_INPUTS.income, discount_rate: discountRate } } },
+        });
+        expect(res.statusCode, res.body).toBe(201);
+      };
+
+      await runCalculation(0.25);
+      const saved = await save({ name: uniqueName(), discount_rate: 0.5 }, client.token, id);
+      expect(saved.statusCode, saved.body).toBe(201);
+
+      const before = (await list(client.token, id)).json();
+      expect(before.scenarios).toHaveLength(1);
+      expect(before.scenarios[0].superseded).toBe(false);
+      expect(before.scenarios[0].baseline_calculation_id).toBe(before.baseline.calculation_id);
+
+      // A fresh official run at half the discount rate: the baseline doubles
+      // under the case that is already on the table.
+      await runCalculation(0.125);
+      const after = (await list(client.token, id)).json();
+      expect(after.baseline.calculation_id).not.toBe(before.baseline.calculation_id);
+      expect(after.baseline.equity_value).toBeGreaterThan(before.baseline.equity_value);
+      // The stored figures are untouched — the case is not restated.
+      expect(after.scenarios[0].equity_value).toBe(before.scenarios[0].equity_value);
+      expect(after.scenarios[0].superseded).toBe(true);
+    });
+
     it('is invisible to someone who cannot read the engagement', async () => {
       for (const call of [list(otherClient.token), save({ name: uniqueName() }, otherClient.token)]) {
         expect((await call).statusCode).toBe(404);

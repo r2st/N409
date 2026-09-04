@@ -292,6 +292,33 @@ describe('ScenariosTab', () => {
     });
   });
 
+  /**
+   * A case struck against a run that is no longer official has no delta to
+   * draw. `scenario − baseline` measures the knobs only while both sides come
+   * off the same calculation; once the engagement is recalculated the saved
+   * figure answers the old run and the baseline row answers the new one, so
+   * their difference is knob plus drift — and a bull case can print red
+   * because the baseline moved up underneath it. The saved figures still show;
+   * the column that would be wrong does not.
+   */
+  it('draws no delta for a case whose baseline has been superseded', async () => {
+    mockApi({
+      list: {
+        scenarios: [{ ...SAVED_BEAR, superseded: true }],
+        baseline: BOOT.baseline,
+        currency: 'USD',
+        max_scenarios: 12,
+      },
+    });
+    renderTab();
+
+    const table = await screen.findByTestId('scenario-comparison');
+    expect(table).toHaveTextContent('$10,000,000'); // still the figure that was saved
+    expect(table).toHaveTextContent('superseded baseline');
+    expect(table).not.toHaveTextContent('▼');
+    expect(table).not.toHaveTextContent('▲');
+  });
+
   it('disables saving until a name is entered', async () => {
     mockApi();
     renderTab();

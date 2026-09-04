@@ -327,7 +327,35 @@ export function registerScenarioRoutes(
       sandboxBaseline(valuation.id),
     ]);
     return {
-      scenarios,
+      /*
+       * Each saved case, and whether the run it was struck against is still the
+       * one on the `baseline` line beside it.
+       *
+       * A scenario stores the figures the engine returned when the knobs were
+       * merged onto *that* calculation's inputs, and `baseline_calculation_id`
+       * has recorded which one since the table was created — and nothing has
+       * ever read it. The comparison table draws `scenario − baseline` off
+       * whatever `sandboxBaseline` resolves to today, so the first official
+       * recalculation of the engagement turns every saved delta into a figure
+       * that is part knob and part baseline drift, under a column headed "Δ vs
+       * baseline". Neither half is separable from the other by looking at it,
+       * and the drift can exceed the knob: an engagement re-run at a higher
+       * equity value shows a bull case as a loss.
+       *
+       * Disclosed rather than recomputed, which is this service's standing rule
+       * for a stored figure — re-running the twelve saved cases against the new
+       * baseline is twelve engine computes nobody asked for, and it would
+       * silently restate a case the client saved. Saving the case again is one
+       * click and is the client's move.
+       *
+       * Shipped from here rather than derived in the browser, for
+       * `noBaselineReason`'s reason: the frontend is handed one baseline and
+       * cannot see which run each row belongs to without being told.
+       */
+      scenarios: scenarios.map((s) => ({
+        ...s,
+        superseded: calc !== null && s.baseline_calculation_id !== calc.id,
+      })),
       baseline: calc ? baselineOf(calc) : null,
       currency: valuation.currency,
       max_scenarios: MAX_SCENARIOS,

@@ -74,6 +74,15 @@ interface SavedScenario {
   equity_value: string | null;
   fmv_per_share: string | null;
   created_at: string;
+  /**
+   * Whether the official calculation this case was computed against is still
+   * the one on the baseline row. The server answers it — see the list route —
+   * because only it can see which run each saved row belongs to.
+   *
+   * Optional so a row from a build that did not send it reads as current,
+   * which is what it always read as.
+   */
+  superseded?: boolean;
 }
 
 interface ScenarioListResponse {
@@ -495,8 +504,20 @@ export function ScenariosTab() {
                 )}
                 {saved.scenarios.map((scenario) => {
                   const equity = scenario.equity_value != null ? Number(scenario.equity_value) : null;
+                  /*
+                   * No delta across two baselines.
+                   *
+                   * `scenario − baseline` is only the effect of the knobs while
+                   * both sides come off the same official run. Once the
+                   * engagement has been recalculated the saved figure is the
+                   * answer to the old run and the baseline beside it is the new
+                   * one, so their difference is knob plus drift and reads as
+                   * neither — a bull case can print red because the baseline
+                   * moved up under it. The row still shows what was saved; the
+                   * column that would be wrong is the one that goes away.
+                   */
                   const delta =
-                    equity != null && saved.baseline?.equity_value != null
+                    !scenario.superseded && equity != null && saved.baseline?.equity_value != null
                       ? equity - saved.baseline.equity_value
                       : null;
                   return (
@@ -512,9 +533,20 @@ export function ScenariosTab() {
                       <td className="tnum py-2.5 pr-4">{formatPerShare(scenario.fmv_per_share, currency)}</td>
                       <td className="tnum py-2.5 pr-4">{formatMoney(scenario.equity_value, currency)}</td>
                       <td className="py-2.5 pr-4">
-                        <DeltaBadge delta={delta} currency={currency} />
-                        {(delta === null || Math.abs(delta) < 1e-9) && (
-                          <span className="text-ink-400">—</span>
+                        {scenario.superseded ? (
+                          <span
+                            className="text-xs text-ink-400"
+                            title="This case was computed against an earlier official calculation, so the difference to the current baseline is not the effect of its assumptions. Save it again to restate it."
+                          >
+                            superseded baseline
+                          </span>
+                        ) : (
+                          <>
+                            <DeltaBadge delta={delta} currency={currency} />
+                            {(delta === null || Math.abs(delta) < 1e-9) && (
+                              <span className="text-ink-400">—</span>
+                            )}
+                          </>
                         )}
                       </td>
                       <td className="tnum py-2.5 pr-4 text-xs text-ink-400">
