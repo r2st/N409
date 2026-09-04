@@ -20,7 +20,11 @@ import {
   findValuationByNumber,
   type ValuationRow,
 } from '../repos/valuations.js';
-import { createSupportMessage } from '../repos/support.js';
+import {
+  createSupportMessage,
+  MAX_SUPPORT_MESSAGE_BODY,
+  MAX_SUPPORT_MESSAGE_SUBJECT,
+} from '../repos/support.js';
 import { EmailAddress } from '../domain/email.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sliceChars } from '../domain/textSlice.js';
@@ -54,6 +58,14 @@ const InboxBody = z.object({
   /** Explicit routing wins over subject/sender matching. */
   valuation_id: ulidField().optional(),
 });
+
+/** The ticket body, cut to the column's bound with a line saying it was cut. */
+const TRUNCATION_NOTICE = '\n\n[truncated — the full email is in the support mailbox]';
+
+function withTruncationNotice(body: string): string {
+  if (body.length <= MAX_SUPPORT_MESSAGE_BODY) return body;
+  return sliceChars(body, MAX_SUPPORT_MESSAGE_BODY - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE;
+}
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
@@ -252,11 +264,27 @@ export function registerCommentRoutes(
         // in a request body — and a cut at 300 UTF-16 units is this service
         // creating one of its own, which `support_messages.subject` then
         // stores as `U+FFFD`. See domain/textSlice.ts.
-        subject: sliceChars(`Unmatched inbound email: ${email.subject}`, 300),
-        body:
+        subject: sliceChars(`Unmatched inbound email: ${email.subject}`, MAX_SUPPORT_MESSAGE_SUBJECT),
+        /*
+         * Held to the same column bound the subject beside it is held to.
+         *
+         * `InboxBody.body` is capped at 100_000 — an email body, and rightly
+         * longer than what the contact form takes — but this is not writing a
+         * comment. It is writing `support_messages.body`, whose other writer
+         * caps it at 20_000, and the ops inbox reads that column 200 rows at a
+         * time with every body in full. See MAX_SUPPORT_MESSAGE_BODY.
+         *
+         * Marked rather than silently cut: the mail itself is still in the
+         * mailbox the relay read it from, and an operator who can see the
+         * ticket was shortened knows to go and look. The subject has been cut
+         * here since the fallback was written and does not say so; this is the
+         * half where the missing text could matter.
+         */
+        body: withTruncationNotice(
           `From: ${email.from}\n` +
-          (email.message_id ? `Message-Id: ${email.message_id}\n` : '') +
-          `\n${email.body}`,
+            (email.message_id ? `Message-Id: ${email.message_id}\n` : '') +
+            `\n${email.body}`,
+        ),
         pagePath: 'inbox:email',
       });
       return reply.status(202).send({ matched: false, support_message_id: ticket.id });

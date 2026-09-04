@@ -17,6 +17,32 @@ export interface SupportMessageRow {
   user_email?: string;
 }
 
+/**
+ * What one support message may hold, declared here rather than in the route.
+ *
+ * `support_messages` has two writers and they disagreed about the second of
+ * these. `POST /api/v1/support/messages` — the in-product contact form — has
+ * always been `subject: nonBlankText(1, 300)` and `body: max(20_000)`. The
+ * other writer is the unmatched-email fallback in `routes/comments.ts`, which
+ * turns an inbound mail nothing could be routed to into a ticket: it slices the
+ * subject to 300 for exactly this reason, and then composed a body out of
+ * `InboxBody.body`, whose own cap is 100_000 — five times what the form allows,
+ * on the same column.
+ *
+ * It shows in the ops inbox rather than at the write. `listSupportMessages`
+ * returns up to `SUPPORT_MESSAGE_PAGE_LIMIT` rows with each body in full and no
+ * bound on the total, so the page is sized by the largest thing that can be in
+ * that column. Bounded by the form that was 4 MB; bounded by the mail relay it
+ * is 20 MB, and a quoted reply chain reaches those lengths without anybody
+ * trying — which is the ordinary case for a mail that failed to match, not an
+ * attack on it.
+ *
+ * So: one number, imported by both writers, and the ceiling is the one the
+ * product already committed to.
+ */
+export const MAX_SUPPORT_MESSAGE_SUBJECT = 300;
+export const MAX_SUPPORT_MESSAGE_BODY = 20_000;
+
 export async function createSupportMessage(
   pool: pg.Pool,
   input: { userId: string; subject: string; body: string; pagePath?: string | null },

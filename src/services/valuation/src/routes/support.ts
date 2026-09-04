@@ -3,7 +3,13 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
-import { createSupportMessage, listSupportMessages, setSupportMessageStatus } from '../repos/support.js';
+import {
+  createSupportMessage,
+  listSupportMessages,
+  MAX_SUPPORT_MESSAGE_BODY,
+  MAX_SUPPORT_MESSAGE_SUBJECT,
+  setSupportMessageStatus,
+} from '../repos/support.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
@@ -16,8 +22,8 @@ import { nonBlankText } from '../domain/nonBlankText.js';
  */
 
 const CreateBody = z.object({
-  subject: nonBlankText(1, 300),
-  body: z.string().min(1).max(20_000),
+  subject: nonBlankText(1, MAX_SUPPORT_MESSAGE_SUBJECT),
+  body: z.string().min(1).max(MAX_SUPPORT_MESSAGE_BODY),
   page_path: z.string().max(500).optional(),
 });
 
