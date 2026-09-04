@@ -903,3 +903,91 @@ def test_an_absent_workbook_part_is_not_reported_as_unreadable(caplog):
     assert not [
         r for r in caplog.records if getattr(r, "event", None) == "xlsx_sheet_index_unreadable"
     ]
+
+
+# ── One part is one tab (R429, methodology M5) ───────────────────────────────
+
+
+_TWO_TABS_ONE_PART = """<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Cap Table" sheetId="1" r:id="rId1"/>
+    <sheet name="Scratch" sheetId="2"/>
+  </sheets>
+</workbook>"""
+
+#: The first tab lives in `sheet2.xml`, which is ordinary — `sheetN` is a
+#: creation-order id, so reordering a tab in Excel separates the two for good.
+_RELS_TO_SHEET2 = """<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="worksheets/sheet2.xml"/>
+</Relationships>"""
+
+
+def test_a_guessed_part_is_not_taken_from_the_tab_that_names_it():
+    """The second `<sheet>` has no `r:id`, so it guesses `sheet2.xml` — the part
+    the first tab's relationship already names.
+
+    Both were emitted, so the cap table's rows arrived twice: once under their
+    own tab's name and once headed with another tab's. The heading is the
+    model's only cue for what a block of rows is, so the duplicate asserts in
+    the client's own words that these rows are a different sheet — this
+    function's own failure, by the door it did not watch. It also spends the
+    extraction budget twice on one part.
+    """
+    parts = {
+        "xl/workbook.xml": _TWO_TABS_ONE_PART,
+        "xl/_rels/workbook.xml.rels": _RELS_TO_SHEET2,
+        "xl/worksheets/sheet2.xml": _SHEET1,
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, body in {
+            "[Content_Types].xml": _CONTENT_TYPES,
+            "xl/sharedStrings.xml": _SHARED_STRINGS,
+            **parts,
+        }.items():
+            zf.writestr(name, body)
+
+    [doc] = extract_texts([_doc(buf.getvalue())])
+    assert doc.text.count("Series A\t2000000") == 1
+    assert "=== Sheet: Cap Table ===" in doc.text
+    # A stated pairing outranks a positional guess; the guess is dropped rather
+    # than the part being claimed twice.
+    assert "Scratch" not in doc.text
+
+
+def test_an_ordinary_two_sheet_workbook_keeps_both_tabs():
+    """The guard above must not cost a workbook a tab it really has."""
+    workbook = """<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Cap Table" sheetId="1" r:id="rId1"/>
+    <sheet name="Options" sheetId="2" r:id="rId2"/>
+  </sheets>
+</workbook>"""
+    rels = """<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Target="worksheets/sheet2.xml"/>
+</Relationships>"""
+    # `Series A` is a shared string; `Common` is inline, so this really differs.
+    second = _SHEET1.replace("Common", "Preferred")
+    [doc] = extract_texts(
+        [
+            _doc(
+                _xlsx_with(
+                    {
+                        "xl/workbook.xml": workbook,
+                        "xl/_rels/workbook.xml.rels": rels,
+                        "xl/worksheets/sheet2.xml": second,
+                    }
+                )
+            )
+        ]
+    )
+    assert "=== Sheet: Cap Table ===" in doc.text
+    assert "=== Sheet: Options ===" in doc.text
+    assert "Preferred" in doc.text

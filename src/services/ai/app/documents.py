@@ -519,7 +519,7 @@ def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
         )
         return []
     present = set(zf.namelist())
-    sheets: list[tuple[str, str]] = []
+    declared: list[tuple[str, str, bool]] = []
     for i, entry in enumerate(root.iter(f"{_SSML}sheet")):
         name = entry.get("name") or f"Sheet{i + 1}"
         rid = entry.get(f"{_OFFICE_REL}id")
@@ -536,8 +536,36 @@ def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
             # letting this guess put a client's tab names over rows it did not
             # match them to.
             path = f"xl/worksheets/sheet{i + 1}.xml"
-        if path in present:
-            sheets.append((name, path))
+        declared.append((name, path, target is not None))
+
+    # ONE PART IS ONE TAB (round 429, methodology M5).
+    #
+    # The guess above and a relationship can name the same part, and nothing
+    # stopped them: `sheetN` is a creation-order id, so a workbook whose first
+    # tab lives in `sheet2.xml` is ordinary — reorder a tab in Excel and it is
+    # what you get — and a second `<sheet>` with no `r:id` at position 2 then
+    # guesses that same part. Both were appended, so the cap table's rows were
+    # emitted twice: once under their own tab's name and once under another's.
+    #
+    # Which is this function's own failure arriving by the door it did not
+    # watch. The heading is the model's only cue for what a block of rows *is*,
+    # and the second block asserts, in the client's own words, that these rows
+    # are a different sheet. The duplicate also spends the extraction budget
+    # twice on one part.
+    #
+    # A stated pairing outranks a positional guess wherever the two collide —
+    # not the one that happens to come first in the XML — so the paths the
+    # relationships part names are collected before any guess is honoured.
+    claimed = {path for _, path, stated in declared if stated}
+    sheets: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name, path, stated in declared:
+        if path not in present or path in seen:
+            continue
+        if not stated and path in claimed:
+            continue
+        seen.add(path)
+        sheets.append((name, path))
     return sheets
 
 
