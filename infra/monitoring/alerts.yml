@@ -731,14 +731,20 @@ groups:
       # there is no next attempt that might make this right, and one is worth a
       # look.
       #
-      # `reaped` was missing (R412, methodology M11), and it is the ending this
-      # rule most needed: `failExhaustedDeliveries` settles a delivery
-      # `status='failed'` with its attempts spent, so a partner integration
-      # simply never receives an event the platform promised it. What made the
-      # gap invisible is that `SweepWorkFailing` reads the *other* half of the
-      # same story — the receiver refusing, tallied as `failed` — and clears
-      # itself the moment those rows run out of attempts. So the one alert on
-      # this queue went green exactly when the loss became permanent.
+      # `reaped` was missing (R412, methodology M11). `failExhaustedDeliveries`
+      # settles a delivery `status='failed'` with its attempts spent and its
+      # lease cleared, so a partner integration never receives an event the
+      # platform promised it.
+      #
+      # It is the one terminal ending on this queue that no other rule can see.
+      # A delivery that runs out of attempts *while being attempted* comes back
+      # from `settle` as `failed` with no next attempt, and `SweepWorkFailing`
+      # reads that. A reaped row never reaches `settle` at all: it is a row
+      # already at `max_attempts` whose claim has lapsed — the sweeper that held
+      # it died mid-POST — so it is tallied only here, and the log line beside it
+      # ("abandoned mid-attempt with no retries left") is a `warn` carrying no
+      # `alert: true`. Same permanent loss, arriving through the door with
+      # nothing behind it.
       - alert: SweepAbandoningWork
         expr: |
           increase(background_sweep_items_total{outcome=~"retired|stranded|reaped"}[6h]) > 0
