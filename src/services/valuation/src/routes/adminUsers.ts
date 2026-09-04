@@ -67,6 +67,7 @@ import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { templateText } from '../domain/templateText.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
+import { optionalText } from '../domain/optionalText.js';
 import { ulidField } from '../domain/ulidField.js';
 import { forbidden } from '../domain/accessProblem.js';
 
@@ -110,11 +111,28 @@ const CreateBody = z.object({
 const PatchBody = z
   .object({
     email: EmailAddress,
-    first_name: z.string().max(100).nullable(),
-    last_name: z.string().max(100).nullable(),
+    /*
+     * The same four columns `PATCH /api/v1/account/profile` writes, held to the
+     * same rule — `optionalText` trims and stores NULL for a cleared field.
+     *
+     * They were `z.string().max(n).nullable()` here, which is the only door of
+     * the five that writes these columns without normalising the blank: the
+     * account holder's own door trims, `routes/auth.ts` and the create body
+     * three fields up use `nonBlankText`, and both IdP paths (`extractIdentity`
+     * in routes/saml.ts, `scimText` in domain/scim.ts) skip a claim that is
+     * whitespace. So an administrator saving a name of three spaces stored a
+     * value no other writer can produce.
+     *
+     * `''` and `'   '` are not the same answer downstream — see
+     * domain/optionalText.ts for the display-name idiom that keeps one and
+     * drops the other. The administrator screen and the roster screen it links
+     * to then disagreed about whether the account has a name.
+     */
+    first_name: optionalText(100),
+    last_name: optionalText(100),
     phone: NullablePhone,
-    job_title: z.string().max(150).nullable(),
-    company_name: z.string().max(200).nullable(),
+    job_title: optionalText(150),
+    company_name: optionalText(200),
     verified: z.boolean(),
     partner_id: ulidField().nullable(),
     roles: RoleSet,

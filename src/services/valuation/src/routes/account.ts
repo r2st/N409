@@ -30,6 +30,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { createEmailVerificationToken } from '../repos/emailVerifications.js';
 import { emailVerificationEmail } from '../domain/emailWorkflows.js';
 import { NullablePhone } from '../domain/phone.js';
+import { optionalText } from '../domain/optionalText.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
@@ -45,25 +46,16 @@ import { invalidBody } from '../domain/validationProblem.js';
  * hashing rules with.
  */
 
-/** Trims, and turns a cleared field into NULL rather than an empty string. */
-const OptionalText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .max(max)
-    .nullable()
-    .transform((v) => (v ? v : null));
-
 const ProfileBody = z
   .object({
-    first_name: OptionalText(100),
-    last_name: OptionalText(100),
+    first_name: optionalText(100),
+    last_name: optionalText(100),
     phone: NullablePhone,
-    job_title: OptionalText(150),
-    company_name: OptionalText(200),
+    job_title: optionalText(150),
+    company_name: optionalText(200),
     // Validated against the runtime's own tz database rather than a hardcoded
     // list, so it stays correct as zones are added or renamed.
-    timezone: OptionalText(100).refine(isKnownTimezone, 'Unknown time zone'),
+    timezone: optionalText(100).refine(isKnownTimezone, 'Unknown time zone'),
     email: z.string().email().max(320),
     /** Required only when changing the email of a password account. */
     current_password: z.string().min(1),
