@@ -339,6 +339,55 @@ describe('EmailOutboxPage — the endpoints that had no caller (R191)', () => {
     expect(await screen.findByText('Retried 1 message — 1 sent.')).toBeInTheDocument();
   });
 
+  /*
+   * R414 (M5): `retired` is the sweep giving up on a message for good, and the
+   * note read `attempted` and `sent` only — so the one pass an operator most
+   * needs to hear about announced itself as an ordinary retry, or (when the
+   * retirement ran and the claim came back empty) as nothing having happened
+   * at all.
+   */
+  it('names the messages the sweep gave up on for good', async () => {
+    const user = userEvent.setup();
+    mockApi(emails, { '/admin/outbox/retry': { attempted: 2, sent: 1, failed: 1, retired: 3 } });
+    renderPage();
+    await screen.findByLabelText('Delivery statistics');
+    await user.click(screen.getByRole('button', { name: 'Retry failed now' }));
+    const note = await screen.findByText(/Retried 2 messages/);
+    expect(note.textContent).toContain('1 sent');
+    expect(note.textContent).toContain('3 messages had spent every attempt');
+    expect(note.textContent).toContain('will never send');
+  });
+
+  it('does not report a pass that retired messages as nothing having happened', async () => {
+    const user = userEvent.setup();
+    mockApi(emails, { '/admin/outbox/retry': { attempted: 0, sent: 0, failed: 0, retired: 1 } });
+    renderPage();
+    await screen.findByLabelText('Delivery statistics');
+    await user.click(screen.getByRole('button', { name: 'Retry failed now' }));
+    const note = await screen.findByText(/Nothing was left to retry/);
+    expect(note.textContent).toContain('1 message had spent every attempt');
+    expect(screen.queryByText(/Nothing was eligible for retry/)).not.toBeInTheDocument();
+  });
+
+  it('still reports an empty pass as an empty pass when nothing was retired', async () => {
+    const user = userEvent.setup();
+    mockApi(emails, { '/admin/outbox/retry': { attempted: 0, sent: 0, failed: 0, retired: 0 } });
+    renderPage();
+    await screen.findByLabelText('Delivery statistics');
+    await user.click(screen.getByRole('button', { name: 'Retry failed now' }));
+    expect(await screen.findByText('Nothing was eligible for retry.')).toBeInTheDocument();
+  });
+
+  // A build that predates the field must not render `undefined` into the note.
+  it('reads an older build\'s response without inventing a retirement', async () => {
+    const user = userEvent.setup();
+    mockApi(emails, { '/admin/outbox/retry': { attempted: 1, sent: 1 } });
+    renderPage();
+    await screen.findByLabelText('Delivery statistics');
+    await user.click(screen.getByRole('button', { name: 'Retry failed now' }));
+    expect(await screen.findByText('Retried 1 message — 1 sent.')).toBeInTheDocument();
+  });
+
   it('explains the retry button instead of leaving it dead when nothing failed', async () => {
     mockApi(emails, {
       '/admin/email/delivery-stats': {

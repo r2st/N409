@@ -296,19 +296,61 @@ export function EmailOutboxPage() {
    * announced rather than merely reloaded — "attempted 4, sent 4" and
    * "attempted 4, sent 0" leave the table looking identical for the seconds
    * before the states settle, and they mean opposite things.
+   *
+   * `retired` IS THE HALF OF THE ANSWER THIS BUTTON WAS THROWING AWAY (R414,
+   * methodology M5). `retryFailedEmails` returns four numbers and says in its
+   * own closing comment why the last two are carried rather than derived:
+   * "`retired` is the ladder giving up on a row for good — the only tally here
+   * that nothing else ever revisits". The one human-facing reader of that
+   * response read `attempted` and `sent`, so the pass in which the sweep
+   * permanently abandoned a batch of messages announced itself with a sentence
+   * about the messages it *did* send.
+   *
+   * The worst reading is the empty one. `retireStrandedEmails` runs *before*
+   * the claim, so a sweep can retire twenty rows and then claim nothing — and
+   * this said "Nothing was eligible for retry." about a pass that had just
+   * ended twenty messages for good. That is not a smaller version of the
+   * truth; it is the opposite of it, on the screen an operator presses when
+   * they have just fixed the relay and want to know what is still owed.
+   *
+   * Read defensively (`?? 0`) for `ComparablesTab`'s reason: a tab served by
+   * an older build must not render `undefined` into the note.
    */
   const retryFailed = async () => {
     setRetrying(true);
     setRetryNote(null);
     setRetryError(null);
     try {
-      const res = await api<{ attempted: number; sent: number }>('/admin/outbox/retry', {
-        method: 'POST',
-      });
+      // `failed` is on the response too and is not read: within one answer it
+      // is `attempted - sent`, which the sentence below already states. The
+      // server carries it because a *counter series* cannot be subtracted that
+      // way, which is a fact about alerting rather than about this note.
+      const res = await api<{ attempted: number; sent: number; retired?: number }>(
+        '/admin/outbox/retry',
+        { method: 'POST' },
+      );
+      const retired = res.retired ?? 0;
+      // Spelled out rather than left to the table: a retired row lands in the
+      // same 'failed' status as one that is still on its ladder, so the list
+      // behind this note cannot tell an operator which of the two they are
+      // looking at.
+      const givenUp =
+        retired > 0
+          ? ` ${retired} message${retired === 1 ? ' had' : 's had'} spent every attempt and ` +
+            `${retired === 1 ? 'was' : 'were'} given up on for good — ${
+              retired === 1 ? 'it' : 'they'
+            } will never send.`
+          : '';
       setRetryNote(
-        res.attempted === 0
-          ? 'Nothing was eligible for retry.'
-          : `Retried ${res.attempted} message${res.attempted === 1 ? '' : 's'} — ${res.sent} sent.`,
+        (res.attempted === 0
+          ? // "Nothing was eligible" is a claim about the whole pass, and it is
+            // false when the retirement half of it settled rows. Only the claim
+            // came back empty.
+            retired === 0
+            ? 'Nothing was eligible for retry.'
+            : 'Nothing was left to retry.'
+          : `Retried ${res.attempted} message${res.attempted === 1 ? '' : 's'} — ${res.sent} sent.`) +
+          givenUp,
       );
       await Promise.all([load(), loadStats()]);
     } catch (err) {
