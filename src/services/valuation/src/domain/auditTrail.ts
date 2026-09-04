@@ -937,6 +937,26 @@ export const EVENT_NOTES: Record<string, Record<string, string | Record<string, 
         'A newer run had already started for this engagement, so the outstanding retry was stood down.',
     },
   },
+  /*
+   * `resent` (R416, methodology M3). R396 put the board's signing step on the
+   * spine and wrote this flag beside it under a comment saying exactly why —
+   * "a re-send is not a repetition: it mints a new token and kills the link the
+   * previous message carried, so a director holding the older mail has a dead
+   * one, and the trail is where that sequence is legible". It then declared no
+   * note, so no reader received it: the change log rendered "Board resolution
+   * sent" identically for the first ask and for the send that invalidated it,
+   * which is the `organization_deleted` shape one subsystem over.
+   *
+   * A value-keyed map rather than a plain note, because both answers are worth
+   * saying here. The false arm is not filler — this event repeats per director
+   * and the reader's question on any one line is which of the two it is.
+   */
+  board_resolution_sent: {
+    resent: {
+      true: 'A re-send: a new signing link was issued and the link in the previous message stopped working.',
+      false: 'The first time this director was asked to sign.',
+    },
+  },
 };
 
 /**

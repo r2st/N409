@@ -457,6 +457,31 @@ describe('describeEvent', () => {
     );
   });
 
+  it('tells a board re-send from the first ask, and says the old link is dead', () => {
+    // R396 wrote `resent` because "a re-send is not a repetition: it mints a
+    // new token and kills the link the previous message carried". It declared
+    // no note, so both sends rendered as the same line for four rounds.
+    const resent = describeEvent(
+      event({
+        type: 'board_resolution_sent',
+        payload: { resolution_id: '01HRES', signoff_id: '01HSIG', resent: true },
+      }),
+    );
+    expect(resent.note).toBe(
+      'A re-send: a new signing link was issued and the link in the previous message stopped working.',
+    );
+    const first = describeEvent(
+      event({
+        type: 'board_resolution_sent',
+        payload: { resolution_id: '01HRES', signoff_id: '01HSIG', resent: false },
+      }),
+    );
+    // The false arm is not filler: this event repeats per director, and which
+    // of the two a given line is is the reader's whole question.
+    expect(first.note).toBe('The first time this director was asked to sign.');
+    expect(resent.summary).not.toBe(first.summary);
+  });
+
   it('leaves a failure a worker actually reported unannotated', () => {
     const enriched = describeEvent(
       event({ type: 'auto_pipeline_failed', payload: { run_id: '01HRUN', error: 'extraction failed' } }),
