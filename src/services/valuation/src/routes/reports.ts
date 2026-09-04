@@ -73,6 +73,7 @@ import type { Principal } from '../auth/rbac.js';
 import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
+import { quoteForMessage } from '../domain/displayText.js';
 import { forbidden } from '../domain/accessProblem.js';
 import { REPORT_BODY_LIMIT } from './bodyLimits.js';
 
@@ -95,7 +96,52 @@ const PutBody = z
     content: z
       .object({
         title: nonBlankText(1, 300),
-        sections: z.array(SectionSchema).min(1).max(50),
+        /*
+         * One chapter per key (R419, methodology M19).
+         *
+         * `key` is the report body's identity for a chapter, and three things
+         * downstream are maps built from it: `applyNarrative` indexes the
+         * sections `new Map(content.sections.map((s, i) => [s.key, i]))`,
+         * `unwrittenSections` collects a *Set* of the keys whose html still
+         * matches the skeleton, and `reportReview` files each finding under a
+         * `section_key`. A body carrying the same key twice made every one of
+         * those quietly wrong, and the worst of them is the pair:
+         *
+         *   - the Set says "conclusion is unwritten" because the *pristine*
+         *     copy of it is;
+         *   - the Map resolves "conclusion" to the *last* copy, which is the
+         *     one the analyst wrote.
+         *
+         * So the guard that exists to stop a narrative re-run discarding an
+         * afternoon's editing — the one thing `applyNarrative`'s own docstring
+         * calls out as making it safe to be automatic — passed, and the draft
+         * overwrote the written chapter. Nothing else would have said so: the
+         * PDF renders the array in order, so the duplicate looks like an extra
+         * chapter rather than a broken index.
+         *
+         * Refused at the door rather than deduplicated, because there is no
+         * safe way to pick: the two sections have different prose, and dropping
+         * either is discarding text somebody sent under a 200. The refusal
+         * names the key so the caller can find it in a fifty-section body.
+         */
+        sections: z
+          .array(SectionSchema)
+          .min(1)
+          .max(50)
+          .superRefine((sections, ctx) => {
+            const seen = new Set<string>();
+            for (const [i, section] of sections.entries()) {
+              if (!seen.has(section.key)) {
+                seen.add(section.key);
+                continue;
+              }
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [i, 'key'],
+                message: `duplicates the key "${quoteForMessage(section.key, 100)}" — each section key may appear once`,
+              });
+            }
+          }),
       })
       .strict(),
   })
