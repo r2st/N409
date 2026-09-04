@@ -544,6 +544,88 @@ export function validateWaccBuildUp(
 }
 
 /**
+ * The largest discount the engine will take as a *qualitative* DLOC.
+ *
+ * `engine/dloc.py` `_MAX_DLOC`, restated at the door that stores the figure.
+ * The engine applies it in one branch only — `dloc_method: 'qualitative'` runs
+ * the stated figure through `_num(stated, "dloc", maximum=_MAX_DLOC)`, and so
+ * does `control_premium_from_dloc`, which that branch calls to print the
+ * implied premium beside it. With no method set, `dloc` is applied as a flat
+ * figure through an unbounded `_num`, which is why this cannot be a bound on
+ * the field: it is a bound on one derivation of it.
+ *
+ * 0.95 rather than the level the pre-flight warns at (0.35): a large DLOC is a
+ * finding an appraiser can support, and only the engine's outright refusal is
+ * a rule this door can enforce without second-guessing the appraisal.
+ */
+const MAX_QUALITATIVE_DLOC = 0.95;
+
+/**
+ * The DLOC derivation and the figures it needs (R413, methodology M6).
+ *
+ * `dloc_method` selects a branch of `engine/dloc.py concluded_dloc`, and each
+ * branch has an input it cannot run without. Two of those were refused nowhere
+ * on this side:
+ *
+ *   * `'qualitative'` with no `dloc` — the engine raises "the qualitative DLOC
+ *     method needs params.dloc", and the params screen shows "Required for the
+ *     qualitative method" beside the box. The screen's rule had no server half,
+ *     so the same engagement saved through the API was stored incomplete.
+ *   * `'qualitative'` with a `dloc` above {@link MAX_QUALITATIVE_DLOC} — the
+ *     engine refuses it outright, and nothing between here and there asks. The
+ *     pre-flight, whose whole job is to catch this before a compute, bounds
+ *     `dloc` at [0, 1) and only *warns* past 0.35, so a stated 0.96 passes
+ *     every check the platform makes and dies inside the allocation.
+ *   * `'control_premium'` with no `control_premium` — same shape, same engine
+ *     message, and the same missing server half.
+ *
+ * All three are `StatedDiscount`'s own argument, one branch further in: a
+ * refusal the store defers is a valuation that looks configured and is not, and
+ * the 422 arrives on whoever next presses Calculate, about a figure they may
+ * not have entered.
+ *
+ * Checked against the merged row rather than the patch, like every other
+ * invariant here — setting the method in one request and the figure in the next
+ * is an ordinary way to fill the form in.
+ */
+function validateDlocMethod(
+  current: Record<string, unknown>,
+  patch: ParamsPatch,
+): { ok: true } | { ok: false; detail: string } {
+  const merged = <K extends keyof ParamsPatch>(key: K): unknown =>
+    key in patch ? patch[key] : current[key as string];
+  const method = merged('dloc_method');
+  if (method === 'qualitative') {
+    const dloc = merged('dloc');
+    if (dloc === null || dloc === undefined) {
+      return { ok: false, detail: 'dloc is required when dloc_method is "qualitative"' };
+    }
+    // `current.dloc` is a `numeric` column, so it arrives from pg as a string.
+    const value = typeof dloc === 'number' ? dloc : Number(dloc);
+    if (!Number.isFinite(value) || value > MAX_QUALITATIVE_DLOC) {
+      return {
+        ok: false,
+        detail:
+          `dloc must be at most ${MAX_QUALITATIVE_DLOC} when dloc_method is "qualitative" — ` +
+          'the engine refuses a larger stated discount for lack of control',
+      };
+    }
+  }
+  if (method === 'control_premium') {
+    const premium = merged('control_premium');
+    if (premium === null || premium === undefined) {
+      return {
+        ok: false,
+        detail:
+          'control_premium is required when dloc_method is "control_premium" — ' +
+          'set dloc_method to "qualitative" to state the discount directly',
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
  * Every invariant a patched params row has to satisfy, checked against the row
  * the patch will actually land on.
  *
@@ -581,6 +663,9 @@ export function checkParamInvariants(
 
   const blend = validateDlomMethods(current, patch);
   if (!blend.ok) return blend;
+
+  const dloc = validateDlocMethod(current, patch);
+  if (!dloc.ok) return dloc;
 
   return validateWaccBuildUp(current, patch);
 }

@@ -1,124 +1,112 @@
 import { describe, expect, it } from 'vitest';
-import { ParamsPatchBody } from '../../src/routes/params.js';
-import { DLOC_METHODS } from '../../src/repos/params.js';
+import { checkParamInvariants, ParamsPatchBody } from '../../src/routes/params.js';
 
 /**
- * The DLOC configuration accepted on PATCH /params (migration 0132).
+ * The DLOC derivation, held to what the engine will actually run (R413, M6).
  *
- * `dloc` was a bare numeric from the first migration — a figure an analyst
- * typed, applied as-is, and reported with no derivation behind it, while the
- * DLOM in the column beside it accumulated four option models, two study
- * families and a weighting scheme. The split of responsibility here is the same
- * as for the DLOM: this schema checks *shape*, and the engine's pre-flight
- * checks *membership*, because the engine owns the study table.
+ * `dloc_method` picks a branch of `engine/dloc.py concluded_dloc`, and each
+ * branch has an input it refuses to run without. Those refusals used to arrive
+ * at Calculate rather than at Save: the PATCH returned 200, the engagement
+ * looked configured, and the 422 landed on whoever next pressed the button —
+ * `StatedDiscount`'s own argument, one branch further in.
+ *
+ * The row shape here is the merged one `checkParamInvariants` is given: the
+ * stored row plus the patch about to land on it, which is why a method set in
+ * one request and a figure set in the next is still checked as a pair.
  */
 
-const ok = (patch: Record<string, unknown>) => ParamsPatchBody.safeParse(patch);
+/** A stored params row with nothing configured. */
+const EMPTY: Record<string, unknown> = {
+  // All four null is the "no weights stated" arm of `validateWeights`, which
+  // runs before the DLOC rules and would otherwise answer for them.
+  weight_asset: null,
+  weight_opm: null,
+  weight_income: null,
+  weight_market: null,
+  dloc: null,
+  dloc_method: null,
+  control_premium: null,
+  dlom_method: null,
+  dlom_qualitative: null,
+};
 
-describe('dloc_method', () => {
-  it.each(DLOC_METHODS)('accepts %s', (method) => {
-    expect(ok({ dloc_method: method }).success).toBe(true);
+const check = (current: Record<string, unknown>, patch: Record<string, unknown>) =>
+  checkParamInvariants({ ...EMPTY, ...current }, ParamsPatchBody.parse(patch));
+
+describe('qualitative DLOC', () => {
+  it('needs its figure', () => {
+    const result = check({}, { dloc_method: 'qualitative' });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.detail).toMatch(/dloc is required/);
   });
 
-  it('accepts null — which is how "apply dloc as a stated figure" is spelled', () => {
-    // The behaviour of every row written before 0132, and the one a rerun of
-    // an engagement concluded last year has to reproduce exactly.
-    expect(ok({ dloc_method: null }).success).toBe(true);
+  it('takes the figure from the stored row when the patch only sets the method', () => {
+    expect(check({ dloc: '0.2' }, { dloc_method: 'qualitative' }).ok).toBe(true);
   });
 
-  it('rejects a method the engine cannot dispatch on', () => {
-    expect(ok({ dloc_method: 'mergerstat' }).success).toBe(false);
-  });
-
-  it('covers every method the engine dispatches on', () => {
-    // Mirrors engine dloc.py DLOC_METHODS.
-    expect([...DLOC_METHODS].sort()).toEqual(['control_premium', 'qualitative', 'studies']);
-  });
-});
-
-describe('control_premium', () => {
-  it('accepts a premium above 100%', () => {
-    // Deliberately not a Fraction. A premium is unbounded above and 100%+
-    // premiums are observed; only the sign is constrained.
-    expect(ok({ control_premium: 1.4 }).success).toBe(true);
-  });
-
-  it('rejects a negative premium', () => {
-    // A discount paid for control is a finding about that transaction rather
-    // than evidence for a DLOC, and the engine's inversion would read it as a
-    // premium.
-    expect(ok({ control_premium: -0.1 }).success).toBe(false);
-  });
-
-  it('accepts null', () => {
-    expect(ok({ control_premium: null }).success).toBe(true);
-  });
-});
-
-describe('dloc_synergy_share', () => {
-  it('accepts a fraction', () => {
-    expect(ok({ dloc_synergy_share: 0.4 }).success).toBe(true);
-  });
-
-  it('rejects 1.0', () => {
-    // All of the premium being synergy says control is worth nothing, which is
-    // a conclusion about that transaction rather than an adjustment to it.
-    expect(ok({ dloc_synergy_share: 1 }).success).toBe(false);
-  });
-
-  it('rejects a negative share', () => {
-    expect(ok({ dloc_synergy_share: -0.1 }).success).toBe(false);
-  });
-});
-
-describe('dloc_studies', () => {
-  it('accepts a selection and null', () => {
-    expect(ok({ dloc_studies: ['US public targets, 2020s'] }).success).toBe(true);
-    expect(ok({ dloc_studies: null }).success).toBe(true);
-  });
-
-  it('rejects an empty selection', () => {
-    // Not "use the default" — a set with nothing in it, which the engine
-    // refuses. The column has a CHECK saying the same.
-    expect(ok({ dloc_studies: [] }).success).toBe(false);
-  });
-
-  it('passes an unknown-but-well-formed name through to the engine pre-flight', () => {
-    expect(ok({ dloc_studies: ['FactSet SIC 7372 2019-2024'] }).success).toBe(true);
-  });
-});
-
-describe('dloc_study_table', () => {
-  const row = { study: 'FactSet SIC 7372, 2019-2024', premium: 0.28 };
-
-  it('accepts a minimal row and the optional period', () => {
-    expect(ok({ dloc_study_table: [row] }).success).toBe(true);
-    expect(ok({ dloc_study_table: [{ ...row, period_start: 2019, period_end: 2024 }] }).success).toBe(true);
-  });
-
-  it('carries a premium, not a discount', () => {
-    // The two are the same fact from opposite sides and the conversion is not
-    // symmetric, so the field that is stored has to be the one that was
-    // observed. A row keyed `discount` is the restricted-stock shape and would
-    // be inverted a second time.
-    expect(ok({ dloc_study_table: [{ study: row.study, discount: 0.28 }] }).success).toBe(false);
-  });
-
-  it('rejects a negative premium and an empty table', () => {
-    expect(ok({ dloc_study_table: [{ ...row, premium: -0.1 }] }).success).toBe(false);
-    expect(ok({ dloc_study_table: [] }).success).toBe(false);
-  });
-
-  it('rejects an unrecognised field rather than dropping it', () => {
-    expect(ok({ dloc_study_table: [{ ...row, premuim: 0.3 }] }).success).toBe(false);
+  it('takes the method from the stored row when the patch only sets the figure', () => {
+    expect(check({ dloc_method: 'qualitative' }, { dloc: 0.2 }).ok).toBe(true);
   });
 
   /**
-   * R343, M19 — the same refinement `required_return_table` has carried since
-   * it was written, on the three study tables that did not. The exhibit prints
-   * this pair as `from–to` straight into the control-premium evidence table.
+   * `_MAX_DLOC` in engine/dloc.py. The pre-flight bounds `dloc` at [0, 1) and
+   * only *warns* past 0.35, so 0.96 passed every check the platform made and
+   * died inside the allocation with a message naming the engine's constant.
    */
-  it('rejects a period whose ends are the wrong way round', () => {
-    expect(ok({ dloc_study_table: [{ ...row, period_start: 2024, period_end: 2019 }] }).success).toBe(false);
+  it('refuses a stated discount the engine will not apply', () => {
+    const result = check({}, { dloc_method: 'qualitative', dloc: 0.96 });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.detail).toMatch(/at most 0\.95/);
+  });
+
+  it('accepts the ceiling itself', () => {
+    expect(check({}, { dloc_method: 'qualitative', dloc: 0.95 }).ok).toBe(true);
+  });
+
+  it('reads a numeric column that arrived from pg as a string', () => {
+    expect(check({ dloc: '0.96' }, { dloc_method: 'qualitative' }).ok).toBe(false);
+    expect(check({ dloc: '0.95' }, { dloc_method: 'qualitative' }).ok).toBe(true);
+  });
+
+  /**
+   * The ceiling is a bound on one *derivation*, not on the field: with no
+   * method set the engine applies `dloc` through an unbounded `_num`, and a
+   * figure the platform has already run and printed must stay recordable.
+   */
+  it('does not bound a stated DLOC with no method behind it', () => {
+    expect(check({}, { dloc: 0.96 }).ok).toBe(true);
+    expect(check({}, { dloc_method: null, dloc: 0.99 }).ok).toBe(true);
+  });
+
+  it('does not bound the studies or control-premium derivations by it', () => {
+    expect(check({ dloc: '0.96' }, { dloc_method: 'studies' }).ok).toBe(true);
+    expect(check({ dloc: '0.96' }, { dloc_method: 'control_premium', control_premium: 1.5 }).ok).toBe(true);
+  });
+});
+
+describe('control-premium DLOC', () => {
+  it('needs the premium it inverts', () => {
+    const result = check({}, { dloc_method: 'control_premium' });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.detail).toMatch(/control_premium is required/);
+  });
+
+  it('is satisfied by a premium already on the row', () => {
+    expect(check({ control_premium: '0.25' }, { dloc_method: 'control_premium' }).ok).toBe(true);
+  });
+
+  it('accepts a premium over 100%, which the params route argues are observed', () => {
+    expect(check({}, { dloc_method: 'control_premium', control_premium: 1.5 }).ok).toBe(true);
+  });
+});
+
+describe('the band both DLOC doors publish', () => {
+  // R413: the registry published 0…0.9 for this cell while the params screen
+  // took 0…0.9999. They are one number now; the qualitative ceiling above is a
+  // separate, narrower rule about one derivation.
+  it('accepts a stated discount the Overwrites tab used to refuse', () => {
+    expect(ParamsPatchBody.safeParse({ dloc: 0.95 }).success).toBe(true);
+    expect(ParamsPatchBody.safeParse({ dloc: 0.9999 }).success).toBe(true);
+    expect(ParamsPatchBody.safeParse({ dloc: 1 }).success).toBe(false);
   });
 });
