@@ -46,6 +46,7 @@ const BENCHMARK: {
   max: number | null;
   company_multiple: number | null;
   percentile: number | null;
+  company_multiple_is_median?: boolean;
 } = {
   count: 8,
   min: 2.1,
@@ -156,6 +157,26 @@ describe('AnalyticsTab', () => {
     expect(claim).toHaveTextContent("This company's applied multiple of 6.8×");
 
     expect(claim).toHaveTextContent('sits at the 62nd percentile of the 8 comparables.');
+  });
+
+  /**
+   * The applied multiple *is* the median of the comparable set — the market
+   * approach selects `statistics.median(multiples)` and reports that same list
+   * — so ranking it against the set returns the 50th percentile on every set of
+   * distinct values, whatever the company is. The panel printed that as a
+   * position, and an analyst who moved a comp in or out and saw it not move
+   * read the panel as stale rather than as arithmetic.
+   */
+  it('says the multiple is the set median instead of ranking it against itself', async () => {
+    mockApi({
+      benchmark: { ...BENCHMARK, percentile: 0.5, company_multiple_is_median: true },
+    });
+    renderTab();
+
+    const claim = await screen.findByTestId('benchmark-percentile');
+    expect(claim).toHaveTextContent("This company's applied multiple of 6.8×");
+    expect(claim).toHaveTextContent('is the median of the 8 comparables');
+    expect(claim).not.toHaveTextContent('percentile');
   });
 
   it('states the multiple without a percentile claim it cannot support', async () => {

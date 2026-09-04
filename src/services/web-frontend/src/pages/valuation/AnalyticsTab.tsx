@@ -22,6 +22,13 @@ interface Benchmark {
   max: number | null;
   company_multiple: number | null;
   percentile: number | null;
+  /**
+   * True when the applied multiple *is* the set's median, so there is no rank
+   * to report. The server answers it — see `Benchmark` in
+   * domain/valuationAnalytics.ts. Optional so a payload from a build that does
+   * not send it reads as it always did.
+   */
+  company_multiple_is_median?: boolean;
 }
 interface AnalyticsResponse {
   company_name: string;
@@ -150,17 +157,41 @@ export function AnalyticsTab() {
                 </div>
               ))}
             </div>
+            {/*
+              * A rank is only worth printing when the applied multiple has one.
+              *
+              * The market approach selects the *median* of the comparable set,
+              * and this panel ranked that median against the same set — which
+              * is 50th on every set of distinct multiples, arithmetically and
+              * whatever the company is. Printed as "sits at the 50th
+              * percentile of the 5 comparables" it reads as a measured
+              * position, and an analyst who moves a comp in or out and sees the
+              * figure not move reads that as the panel being stale.
+              *
+              * Where the two do coincide the honest sentence is the one that
+              * says why. `percentile` is still on the payload for a caller that
+              * plots a marker.
+              */}
             {benchmark.company_multiple !== null && (
               <p className="mt-4 text-sm text-ink-600" data-testid="benchmark-percentile">
                 This company's applied multiple of <strong>{mult(benchmark.company_multiple)}</strong>
-                {benchmark.percentile !== null && (
+                {benchmark.company_multiple_is_median ? (
                   <>
                     {' '}
-                    sits at the <strong>
-                      {ordinal(Math.round(benchmark.percentile * 100))} percentile
-                    </strong>{' '}
-                    of the {benchmark.count} comparables.
+                    is the <strong>median</strong> of the {benchmark.count} comparables — the market
+                    approach selects the median of the set, so it carries no rank within it. The range
+                    above is where the set itself sits.
                   </>
+                ) : (
+                  benchmark.percentile !== null && (
+                    <>
+                      {' '}
+                      sits at the <strong>
+                        {ordinal(Math.round(benchmark.percentile * 100))} percentile
+                      </strong>{' '}
+                      of the {benchmark.count} comparables.
+                    </>
+                  )
                 )}
               </p>
             )}

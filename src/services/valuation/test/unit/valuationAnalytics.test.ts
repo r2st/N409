@@ -109,11 +109,45 @@ describe('buildAnalytics (feature 5)', () => {
       expect(a.trends.market_multiple.change).toBeCloseTo(0, 6);
     });
 
+    /**
+     * The rank the panel drew is arithmetic, not a measurement.
+     *
+     * The engine selects `statistics.median(clean)` and reports that same
+     * `clean` list as `multiples`, so the applied multiple is the set's median
+     * by construction and `percentileRank` returns exactly 0.5 on every set of
+     * distinct values — whatever the company is, and whatever comps are moved
+     * in or out. Printed as "sits at the 50th percentile of the 5 comparables"
+     * that reads as a position somebody measured.
+     */
+    it('says the applied multiple is the set median rather than ranking it', () => {
+      for (const multiples of [skewed, [3, 5, 7, 9], [10], [1.5, 2.5, 9.75, 12.4, 18, 22]]) {
+        const a = buildAnalytics([calc('2026-01-01', { fmv: 3, dlom: 0.2, vol: 0.5, multiples })]);
+        expect(a.benchmark.company_multiple_is_median).toBe(true);
+        // The rank it would have printed, on every one of them.
+        expect(a.benchmark.percentile).toBeCloseTo(0.5, 6);
+      }
+    });
+
+    /**
+     * And where a tie sits at the middle it is not even 0.5: `[4, 4, 4, 9]`
+     * applies 4× — the bottom of its own set — and ranks it at the 38th
+     * percentile, which is the median's rank against its own ties.
+     */
+    it('is still the median on a set with a tie at the middle', () => {
+      const a = buildAnalytics([
+        calc('2026-01-01', { fmv: 3, dlom: 0.2, vol: 0.5, multiples: [4, 4, 4, 9] }),
+      ]);
+      expect(a.benchmark.company_multiple).toBeCloseTo(4, 6);
+      expect(a.benchmark.company_multiple_is_median).toBe(true);
+      expect(a.benchmark.percentile).toBeCloseTo(0.375, 6);
+    });
+
     it('reports nothing when the run has no market approach', () => {
       const a = buildAnalytics([calc('2026-01-01', { fmv: 3, dlom: 0.2, vol: 0.5 })]);
       expect(a.series[0]!.market_multiple).toBeNull();
       expect(a.benchmark.company_multiple).toBeNull();
       expect(a.benchmark.percentile).toBeNull();
+      expect(a.benchmark.company_multiple_is_median).toBe(false);
     });
   });
 

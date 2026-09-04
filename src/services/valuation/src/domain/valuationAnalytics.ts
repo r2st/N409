@@ -40,6 +40,23 @@ export interface Benchmark {
   company_multiple: number | null;
   /** Where company_multiple sits within the comparable set, 0–1. */
   percentile: number | null;
+  /**
+   * Whether `company_multiple` *is* the median of `comparable_multiples`, and
+   * therefore has no rank within the set to report.
+   *
+   * It ordinarily is, by construction: the engine selects
+   * `statistics.median(clean)` and reports that same `clean` list as
+   * `multiples`, so `percentile` above is 0.5 on every set of distinct values —
+   * a figure a reader takes for a measured position and which is arithmetic.
+   * (On a set with a tie at the middle it is not even 0.5: `[4, 4, 4, 9]`
+   * applies 4× and reports the 38th percentile, which is a rank of the median
+   * against its own ties rather than a statement about the company.)
+   *
+   * `percentile` is left alone — it is what it says it is, and a caller
+   * plotting a marker wants it. This is the field that says whether the
+   * sentence "sits at the Nth percentile" is worth printing.
+   */
+  company_multiple_is_median: boolean;
 }
 
 export interface ValuationAnalytics {
@@ -164,16 +181,27 @@ export function buildAnalytics(calcs: CalcInput[]): ValuationAnalytics {
   const latest = calcs[calcs.length - 1];
   const comps = latest ? marketMultiples(latest.results) : [];
   const companyMultiple = latest ? appliedMarketMultiple(latest.results) : null;
+  const benchmarkMedian = quantile(comps, 0.5);
   const benchmark: Benchmark = {
     comparable_multiples: comps,
     count: comps.length,
     min: comps.length ? Math.min(...comps) : null,
     p25: quantile(comps, 0.25),
-    median: quantile(comps, 0.5),
+    median: benchmarkMedian,
     p75: quantile(comps, 0.75),
     max: comps.length ? Math.max(...comps) : null,
     company_multiple: companyMultiple,
     percentile: companyMultiple !== null ? percentileRank(comps, companyMultiple) : null,
+    /*
+     * Compared with a relative tolerance rather than `===`: the applied
+     * multiple is the *engine's* median, computed in Python as `(a + b) / 2`
+     * over an even set, and `quantile` above computes `a + 0.5 * (b − a)`. The
+     * two are the same number and need not be the same double.
+     */
+    company_multiple_is_median:
+      companyMultiple !== null &&
+      benchmarkMedian !== null &&
+      Math.abs(companyMultiple - benchmarkMedian) <= Math.abs(benchmarkMedian) * 1e-9,
   };
 
   return {
