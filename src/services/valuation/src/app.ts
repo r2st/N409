@@ -840,7 +840,38 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    * inside one; see `diskSpace.ts` for why the read is deliberately allowed to
    * throw rather than report a zero.
    */
-  registerDiskMetrics(metricsRegistry, { documents: config.DOCUMENTS_DIR });
+  const diskRoles = { documents: config.DOCUMENTS_DIR };
+  const diskWatched = registerDiskMetrics(metricsRegistry, diskRoles);
+  /*
+   * The return value this function has always offered and nobody read (R428).
+   *
+   * `registerDiskMetrics` drops a role whose path it cannot stat, and says why
+   * in as many words — a misconfigured directory should be a fact about the
+   * boot rather than a gauge that throws on every scrape. It then returns the
+   * roles it did register "so a caller can say so at boot rather than assume",
+   * and this call assumed. A `DOCUMENTS_DIR` that is not there — a volume that
+   * failed to mount, a path changed in a unit file — took both disk rules off
+   * this box silently, and an alert cannot tell a series that is missing from a
+   * filesystem that is fine.
+   *
+   * `error` with `alert: true` because nothing retries it: the gauges are
+   * registered once, at boot, so the byte readings do not come back when the
+   * mount does. The remedy is a person fixing the path and restarting the unit,
+   * which is exactly what the alerting contract in `shared/failure.ts` grades a
+   * permanent failure for. `n409_disk_watched` carries the same fact as a
+   * number for whoever is reading the scrape instead.
+   */
+  const diskUnwatched = Object.keys(diskRoles).filter((role) => !diskWatched.includes(role));
+  if (diskUnwatched.length > 0) {
+    app.log.error(
+      {
+        roles: diskUnwatched,
+        paths: diskUnwatched.map((role) => diskRoles[role as keyof typeof diskRoles]),
+        alert: true,
+      },
+      'disk free space cannot be read for a configured path — DiskFillingUp and DiskNearlyFull are watching nothing for it until this process is restarted',
+    );
+  }
   metricsRegistry.gauge(
     'http_requests_in_flight',
     'Requests currently being served',

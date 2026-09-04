@@ -412,6 +412,27 @@ groups:
           summary: 'the {{ $labels.mount }} filesystem is over 95% full — writes are about to start failing'
           runbook: 'PostgreSQL refusing writes and uploads failing with ENOSPC are the next symptoms, and both read as an application outage. Free space before diagnosing anything else.'
 
+      # And whether the two rules above are watching anything at all.
+      #
+      # `registerDiskMetrics` drops a role whose path it cannot stat at boot,
+      # deliberately — a path that is wrong should be a fact about the boot
+      # rather than a gauge that throws on every scrape — and until R428 that
+      # drop published nothing. Both rules above are gauge-backed, so a
+      # `DOCUMENTS_DIR` that was not there when the unit started took them off
+      # this box for the life of the process and looked, from here, exactly like
+      # a volume with plenty of room.
+      #
+      # `page` and not `ticket`: the condition it hides is `DiskNearlyFull`,
+      # which is itself a page, and the reading does not come back on its own —
+      # the byte gauges are registered once, so only a restart re-registers them.
+      - alert: DiskUnwatched
+        expr: n409_disk_watched == 0
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: 'free space is not being reported for the {{ $labels.mount }} path — DiskFillingUp and DiskNearlyFull are matching nothing for it'
+          runbook: 'journalctl -u n409-valuation | grep "disk free space cannot be read" — the line names the path. Check the mount and DOCUMENTS_DIR, then restart the unit: the gauges are registered at boot and do not come back on their own'
+
   - name: n409-http
     rules:
       # Rate, not count: "forty 5xx" means nothing without knowing whether that

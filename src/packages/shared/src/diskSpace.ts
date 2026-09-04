@@ -99,6 +99,48 @@ export function registerDiskMetrics(
       return false;
     }
   });
+
+  /*
+   * Whether each requested role is being watched at all (R428, methodology M11).
+   *
+   * The filter above is the right decision and it had no witness. A path that
+   * could not be stat'ed at boot registered *nothing*, for ever — and an absent
+   * series is what a healthy system looks like, so `DiskFillingUp` and
+   * `DiskNearlyFull` went from watching this box's one volume to matching
+   * nothing, with no line, no counter and no way to tell the two apart from
+   * outside. This function returns the roles it registered so "a caller can say
+   * so at boot rather than assume", and its one caller discarded the value.
+   *
+   * The post-boot half was already covered and is the reason this half was easy
+   * to miss: a volume that goes away *after* registration makes the collect
+   * throw, `MetricsRegistry.render` counts it as
+   * `n409_metric_collect_failures_total` and `MetricCollectFailing` says so.
+   * Boot is the moment that path does not run — and boot is precisely when a
+   * volume fails to mount.
+   *
+   * So the absence becomes a value. Minted for every *requested* role, which is
+   * the rule R313 wrote for `UPSTREAM_CIRCUITS` and R376 for
+   * `log_alert_lines_total`: a series that only appears once things are working
+   * cannot report that they are not. Sampled rather than fixed, so a role that
+   * was dropped at boot and whose mount has since come back reads 1 again —
+   * accurate, and still worth acting on, because the byte gauges below were
+   * never registered for it and only a restart brings them back.
+   */
+  registry.gauge(
+    'n409_disk_watched',
+    '1 while free space is being reported for a named path; 0 when it could not be read and both disk rules are matching nothing for that role',
+    () =>
+      roles.map((role) => {
+        try {
+          readDiskSpace(paths[role]!, options);
+          return { value: readable.includes(role) ? 1 : 0, labels: { mount: role } };
+        } catch {
+          return { value: 0, labels: { mount: role } };
+        }
+      }),
+    ['mount'],
+  );
+
   if (readable.length === 0) return [];
 
   const reading = (pick: (d: DiskSpace) => number) => () =>
