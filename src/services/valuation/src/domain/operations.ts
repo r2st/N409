@@ -27,6 +27,29 @@ export const OPERATIONS_EVENT_TYPES = {
    * back out of the record.
    */
   commentRemoved: 'comment_removed',
+  /**
+   * The middle verb of the same three (R416, methodology M3).
+   *
+   * R396 closed the delete half of `comment_added` on the argument that a hard
+   * `DELETE` leaves the spine naming a `comment_id` that resolves to nothing,
+   * with no line saying the comment was withdrawn or by whom. An *edit* is the
+   * same act with the row left in place: `PATCH /comments/:commentId` replaces
+   * up to twenty thousand characters of body and wrote nothing at all, so a
+   * thread the client or an auditor has already read could be rewritten and
+   * the trail still showed one `comment_added`, at the original time, with the
+   * new text beside it.
+   *
+   * `notice` rather than `info`, like the removal and for its reason: posting
+   * is the ordinary use of the feature, and going back over what was said is
+   * somebody changing the record.
+   *
+   * The payload names the comment, its author and its kind — the same identity
+   * `comment_removed` carries — and which fields moved. Not the text, either
+   * old or new: `comment_added` has never carried a body and the spine is not
+   * where a superseded one is restored. `pinned` is the exception and rides
+   * with its from/to, being a boolean with no content in it.
+   */
+  commentEdited: 'comment_edited',
   emailReceived: 'email_received',
   cloned: 'valuation_cloned',
 } as const;

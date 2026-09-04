@@ -158,27 +158,90 @@ export async function createComment(
   );
 }
 
+/**
+ * Rewrite a comment, and say on the spine that it was rewritten (R416, M3).
+ *
+ * Three verbs act on a comment and two of them reached the audit trail.
+ * `createComment` writes `comment_added`; R396 gave the hard `DELETE` its
+ * `comment_removed`, on the argument that afterwards the spine names a
+ * `comment_id` resolving to no row and does not say the comment was withdrawn
+ * or by whom. This is the same act with the row left in place, and it wrote
+ * nothing: a `body` of up to twenty thousand characters was replaced and the
+ * trail went on showing one `comment_added` at the original time, with the new
+ * text sitting beside it.
+ *
+ * Which is not confined to an analyst's private notes. `kind` decides who sees
+ * the thread — the client reads `chat`, and the auditor portal is served the
+ * same rows — so a message somebody has already acted on could be silently
+ * replaced by a different one. R396's own sentence covers it: an editor "could
+ * leave a trail indistinguishable from one where the note is simply not in the
+ * page the reader is holding".
+ *
+ * A save that changes nothing is not an edit. The row is read under the lock
+ * the UPDATE takes and the fields are compared first, so a PATCH re-sending the
+ * body it already holds moves neither `updated_at` nor the trail — the reading
+ * `archiveTemplate` and `setContactSubmissionStatus` take, and the one that
+ * keeps a form which re-submits on blur from filling the spine.
+ *
+ * The event carries the comment's identity and which fields moved, and not the
+ * text: `comment_added` has never carried a body, and the spine is not where a
+ * superseded one is restored. `pinned` rides with its from/to, being a boolean
+ * with nothing in it to withhold.
+ *
+ * Null when the row is gone — deleted between the caller's read and this write.
+ */
 export async function updateComment(
   pool: pg.Pool,
   id: string,
   fields: { body?: string; pinned?: boolean },
+  actor: EventActor,
 ): Promise<CommentRow | null> {
-  const sets: string[] = ['updated_at = now()'];
-  const params: unknown[] = [];
-  if (fields.body !== undefined) {
-    params.push(fields.body);
-    sets.push(`body = $${params.length}`);
-  }
-  if (fields.pinned !== undefined) {
-    params.push(fields.pinned);
-    sets.push(`pinned = $${params.length}`);
-  }
-  params.push(id);
-  const { rows } = await pool.query<CommentRow>(
-    `UPDATE valuation_comments SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
-    params,
-  );
-  return rows[0] ?? null;
+  return withTransaction(pool, async (client) => {
+    const { rows: locked } = await client.query<CommentRow>(
+      'SELECT * FROM valuation_comments WHERE id = $1 FOR UPDATE',
+      [id],
+    );
+    const before = locked[0];
+    if (!before) return null;
+
+    const sets: string[] = ['updated_at = now()'];
+    const params: unknown[] = [];
+    const changed: string[] = [];
+    if (fields.body !== undefined && fields.body !== before.body) {
+      params.push(fields.body);
+      sets.push(`body = $${params.length}`);
+      changed.push('body');
+    }
+    if (fields.pinned !== undefined && fields.pinned !== before.pinned) {
+      params.push(fields.pinned);
+      sets.push(`pinned = $${params.length}`);
+      changed.push('pinned');
+    }
+    if (changed.length === 0) return before;
+
+    params.push(id);
+    const { rows } = await client.query<CommentRow>(
+      `UPDATE valuation_comments SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params,
+    );
+    const after = rows[0]!;
+    await recordEvent(client, {
+      valuationId: before.valuation_id,
+      type: OPERATIONS_EVENT_TYPES.commentEdited,
+      actor,
+      payload: {
+        comment_id: before.id,
+        kind: before.kind,
+        author_id: before.author_id,
+        posted_at: before.created_at,
+        fields: changed,
+        ...(changed.includes('pinned')
+          ? { changes: { pinned: { from: before.pinned, to: after.pinned } } }
+          : {}),
+      },
+    });
+    return after;
+  });
 }
 
 /**

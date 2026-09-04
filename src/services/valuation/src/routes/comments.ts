@@ -175,7 +175,7 @@ export function registerCommentRoutes(
     if (parsed.data.pinned !== undefined && comment.kind !== 'note')
       throw problems.unprocessable('Only sticky notes can be pinned');
 
-    const updated = await updateComment(deps.pool, commentId, parsed.data);
+    const updated = await updateComment(deps.pool, commentId, parsed.data, actorFor(principal));
     // The same frame the post above sends, for the same reason (R396, M3).
     // Three doors *create* a comment and all three broadcast; the two that
     // change one after the fact broadcast from nowhere, and the thread is the
