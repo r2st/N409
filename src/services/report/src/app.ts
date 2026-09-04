@@ -8,6 +8,7 @@ import {
   problems,
   MetricsRegistry,
   registerHealth,
+  registerReadinessMetrics,
   registerHttpMetrics,
   registerInternalAuth,
   registerMetricsEndpoint,
@@ -280,7 +281,10 @@ export function buildApp(): FastifyInstance {
   // holds no connections, so the whole of "can it do its job" is whether the
   // four embedded faces are readable; see verifyFontAssets for why that is a
   // real deploy failure rather than a hypothetical one.
-  registerHealth(app, { service: 'report', checks: { fonts: async () => verifyFontAssets() } });
+  const readiness = registerHealth(app, {
+    service: 'report',
+    checks: { fonts: async () => verifyFontAssets() },
+  });
   // Let a render that is already running finish before `close()` takes its
   // socket away — Fastify 5 does not, see drain.ts. A render in flight is the
   // realistic reason this service is slow to close, and until the drain existed
@@ -300,6 +304,12 @@ export function buildApp(): FastifyInstance {
   // seconds, leaving nothing in this process's own output to say it happened.
   // No-op off Linux and on a cgroup v1 host — see cgroupMemory.ts.
   registerCgroupMemoryMetrics(metricsRegistry);
+  // The readiness verdict, on the endpoint the scraper reads. `fonts` is this
+  // unit's only gating check and it is the one that decides whether a 409A PDF
+  // renders at all — a partial rsync that drops the font assets leaves a
+  // process answering `/metrics` perfectly while `/ready` says it cannot serve,
+  // and nothing polls `/ready` between deploys.
+  registerReadinessMetrics(metricsRegistry, readiness);
   metricsRegistry.gauge(
     'http_requests_in_flight',
     'Requests currently being served — concurrent PDF renders, in practice',

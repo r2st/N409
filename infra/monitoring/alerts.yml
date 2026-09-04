@@ -99,6 +99,71 @@ groups:
           summary: '{{ $labels.job }} has not answered a scrape for two minutes'
           runbook: 'systemctl status n409-<unit>; journalctl -u n409-<unit> -n 200'
 
+      # A service that has already said it cannot serve (R405, methodology M11).
+      #
+      # `ServiceDown` above fires on a *missed scrape*, which is the only thing
+      # `up` can say. It is not the same question as this one and does not cover
+      # it: `/metrics` is rendered out of process memory and touches no
+      # dependency, so a unit whose Postgres has gone, whose font assets went
+      # missing in a partial rsync, or whose startup gate never opened answers
+      # every scrape in full, with a complete set of healthy-looking numbers.
+      #
+      # Its own verdict said otherwise the whole time, and reached nobody:
+      # `/ready` is polled once per restart by `deploy.sh` and by nothing at
+      # all afterwards — there is no load balancer on this box, and this file's
+      # scrape configuration reads `/metrics` and only `/metrics`. So the
+      # gating/optional split, the per-check detail and the word `degraded`
+      # that shared/health.ts argues for at length were, between deploys, a
+      # claim made to an empty room.
+      #
+      # `service_ready` is absent until the first verdict exists, which is what
+      # "nothing has looked yet" has to read as; `ReadinessVerdictStale` below
+      # is what stops that being permanent.
+      - alert: ServiceNotReady
+        expr: service_ready == 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.job }} says it cannot serve — a required dependency is failing its readiness check'
+          runbook: 'curl -sH "X-Internal-Token: $INTERNAL_SERVICE_TOKEN" localhost:<port>/ready — the token-authenticated body names the reason; service_dependency_up{required="true"} names which check'
+
+      # Which dependency, and the half of the split that must not page.
+      #
+      # An optional dependency is one this service is designed to serve without
+      # — the AI and engine units, whose own boot gate refuses to require them
+      # because "refusing to boot would convert a degraded feature into a total
+      # outage". Nothing is on fire when one is down, and every feature that
+      # needs it is unavailable, which is a ticket and not a page. It was
+      # neither: `degraded` was a word in a JSON body nothing polled, so a
+      # provider key that lapsed on a Friday was a week of silently missing AI
+      # features.
+      - alert: OptionalDependencyDown
+        expr: service_dependency_up{required="false"} == 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} is running degraded — the optional dependency {{ $labels.dependency }} is unavailable'
+          runbook: 'journalctl -u n409-<unit> --grep="optional dependency unavailable" — the line carries every check and its scrubbed reason'
+
+      # And the reading that would otherwise be indistinguishable from health.
+      #
+      # `service_ready` publishes the *last* verdict, because a gauge is sampled
+      # synchronously inside the scrape and these checks are network-bound: what
+      # a scrape can do is publish what is known and ask for the next reading to
+      # be current. A verdict frozen at the last successful run therefore reads
+      # exactly like a fresh one — the same failure this whole group exists
+      # against, one level up — so the age is published beside it and watched.
+      # A refresh that is wedged rather than failing is the case: the fan-out is
+      # bounded by CHECK_TIMEOUT_MS per check, so an age past a few minutes is
+      # not slowness.
+      - alert: ReadinessVerdictStale
+        expr: service_readiness_age_seconds > 300
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} has not recomputed its readiness verdict in five minutes — service_ready is reporting stale state'
+          runbook: 'curl -sf localhost:<port>/ready — if that answers and the age stays high, the scrape-driven refresh in registerReadinessMetrics is not completing'
+
       # A process that keeps coming back young is crash-looping, and the crash
       # handler's own log line (shared/crash.ts) is on the stderr systemd is
       # restarting. Nothing else here would notice: every counter resets with

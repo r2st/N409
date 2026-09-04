@@ -11,6 +11,7 @@ import {
   MetricsRegistry,
   problems,
   registerHealth,
+  registerReadinessMetrics,
   registerHttpMetrics,
   registerMetricsEndpoint,
   registerCgroupMemoryMetrics,
@@ -551,7 +552,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // without the engine, and no pipeline runs without the AI service. Probing
   // only Postgres reported ready while every calculation route was 502-ing.
   // Each probe is short-timeout and unretried so /ready itself stays fast.
-  registerHealth(app, {
+  const readiness = registerHealth(app, {
     service: 'valuation',
     checks: {
       // Red until `index.ts` says the boot finished. Everything between the
@@ -898,6 +899,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // And what the hub is *refusing*, which the gauge above cannot say: the
   // per-user ceiling is met at twelve, so the ordinary refusal happens with
   // that gauge reading 1% of `maxTotal`. See `observability/realtimeStreams.ts`.
+  // The readiness verdict, which until now was a claim made to nobody: `/ready`
+  // is polled once per restart by `deploy.sh` and by nothing afterwards — there
+  // is no load balancer on this box — while `/metrics` is served out of process
+  // memory and touches no dependency. So a valuation tier whose Postgres has
+  // gone answers every scrape in full, with a complete set of healthy-looking
+  // numbers, and `ServiceDown` (which fires on a *missed* scrape) never moves.
+  // See `registerReadinessMetrics`.
+  registerReadinessMetrics(metricsRegistry, readiness);
   registerRealtimeStreamMetrics(metricsRegistry, () => hub.ceilings());
   // Where PDF renders actually happen. `mode="local"` with a failure reason is
   // the signal that the offload has stopped working and this process is back to

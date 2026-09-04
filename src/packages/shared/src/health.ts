@@ -94,6 +94,34 @@ interface ReadinessSnapshot {
   detail: Record<string, string>;
   /** Optional checks that failed. Never affects `healthy`; always reported. */
   degraded: string[];
+  /** Names of the checks that decide the status code. */
+  gating: string[];
+}
+
+/** The last readiness run this process completed, and when it completed. */
+export interface ReadinessVerdict extends ReadinessSnapshot {
+  /** `Date.now()` at the moment the run finished. */
+  at: number;
+}
+
+/**
+ * The readiness state of one app, for a caller that is not an HTTP probe.
+ *
+ * Returned by {@link registerHealth} so the verdict can be published on the
+ * scrape endpoint — see {@link registerReadinessMetrics} for why that is not
+ * the same thing as serving it on `/ready`.
+ */
+export interface ReadinessHandle {
+  /** The last verdict, or `null` if nothing has probed this process yet. */
+  verdict(): ReadinessVerdict | null;
+  /**
+   * Recompute in the background when the last verdict is older than `maxAgeMs`.
+   *
+   * Never throws and never returns the run: the caller is a synchronous
+   * `collect`, so what it can do is ask for the *next* reading to be fresh.
+   * Concurrent calls collapse onto the run already in flight.
+   */
+  refreshIfOlderThan(maxAgeMs: number): void;
 }
 
 /** The same snapshot with every failure flattened to `failed`. */
@@ -209,7 +237,7 @@ export function registerHealth(
      */
     checkTimeoutsMs?: Record<string, number>;
   },
-): void {
+): ReadinessHandle {
   const startedAt = Date.now();
   const build = buildInfo();
   const cacheMs = opts.readyCacheMs ?? READY_CACHE_MS;
@@ -291,7 +319,49 @@ export function registerHealth(
           : 'readiness check failed — reporting unavailable',
       );
     }
-    return { healthy, detail, degraded };
+    const snapshot: ReadinessSnapshot = { healthy, detail, degraded, gating: [...gating] };
+    // Recorded here rather than at the `/ready` handler, so a verdict computed
+    // by a scrape-driven refresh counts the same as one a probe asked for.
+    last = { ...snapshot, at: Date.now() };
+    return snapshot;
+  };
+
+  /*
+   * The verdict, kept where something other than an HTTP probe can read it
+   * (R405, methodology M11).
+   *
+   * Everything above computes a claim this process makes about whether it can
+   * serve — and on this estate the only thing that ever asks for it is
+   * `deploy.sh`, which polls `/ready` once per restart and then never again.
+   * There is no load balancer and no Kubernetes on the box: ports 3001–3004 are
+   * firewalled and :3000 is a plain Caddy reverse proxy with no active health
+   * check. So between deploys the endpoint is answered by nobody, and a gating
+   * check that starts failing afterwards — Postgres gone, the font assets
+   * missing after a partial rsync, the startup gate never opened — is a 503 in
+   * a tree with nobody around to hear it.
+   *
+   * `refreshIfOlderThan` is what lets the scraper be the thing that asks. It
+   * cannot be `collect`'s own work: a gauge is sampled synchronously inside the
+   * scrape and these checks are network-bound, so what a scrape can do is
+   * publish the last verdict and ask for the next one to be current.
+   */
+  let last: ReadinessVerdict | null = null;
+  let refreshing = false;
+  const handle: ReadinessHandle = {
+    verdict: () => last,
+    refreshIfOlderThan: (maxAgeMs) => {
+      if (refreshing) return;
+      if (last !== null && Date.now() - last.at < maxAgeMs) return;
+      refreshing = true;
+      // `runChecks` never rejects — a failed dependency is a result — so the
+      // only thing left to contain is a throw from the logger itself.
+      void Promise.resolve()
+        .then(() => runChecks(app.log))
+        .catch(() => undefined)
+        .finally(() => {
+          refreshing = false;
+        });
+    },
   };
 
   app.get('/ready', async (req, reply) => {
@@ -309,6 +379,107 @@ export function registerHealth(
       build_sha: build.sha,
     });
   });
+
+  return handle;
+}
+
+/**
+ * How stale a published verdict may be before a scrape asks for a fresh one.
+ *
+ * Sized against the scrape interval rather than against {@link READY_CACHE_MS}:
+ * the coalescing window exists to stop a *burst of probes* costing a fan-out
+ * each, and there is no burst here — one scraper, on the box, on its own
+ * schedule. 20s is under any sane scrape interval, so every scrape gets a
+ * verdict computed since the previous one, and over it by enough that two
+ * scrapers pointed at the same unit do not double the fan-out.
+ */
+export const READINESS_METRIC_MAX_AGE_MS = 20_000;
+
+/** The slice of `MetricsRegistry` this file needs; see the note on the import. */
+interface GaugeRegistrar {
+  gauge(
+    name: string,
+    help: string,
+    collect: () => number | readonly { value: number; labels?: Record<string, string> }[],
+    labelNames?: readonly string[],
+  ): void;
+}
+
+/**
+ * Publish the readiness verdict on the scrape endpoint (R405, methodology M11).
+ *
+ * `/ready` is a claim about whether this instance can serve, and on this estate
+ * it is made to nobody: `deploy.sh` polls it once per restart and nothing polls
+ * it afterwards — there is no load balancer, and `infra/monitoring/alerts.yml`
+ * describes a scraper that reads `/metrics` and nothing else. So the whole
+ * readiness apparatus — the gating/optional split, the per-check detail, the
+ * `degraded` word this file argues for at length — reached the journal and the
+ * deploy log and no alerting rule at all.
+ *
+ * What that costs is not hypothetical. `ServiceDown` is the availability rule,
+ * and it fires on `up == 0` — a *missed scrape*. `/metrics` is served out of
+ * process memory and touches no dependency, so a valuation service whose
+ * Postgres has gone answers every scrape in full, with a complete set of
+ * healthy-looking numbers, while `/ready` has been saying 503 for a week. The
+ * first symptom anybody sees is a user's 500.
+ *
+ * Three series, and the third is load-bearing:
+ *
+ *  * `service_ready` — the gating verdict, 1 or 0.
+ *  * `service_dependency_up{dependency,required}` — one reading per check, so
+ *    an alert can name the thing that is down rather than the unit it is under,
+ *    and `required` keeps a degraded optional dependency from paging.
+ *  * `service_readiness_age_seconds` — how old that verdict is. Without it a
+ *    verdict frozen at the last successful run reads exactly like a current
+ *    one, which is the failure this whole function exists against, one level
+ *    up.
+ *
+ * Nothing is emitted until the first verdict exists: a `service_ready` of 0
+ * during boot is the process saying it cannot serve, which is true and would
+ * fire on every restart, and a 1 would be a claim made before anything was
+ * checked. An absent series is what "nothing has looked yet" reads as, and
+ * `service_readiness_age_seconds` is what stops it staying that way unnoticed.
+ */
+export function registerReadinessMetrics(
+  metrics: GaugeRegistrar,
+  readiness: ReadinessHandle,
+  opts: { maxAgeMs?: number } = {},
+): void {
+  const maxAgeMs = opts.maxAgeMs ?? READINESS_METRIC_MAX_AGE_MS;
+  // Asked for once per scrape, on whichever gauge renders first — the refresh
+  // is idempotent and collapses onto any run already in flight.
+  const sample = (): ReadinessVerdict | null => {
+    readiness.refreshIfOlderThan(maxAgeMs);
+    return readiness.verdict();
+  };
+
+  metrics.gauge('service_ready', 'This instance says it can serve: every gating readiness check passed', () => {
+    const v = sample();
+    return v === null ? [] : [{ value: v.healthy ? 1 : 0 }];
+  });
+
+  metrics.gauge(
+    'service_dependency_up',
+    'One readiness check, 1 when it passed; `required` is 0 for a dependency this service is designed to serve without',
+    () => {
+      const v = sample();
+      if (v === null) return [];
+      return Object.entries(v.detail).map(([dependency, status]) => ({
+        value: status === CHECK_OK ? 1 : 0,
+        labels: { dependency, required: v.gating.includes(dependency) ? 'true' : 'false' },
+      }));
+    },
+    ['dependency', 'required'],
+  );
+
+  metrics.gauge(
+    'service_readiness_age_seconds',
+    'Seconds since the published readiness verdict was computed',
+    () => {
+      const v = sample();
+      return v === null ? [] : [{ value: (Date.now() - v.at) / 1000 }];
+    },
+  );
 }
 
 /**

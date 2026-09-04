@@ -69,6 +69,7 @@ export {
 } from './securityHeaders.js';
 export {
   registerHealth,
+  registerReadinessMetrics,
   probeReady,
   CHECK_FAILED,
   CHECK_OK,
@@ -76,7 +77,10 @@ export {
   READY_CACHE_MS,
   checkTimedOut,
   withTimeout,
+  READINESS_METRIC_MAX_AGE_MS,
   type ReadinessCheck,
+  type ReadinessHandle,
+  type ReadinessVerdict,
 } from './health.js';
 export {
   INTERNAL_PUBLIC_PATHS,

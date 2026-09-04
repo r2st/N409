@@ -15,6 +15,7 @@ import {
   requestIdFromHeaders,
   MetricsRegistry,
   registerHealth,
+  registerReadinessMetrics,
   registerHttpMetrics,
   registerMetricsEndpoint,
   registerCgroupMemoryMetrics,
@@ -508,7 +509,7 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
   if (!opts.pool && readinessPool) app.addHook('onClose', async () => readinessPool.end());
 
   // When the SPA build is present it owns / — keep only /health + /ready here.
-  registerHealth(app, {
+  const readiness = registerHealth(app, {
     service: 'web',
     rootRoute: !hasStatic,
     checks: {
@@ -572,6 +573,12 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     'Requests currently being served',
     () => requestDrain.inFlight,
   );
+  // The readiness verdict, on the endpoint the scraper actually reads. This is
+  // the origin Caddy proxies the public to, and its gating checks are Postgres
+  // and the valuation tier — neither of which `/metrics` touches, so this
+  // process answers every scrape in full while `/ready` says `unavailable`.
+  // Nothing polls `/ready` between deploys. See `registerReadinessMetrics`.
+  registerReadinessMetrics(metricsRegistry, readiness);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'web' });
 
   void app.register(httpProxy, {
