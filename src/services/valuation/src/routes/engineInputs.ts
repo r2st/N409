@@ -40,6 +40,15 @@ import { invalidBody } from '../domain/validationProblem.js';
 // a hostile caller.
 const nonNeg = boundedNonNegative();
 const pos = boundedPositive();
+
+/**
+ * The engine's explicit-forecast ceiling — `projection.MAX_FORECAST_YEARS`.
+ *
+ * Restated here rather than imported because the constant lives in the Python
+ * tier; `validate.py` refuses a longer `free_cash_flows` with a field-addressed
+ * 422, so this is the number a payload has to clear to be computable at all.
+ */
+const MAX_FORECAST_YEARS = 100;
 const DateStr = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
@@ -167,8 +176,30 @@ export const EngineInputsBody = z
     // (the report cites it); only free_cash_flows drives income_dcf().
     income: z
       .object({
-        free_cash_flows: z.array(boundedSigned()).max(30).nullable().optional(),
-        revenues: z.array(nonNeg).max(30).nullable().optional(),
+        /*
+         * The horizon, at the length the *other* two doors onto this cell use
+         * (R406, methodology M6).
+         *
+         * This was 30, and the engine's bound is 100
+         * (`projection.MAX_FORECAST_YEARS`, which exists because a float `**`
+         * over a longer horizon overflows rather than saturating). Between the
+         * two sits the projection route, whose `years` runs to 100 and whose
+         * adoption writes `income.free_cash_flows = run.free_cash_flows`
+         * straight through `applyEngineInputs` — so a forty-year run was
+         * adopted into a document this schema then refused, and the next save
+         * of the model came back 400 on an array the analyst had not touched,
+         * with no way to correct it from that form.
+         *
+         * That is the shape the adoption handler already names for
+         * `terminal_metric`: "a value into `engine_inputs` by the one path that
+         * did not check it — and the 422 then arrived on whoever next pressed
+         * Calculate, naming a field they had not touched." The length is the
+         * same failure and was not covered. Raised rather than truncating the
+         * adoption, because a silently shortened forecast is a different
+         * valuation.
+         */
+        free_cash_flows: z.array(boundedSigned()).max(MAX_FORECAST_YEARS).nullable().optional(),
+        revenues: z.array(nonNeg).max(MAX_FORECAST_YEARS).nullable().optional(),
         discount_rate: z.number().positive().max(1).nullable().optional(),
         /*
          * Negative is a perpetuity that shrinks, not a typo (R406, M6).

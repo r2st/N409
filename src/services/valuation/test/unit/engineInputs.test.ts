@@ -134,6 +134,40 @@ describe('EngineInputsBody', () => {
   });
 
   /*
+   * The horizon (R406). The projection route runs to 100 years and its adoption
+   * writes `income.free_cash_flows` straight through `applyEngineInputs`, so a
+   * cap of 30 here refused an array the platform had written itself — and the
+   * next save of the model came back 400 on a field the analyst never touched.
+   */
+  describe('forecast length', () => {
+    const flows = (n: number) => Array.from({ length: n }, (_, i) => 1000 + i);
+
+    it('accepts a forecast as long as the engine will price', () => {
+      // `projection.MAX_FORECAST_YEARS` — the length a projection run can
+      // produce and therefore the length an adoption can store.
+      const res = EngineInputsBody.safeParse({ income: { free_cash_flows: flows(100) } });
+      expect(res.success).toBe(true);
+    });
+
+    it('accepts a forty-year run, which the old cap of 30 refused', () => {
+      expect(
+        EngineInputsBody.safeParse({
+          income: { free_cash_flows: flows(40), revenues: flows(40) },
+        }).success,
+      ).toBe(true);
+    });
+
+    it('still refuses a horizon past the engine’s own bound', () => {
+      // Past 100 the engine answers `out_of_range` on the same field, so
+      // storing it is storing a document that cannot be computed.
+      expect(
+        EngineInputsBody.safeParse({ income: { free_cash_flows: flows(101) } }).success,
+      ).toBe(false);
+      expect(EngineInputsBody.safeParse({ income: { revenues: flows(101) } }).success).toBe(false);
+    });
+  });
+
+  /*
    * A perpetuity that shrinks (R406). `min(0)` here was the only statement in
    * the estate that a terminal growth rate cannot be negative: the engine
    * floors it at -1 and its own remedy text says "-2% is -0.02", the overwrites
