@@ -171,6 +171,7 @@ import { registerSignInMetrics } from './observability/signInOutcomes.js';
 import { registerIntegrationCallbackMetrics } from './observability/integrationCallbacks.js';
 import { registerApiTokenAuthMetrics } from './observability/apiTokenAuth.js';
 import { registerPartnerApiGuardMetrics } from './observability/partnerApiGuard.js';
+import { registerBackupMetrics } from './observability/backups.js';
 import { registerRealtimeStreamMetrics } from './observability/realtimeStreams.js';
 import { registerRequestThrottleMetrics } from './observability/requestThrottle.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
@@ -840,6 +841,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    * inside one; see `diskSpace.ts` for why the read is deliberately allowed to
    * throw rather than report a zero.
    */
+  /*
+   * Whether the nightly dump ran — the one failure nothing on this box reported
+   * (R428). R376 left it written down: a oneshot is not a scrape target, so
+   * `up` says nothing about the backup units and a fortnight of failed dumps
+   * matched no rule. Read from the artefacts rather than a unit's exit status,
+   * so a timer that was never enabled presents the same way as a script that
+   * died. See `observability/backups.ts`.
+   */
+  registerBackupMetrics(metricsRegistry, config.BACKUP_ROOT);
   const diskRoles = { documents: config.DOCUMENTS_DIR };
   const diskWatched = registerDiskMetrics(metricsRegistry, diskRoles);
   /*

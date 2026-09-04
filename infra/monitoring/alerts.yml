@@ -433,6 +433,65 @@ groups:
           summary: 'free space is not being reported for the {{ $labels.mount }} path — DiskFillingUp and DiskNearlyFull are matching nothing for it'
           runbook: 'journalctl -u n409-valuation | grep "disk free space cannot be read" — the line names the path. Check the mount and DOCUMENTS_DIR, then restart the unit: the gauges are registered at boot and do not come back on their own'
 
+      # ── Backups (R428, methodology M11) ──────────────────────────────────
+      #
+      # R376 left this written down and open: "the two oneshot backup units — no
+      # `OnFailure=` anywhere in the estate, and a oneshot is not a scrape
+      # target, so `up` says nothing and a fortnight of failed dumps matches no
+      # rule". `pg-backup.sh` verifies the dump's table of contents, refuses to
+      # rotate in one that looks like the wrong database and writes a checksum
+      # beside it — all of it into a journal on a box nobody logs into.
+      #
+      # Read from the *artefacts*, by the valuation unit, which is what makes
+      # these cover more than an `OnFailure=` handler would: a timer that was
+      # never enabled, a script that died at 02:00, and a volume that filled so
+      # the dump could not land all present identically here, as an age that
+      # stops moving.
+      - alert: BackupStale
+        expr: n409_backup_age_seconds{set="daily"} > 129600
+        for: 30m
+        labels: { severity: page }
+        annotations:
+          summary: 'the newest daily dump is over 36 hours old — the nightly backup has missed at least one run'
+          runbook: 'systemctl status n409-backup.timer n409-backup.service; journalctl -u n409-backup --since -3d. A disabled timer and a failing script look the same from here, which is the point'
+
+      # Zero rather than an age, because there is no age that means "never" —
+      # `n409_backup_age_seconds` publishes nothing for an empty set on purpose,
+      # and a rule on a series that is absent is a rule that cannot fire. This
+      # is a fresh host whose first backup has not run, or a prune that took
+      # everything.
+      - alert: BackupsMissing
+        expr: n409_backup_dumps{set="daily"} == 0
+        for: 1h
+        labels: { severity: page }
+        annotations:
+          summary: 'the {{ $labels.set }} backup set holds no dump at all'
+          runbook: 'ls -la $BACKUP_ROOT/daily. If this is a new host, run infra/backup/pg-backup.sh by hand and enable n409-backup.timer'
+
+      # A weekly set that stops moving while the daily set is healthy is
+      # `pg-backup.sh`'s Sunday promotion failing on its own — the branch that
+      # runs one day in seven and is therefore the one nothing exercises.
+      # Ten days, so a single missed Sunday is caught and a clock skew is not.
+      - alert: WeeklyBackupStale
+        expr: n409_backup_age_seconds{set="weekly"} > 864000
+        for: 2h
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the newest weekly dump is over ten days old — the Sunday promotion has not run'
+          runbook: 'journalctl -u n409-backup --since -10d | grep "promoted to weekly"; check WEEKLY_DOW and the weekly directory'
+
+      # And whether any of the three above is watching anything. Same argument
+      # as `DiskUnwatched` one rule up, and the same lesson: every backup rule
+      # here is gauge-backed, so a BACKUP_ROOT that is unset or unreadable by
+      # the valuation user reads exactly like a healthy backup regime.
+      - alert: BackupUnwatched
+        expr: n409_backup_watched == 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.set }} backup directory cannot be read — BackupStale and BackupsMissing are matching nothing'
+          runbook: 'Check BACKUP_ROOT in /opt/N409/.env against the Environment= line in infra/backup/n409-backup.service, and that the n409 user can read it'
+
   - name: n409-http
     rules:
       # Rate, not count: "forty 5xx" means nothing without knowing whether that

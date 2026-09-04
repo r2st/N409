@@ -108,6 +108,18 @@ const Env = z.object({
   // dev where the services also skip the check.
   INTERNAL_SERVICE_TOKEN: z.string().optional(),
   DOCUMENTS_DIR: z.string().min(1).default('./data/documents'),
+  /*
+   * Where `infra/backup/pg-backup.sh` writes its dumps, read — never written —
+   * so `/metrics` can say whether the nightly backup actually ran (R428).
+   *
+   * The same literal the two backup units set, because the alternative is the
+   * config drift this estate keeps rediscovering: a value that lives only on
+   * the box, in two files, that nothing compares. Empty switches the gauges to
+   * `n409_backup_watched 0`, which is a deployment saying "backups are not
+   * here" out loud rather than by being silent — see `observability/backups.ts`
+   * for why absence is never the answer for a gauge-backed rule.
+   */
+  BACKUP_ROOT: z.string().default('/opt/n409-backups'),
   // Encrypt document blobs at rest with AES-256-GCM (audit B-5 P1). 32 bytes as
   // 64 hex chars or base64; unset leaves blobs in the clear (dev). Legacy
   // plaintext blobs are still readable after the key is enabled.

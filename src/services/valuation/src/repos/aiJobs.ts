@@ -239,6 +239,45 @@ export async function listAiJobs(
   return { jobs: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+/** The seven fields the package explorer draws for a run — and nothing else. */
+export type AiJobSummaryRow = Pick<
+  AiJobRow,
+  'id' | 'pipeline' | 'status' | 'model' | 'error' | 'latency_ms' | 'created_at'
+>;
+
+/**
+ * The same window as {@link listAiJobs}, without either document (R417, M8).
+ *
+ * `listCalculationSummaries` was written for this exact argument one table over,
+ * and the package explorer calls the two side by side: it narrowed the
+ * calculations arm in SQL and left the AI arm mapping seven scalars off rows
+ * that had carried `result` — the model's whole output — from the table, over
+ * the socket, through the driver's JSON parse, and into a `.map()` that dropped
+ * it. Fifty runs a page, and a `report_narrative` result is the drafted chapters
+ * of a 409A.
+ *
+ * Not a change to {@link listAiJobs}, which has two callers that genuinely want
+ * the document: `GET /valuations/:id/ai/jobs` answers *with* the result, and the
+ * evidence bundle archives it. This is the third caller, which never did.
+ *
+ * `input` goes too, though it is small — it is provenance rather than payload
+ * (`routes/ai.ts`: "Persist provenance, not payloads") — because the explorer
+ * does not read it either and a reader of this list should not have to check.
+ */
+export async function listAiJobSummaries(
+  pool: pg.Pool,
+  valuationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ jobs: AiJobSummaryRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? AI_JOB_PAGE_LIMIT, 1), AI_JOB_PAGE_LIMIT);
+  const { rows } = await pool.query<AiJobSummaryRow>(
+    `SELECT id, pipeline, status, model, error, latency_ms, created_at
+       FROM ai_jobs WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [valuationId, limit + 1],
+  );
+  return { jobs: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
 /** Most recent successful run of a pipeline — used to seed calculation inputs. */
 export async function latestSucceededJob(
   pool: pg.Pool,

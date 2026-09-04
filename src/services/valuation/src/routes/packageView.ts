@@ -6,7 +6,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { findCompanyProfile } from '../repos/companyProfiles.js';
 import { listDocuments } from '../repos/documents.js';
-import { listAiJobs } from '../repos/aiJobs.js';
+import { listAiJobSummaries } from '../repos/aiJobs.js';
 import { listCalculationSummaries } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { findReportByValuation, listVersions } from '../repos/reports.js';
@@ -46,7 +46,7 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       findCompanyProfile(deps.pool, id),
       findParams(deps.pool, id),
       listDocuments(deps.pool, id),
-      listAiJobs(deps.pool, id),
+      listAiJobSummaries(deps.pool, id),
       listCalculationSummaries(deps.pool, id),
       listOverwrites(deps.pool, id),
       findReportByValuation(deps.pool, id),
@@ -77,15 +77,11 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       error: c.error,
       created_at: c.created_at,
     }));
-    const aiJobSummaries = aiJobs.map((j) => ({
-      id: j.id,
-      pipeline: j.pipeline,
-      status: j.status,
-      model: j.model,
-      error: j.error,
-      latency_ms: j.latency_ms,
-      created_at: j.created_at,
-    }));
+    // AI runs without their result documents — the explorer shows the run, not
+    // what the model said. Narrowed in SQL for the same reason the calculations
+    // arm above is, and it was the one arm of this pair that still dropped a
+    // document in JS after the driver had already parsed it.
+    const aiJobSummaries = aiJobs;
 
     return {
       package: {
