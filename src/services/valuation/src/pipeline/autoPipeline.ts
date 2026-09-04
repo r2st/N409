@@ -15,6 +15,7 @@ import {
 } from '../repos/pipelineRuns.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import type { DocumentRow } from '../repos/documents.js';
+import { logFailure } from '@n409/shared';
 import type { EventActor } from '../events/record.js';
 import { Semaphore } from './semaphore.js';
 import { describeTransportFailure } from '@n409/shared';
@@ -91,7 +92,36 @@ function queueRun(
       return executeRun(deps, run, valuation, triggeredBy);
     })
     .catch((err) => {
-      deps.log.error({ err, runId: run.id }, crashMessage);
+      /*
+       * The outermost catch of the platform's core async worker, brought under
+       * the alerting contract (R428, methodology M11).
+       *
+       * It was a hand-picked `error` with no classification and no
+       * `alert: true`, which `shared/failure.ts` makes into two separate
+       * problems. The level is over-severe for the ordinary case — a pool blip
+       * while `executeRun` settles the row is transient and the reaper is
+       * coming — and the field that decides whether a ticket fires was absent
+       * for the case that only a person fixes. Since R376 `alert: true` is
+       * counted at the logger as `log_alert_lines_total`, so this is the
+       * difference between `PermanentFailuresLogged` firing and a line nobody
+       * reads. R273's rule for a catch like this: inside a retry loop, use
+       * `logFailure`; where nothing revisits the work, `logUnretried`; a
+       * hand-picked level is neither.
+       *
+       * `logFailure`, because something does come back. Reaching here means
+       * `executeRun`'s own catch could not record the failure, so the row is
+       * left in an active status holding its valuation's one-active-run index
+       * — and `reapStalePipelineRuns` settles exactly that shape, stamping
+       * `failure_kind = 'transient'` and a `next_attempt_at` the retry sweep
+       * reads. That is a real retry, so a transient error grading down to
+       * `warn` is honest.
+       *
+       * `failure_reason` is the other half: the classified token (`pg.40P01`)
+       * is what says whether this was one deploy's pool teardown or a
+       * statement that will fail identically every time, and the error's own
+       * sentence never made it into a field anything can group by.
+       */
+      logFailure(deps.log, err, { runId: run.id, valuationId: run.valuation_id }, crashMessage);
     })
     // Belt and braces: a rejection *from the acquire* would never reach the
     // callback, and a run left in this set is a run the reaper can never take.
