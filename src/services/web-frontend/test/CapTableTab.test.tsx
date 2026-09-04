@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
-import { CapTableTab } from '../src/pages/valuation/CapTableTab';
+import { CapTableTab, EntriesTable } from '../src/pages/valuation/CapTableTab';
 import type { User, Valuation } from '../src/lib/types';
 
 let mockUser: User;
@@ -1294,5 +1295,70 @@ describe('CapTableTab', () => {
       // complete way to use this panel.
       expect(await screen.findByLabelText(/paste a cap table/i)).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * `CapTableTab` holds the whole import workflow's state (`format`, `csv`,
+ * `mapping`, `sheetIndex`, `busy`) in the same component that renders the
+ * up-to-2,000-row "Current cap table" below it, so every keystroke in that
+ * workflow re-ran the table's map with an unchanged `entries`/`currency`.
+ * `EntriesTable` is memoized against exactly that (R425).
+ *
+ * A DOM assertion cannot distinguish "rendered again with the same output"
+ * from "did not render again", and `Profiler.onRender` turned out not to
+ * either — it fired on every commit reaching that position in the tree even
+ * when the memoized child below it bailed out, so a first draft of this test
+ * passed a broken fix. `EntriesTable` is `memo(InnerFn)`, which is an object
+ * carrying the unmemoized function at `.type`; spying there counts actual
+ * invocations of the render function itself, which a bailout skips entirely.
+ */
+describe('EntriesTable', () => {
+  const trueRender = (EntriesTable as unknown as { type: (props: unknown) => unknown }).type;
+
+  afterEach(() => {
+    (EntriesTable as unknown as { type: typeof trueRender }).type = trueRender;
+  });
+
+  function spyOnRender() {
+    const spy = vi.fn(trueRender);
+    (EntriesTable as unknown as { type: typeof trueRender }).type = spy;
+    return spy;
+  }
+
+  it('does not re-render when an unrelated state update leaves entries and currency unchanged', async () => {
+    const renderSpy = spyOnRender();
+    function Harness() {
+      const [tick, setTick] = useState(0);
+      return (
+        <div>
+          <button onClick={() => setTick((t) => t + 1)}>unrelated update</button>
+          <span data-testid="tick">{tick}</span>
+          <EntriesTable entries={ENTRIES} currency="USD" />
+        </div>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'unrelated update' }));
+    expect(screen.getByTestId('tick')).toHaveTextContent('1');
+    // The harness re-rendered (the tick advanced); the memoized table, whose
+    // props are the same `entries` array and the same `currency` string every
+    // render, must not have run its render function again.
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does re-render once the entries actually change', () => {
+    // Positive control: proves the spy sees a render at all, so the count
+    // staying at 1 above is the memo bailing out and not a harness that never
+    // triggers a second render in this test environment.
+    const renderSpy = spyOnRender();
+    const { rerender } = render(<EntriesTable entries={ENTRIES} currency="USD" />);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<EntriesTable entries={[...ENTRIES]} currency="USD" />);
+    expect(renderSpy).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { api, ApiError, apiUpload, ifMatch, type Problem, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { investedForDisplay } from '../../lib/capTableFigures';
@@ -206,7 +206,26 @@ function ValidationBanner({ validation }: { validation: Validation }) {
   );
 }
 
-function EntriesTable({ entries, currency }: { entries: Entry[]; currency: string }) {
+/**
+ * Renders the imported or stored cap table, up to `MAX_CAP_TABLE_ENTRIES` rows.
+ *
+ * Memoized (R425, methodology M8): `CapTableTab` is one component holding the
+ * whole import workflow's state — `format`, `csv`, `mapping`, `sheetIndex`,
+ * `busy` — and the "Current cap table" section renders below that workflow
+ * whenever a cap table is already `stored`, not only once it is idle. Every
+ * keystroke in the mapping form or tick of `busy` during an upload re-ran this
+ * table's 2,000-row map with props that had not changed. `entries` and
+ * `currency` are stable references across those updates (`stored`/`preview`
+ * state itself is untouched), so a shallow-props memo is exact here, not an
+ * approximation of one.
+ */
+export const EntriesTable = memo(function EntriesTable({
+  entries,
+  currency,
+}: {
+  entries: Entry[];
+  currency: string;
+}) {
   return (
     <div className="overflow-x-auto overscroll-x-contain">
       <table className="w-full text-sm">
@@ -249,7 +268,7 @@ function EntriesTable({ entries, currency }: { entries: Entry[]; currency: strin
       </table>
     </div>
   );
-}
+});
 
 export function CapTableTab() {
   const { valuation, retired } = useWorkspace();
