@@ -134,6 +134,47 @@ describe('EngineInputsBody', () => {
   });
 
   /*
+   * The sign of a balance-sheet subtotal (R410, M19).
+   *
+   * `nonNeg` here was the only statement in the estate that one cannot be
+   * negative; the engine warns rather than refuses, and the accounting import
+   * writes both figures straight through `applyEngineInputs` from a provider
+   * whose liabilities section can net to a debit balance.
+   */
+  describe('asset subtotals', () => {
+    it('accepts a liabilities section that nets negative, as the ledger import writes it', () => {
+      const res = EngineInputsBody.safeParse({
+        asset: { total_assets: 4_000_000, total_liabilities: -250_000 },
+      });
+      expect(res.success).toBe(true);
+    });
+
+    it('accepts a negative total_assets rather than refusing what the engine only warns about', () => {
+      // `validate._check_asset` raises `negative_nav` as a warning when
+      // liabilities exceed assets, and nothing refuses either figure's sign.
+      expect(
+        EngineInputsBody.safeParse({ asset: { total_assets: -1, total_liabilities: 0 } }).success,
+      ).toBe(true);
+    });
+
+    it('still refuses a negative cost to replicate, which the engine does refuse', () => {
+      // `approaches.asset_value`: "asset.cost_to_replicate is required for the
+      // cost-to-replicate method" on anything below zero.
+      expect(EngineInputsBody.safeParse({ asset: { cost_to_replicate: -1 } }).success).toBe(false);
+    });
+
+    it('still bounds the magnitude of both subtotals', () => {
+      expect(
+        EngineInputsBody.safeParse({ asset: { total_liabilities: -1e999 } }).success,
+      ).toBe(false);
+      expect(
+        EngineInputsBody.safeParse({ asset: { total_assets: Number.MAX_SAFE_INTEGER * 10 } })
+          .success,
+      ).toBe(false);
+    });
+  });
+
+  /*
    * The horizon (R406). The projection route runs to 100 years and its adoption
    * writes `income.free_cash_flows` straight through `applyEngineInputs`, so a
    * cap of 30 here refused an array the platform had written itself — and the

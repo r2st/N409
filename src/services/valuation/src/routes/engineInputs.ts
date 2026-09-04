@@ -164,8 +164,45 @@ export const EngineInputsBody = z
     // Asset approach.
     asset: z
       .object({
-        total_assets: nonNeg.nullable().optional(),
-        total_liabilities: nonNeg.nullable().optional(),
+        /*
+         * Signed, and the sign is the estate's opinion rather than this door's
+         * (R410, methodology M19).
+         *
+         * These two were `nonNeg`, and that was the only statement anywhere
+         * that a balance-sheet subtotal cannot be negative. Three other places
+         * say it can, and one of them says so on purpose:
+         *
+         *   * `validate._check_asset` requires both figures and then only
+         *     *warns* — `negative_nav`, "liabilities exceed assets" — so a
+         *     negative subtotal is a payload the pre-flight clears;
+         *   * `approaches.asset_value` refuses `cost_to_replicate < 0` and
+         *     nothing else, returning `total_assets - total_liabilities`
+         *     through `_finite_result`;
+         *   * `clients/accounting.storableLedgerCents` bounds the magnitude of
+         *     both and says of the sign: "Sign is deliberately not part of the
+         *     rule — the engine already reasons about liabilities exceeding
+         *     assets, and refusing a negative here would be this module
+         *     inventing a bound the approach does not have."
+         *
+         * And that third one is the door that made it matter. The accounting
+         * import writes `asset.total_assets` and `asset.total_liabilities`
+         * straight through `applyEngineInputs` from a provider's balance sheet,
+         * where a liabilities section netting to a debit balance — a
+         * prepayment, an overpaid tax account, a provider's own credit-balance
+         * sign convention — comes back negative. It stored under a 200, and
+         * `FinancialModelPanel` loads the asset section into its form and posts
+         * the whole model back, so every later save answered 422 on a subtotal
+         * the analyst never typed and could not correct from that form.
+         *
+         * A sign slip is still caught, by the engine's `negative_nav` warning,
+         * which is where it belongs: liabilities above assets is a finding
+         * about the balance sheet rather than a malformed request.
+         *
+         * `cost_to_replicate` keeps `nonNeg`, because it is the one of the
+         * three the engine does refuse below zero.
+         */
+        total_assets: boundedSigned().nullable().optional(),
+        total_liabilities: boundedSigned().nullable().optional(),
         cost_to_replicate: nonNeg.nullable().optional(),
       })
       .strict()
