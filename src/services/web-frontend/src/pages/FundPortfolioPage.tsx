@@ -98,6 +98,17 @@ interface Waterfall {
   lp_distribution: number;
   gp_distribution: number;
   clawback_owed: number;
+  /**
+   * The two halves of the clawback, echoed by the engine so the line can show
+   * its own arithmetic rather than being taken on trust — `gp_carry_paid_to_date
+   * − gp_carry_entitled`, floored at zero.
+   *
+   * Optional because a run answered by a build that predates them carries
+   * neither, and a card that renders `undefined` as a currency is worse than
+   * one that leaves the pair out.
+   */
+  gp_carry_entitled?: number;
+  gp_carry_paid_to_date?: number;
   tiers: Record<string, number>;
 }
 
@@ -991,7 +1002,7 @@ function WaterfallCard({
         </Field>
         <Field
           label="GP distributions"
-          tooltip="Carry already distributed to the GP across the fund's life. Netted off this run's GP share, and what a clawback is measured against."
+          tooltip="Carry already distributed to the GP across the fund's life. This is a whole-fund waterfall, so the GP share below is the GP's full-life entitlement and is NOT reduced by this figure — what is still payable is that entitlement less what has been paid. A GP holding more than its entitlement shows as a clawback."
         >
           <TextInput
             value={terms.gp_distributions_to_date}
@@ -1022,11 +1033,36 @@ function WaterfallCard({
         </Button>
       </div>
       {result && (
-        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-          <SummaryCard label="To LPs" value={money(result.lp_distribution, currency)} accent />
-          <SummaryCard label="To GP (carry)" value={money(result.gp_distribution, currency)} />
-          <SummaryCard label="Clawback owed" value={money(result.clawback_owed, currency)} />
-        </div>
+        <>
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+            <SummaryCard label="To LPs" value={money(result.lp_distribution, currency)} accent />
+            <SummaryCard
+              label="GP full-life carry"
+              value={money(result.gp_distribution, currency)}
+            />
+            <SummaryCard label="Clawback owed" value={money(result.clawback_owed, currency)} />
+          </div>
+          {/*
+           * The clawback's own arithmetic, which the engine echoes for exactly
+           * this and which nothing read.
+           *
+           * `gp_distribution` is the GP's *full-life* entitlement under a
+           * European waterfall, not an incremental payment: `lp_distribution +
+           * gp_distribution` is the whole `distributable`, and the carry the GP
+           * already holds is not subtracted from it. The card said the opposite
+           * — the "GP distributions" field was labelled as netted off the GP
+           * share — which reads as an amount to pay out and would pay the
+           * carry-to-date a second time. Naming the two figures the clawback is
+           * the difference of is what makes the line checkable.
+           */}
+          {result.gp_carry_entitled !== undefined && result.gp_carry_paid_to_date !== undefined && (
+            <p className="mt-2 text-xs text-ink-500">
+              Clawback = carry paid to date {money(result.gp_carry_paid_to_date, currency)} − full-life
+              entitlement {money(result.gp_carry_entitled, currency)}, floored at zero. The GP share above
+              is that whole-life entitlement, not a further payment on top of what the GP already holds.
+            </p>
+          )}
+        </>
       )}
     </div>
   );

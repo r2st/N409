@@ -578,8 +578,8 @@ describe('FundPortfolioPage', () => {
    * It carried five of the eight columns. The route's body schema defaults the
    * other three and the repo upserts all of them, so saving a changed carry
    * also reset the management fee to 2%, and the fees paid and GP
-   * distributions to zero — figures the waterfall nets off the GP's share and
-   * the NAV exhibit prints. Nothing else writes them, so the reset was
+   * distributions to zero — figures the waterfall measures the clawback against
+   * and the NAV exhibit prints. Nothing else writes them, so the reset was
    * permanent and invisible.
    */
   it('carries the LP terms it does not change through a save', async () => {
@@ -698,6 +698,46 @@ describe('FundPortfolioPage', () => {
     expect(screen.getByText('$100,000')).toBeInTheDocument();
     expect(screen.getByText('To LPs')).toBeInTheDocument();
     expect(screen.getByText('Clawback owed')).toBeInTheDocument();
+  });
+
+  /**
+   * `gp_distribution` is the GP's *full-life* entitlement under a European
+   * waterfall — `lp_distribution + gp_distribution` is the whole
+   * `distributable` — and the carry the GP already holds is not subtracted from
+   * it. The card labelled the GP card as this run's share and told the operator
+   * in as many words that "GP distributions" was netted off it, which reads as
+   * an amount to pay and would pay the carry-to-date a second time.
+   *
+   * The engine echoes `gp_carry_entitled` and `gp_carry_paid_to_date` so the
+   * clawback line can show its own difference; nothing read either.
+   */
+  it('states the GP figure as a full-life entitlement and shows the clawback arithmetic', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      onWrite: (path) =>
+        path.endsWith('/waterfall')
+          ? jsonResponse({
+              waterfall: {
+                ...waterfallResult,
+                gp_distribution: 100_000,
+                gp_carry_entitled: 100_000,
+                gp_carry_paid_to_date: 130_000,
+                clawback_owed: 30_000,
+              },
+            })
+          : undefined,
+    });
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+    await user.click(screen.getByRole('button', { name: 'Run waterfall' }));
+
+    expect(await screen.findByText('GP full-life carry')).toBeInTheDocument();
+    expect(screen.queryByText('To GP (carry)')).not.toBeInTheDocument();
+    expect(screen.getByText('$30,000')).toBeInTheDocument();
+    // The two figures the clawback is the difference of, on the page.
+    const note = screen.getByText(/Clawback = carry paid to date/);
+    expect(note).toHaveTextContent('$130,000');
+    expect(note).toHaveTextContent('$100,000');
   });
 
   it('reports a rejected waterfall run without clearing an earlier result', async () => {
