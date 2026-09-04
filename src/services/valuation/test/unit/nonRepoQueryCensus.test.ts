@@ -95,7 +95,7 @@ const BOUNDED: Record<string, Bound> = {
   },
   'events/record.ts:unnest': {
     bound: 'caller',
-    why: 'Not a read at all: it is the row source of `recordEvents`\' `INSERT … SELECT * FROM unnest(...)`, so it returns exactly the array length the caller built in this process and nothing is fetched back (R351 wrote it that way to stop one round trip per released engagement). Uncapped and unreachable by growth in the database — the only way to make it larger is to pass a longer array.',
+    why: "Not a read at all: it is the row source of `recordEvents`' `INSERT … SELECT * FROM unnest(...)`, so it returns exactly the array length the caller built in this process and nothing is fetched back (R351 wrote it that way to stop one round trip per released engagement). Uncapped and unreachable by growth in the database — the only way to make it larger is to pass a longer array.",
   },
   'events/record.ts:valuation_events#2': {
     bound: 'schema',
