@@ -99,6 +99,58 @@ export const UNVERIFIED_REASON =
 
 const MAX_ROWS = 40;
 
+/** The longest ticker `routes/comparables.ts` will store from an analyst. */
+const MAX_TICKER_LENGTH = 12;
+
+/**
+ * A ticker as the rest of the estate spells one.
+ *
+ * This was `str(candidate.ticker, 12)?.toUpperCase()`, and the case fold was
+ * the only normalising it did. Three doors write `comparable_items.ticker` and
+ * the other two agree with each other: the analyst door holds it to
+ * `/^[A-Za-z0-9.-]+$/` and upper-cases, and the engine's `normalize_ticker`
+ * upper-cases *and* "drops an exchange prefix like `NASDAQ:DDOG` that models
+ * sometimes emit" — its own words, about the very producer feeding this
+ * function.
+ *
+ * So the one door fed by a language model was the one that did not strip the
+ * prefix, and `NASDAQ:DDOG` was stored as a peer's ticker. The column has a
+ * unique index for a stated reason — "a re-screen that proposed AAPL twice, or
+ * an analyst adding a peer the agent already found, is a duplicate observation
+ * and would double that comp's weight in the median" — and it is an index on
+ * the raw text, so `NASDAQ:DDOG` and `DDOG` are two rows and the index does not
+ * fire. Both `replaceMachineComparables`'s `taken` set and the include/exclude
+ * decisions it carries across a re-screen are keyed on the same exact string.
+ *
+ * The whole loop closes: the stored ticker is sent back to the engine as
+ * `include_tickers`, `normalize_ticker` reads it as `DDOG`, the screen returns a
+ * `DDOG` row, `taken` holds `NASDAQ:DDOG` and does not match it — so the peer
+ * set ends up carrying Datadog twice, both rows included, and the median
+ * multiple the market approach concludes on is struck on a set with a
+ * duplicate. An analyst adding `DDOG` by hand does the same thing one step
+ * sooner, and the exclusion they recorded against the prefixed row is not
+ * carried onto the plain one.
+ *
+ * Rejected rather than truncated past the length bound, unlike the `str` above
+ * it. `sliceChars(_, 12)` turns `OTCMKTS:XXXXX` into `OTCMKTS:XXXX` — not a
+ * shorter ticker but a *different* one, silently, in the column everything
+ * reconciles on. A row whose ticker cannot be read falls into the branch that
+ * already exists for a row with no ticker at all, which the callers document:
+ * it "cannot be reconciled against the analyst's own rows, refreshed from the
+ * feed, or carried into the next screen — the three things a stored peer is
+ * for".
+ */
+export function normalizeAgentTicker(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  let text = value.trim().toUpperCase();
+  // `rsplit(":", 1)` in the engine — the *last* colon, so `NASDAQ:NASDAQ:X`
+  // resolves to `X` rather than to something still carrying a prefix.
+  const colon = text.lastIndexOf(':');
+  if (colon >= 0) text = text.slice(colon + 1).trim();
+  if (text.length === 0 || text.length > MAX_TICKER_LENGTH) return null;
+  return /^[A-Z0-9.-]+$/.test(text) ? text : null;
+}
+
 function str(value: unknown, limit: number): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -185,7 +237,7 @@ export function mapAgentComparables(result: unknown, observedAt: Date): MappedCo
   for (const entry of selectedRaw.slice(0, MAX_ROWS)) {
     const candidate = asRecord(entry);
     if (candidate === null) continue;
-    const ticker = str(candidate.ticker, 12)?.toUpperCase() ?? null;
+    const ticker = normalizeAgentTicker(candidate.ticker);
     // A selected comp with no ticker cannot be reconciled against the analyst's
     // own rows, refreshed from the feed, or carried into the next screen — the
     // three things a stored peer is for.
@@ -226,7 +278,7 @@ export function mapAgentComparables(result: unknown, observedAt: Date): MappedCo
   for (const entry of excludedRaw.slice(0, MAX_ROWS)) {
     const candidate = asRecord(entry);
     if (candidate === null) continue;
-    const ticker = str(candidate.ticker, 12)?.toUpperCase() ?? null;
+    const ticker = normalizeAgentTicker(candidate.ticker);
     if (ticker === null || seen.has(ticker)) continue;
     seen.add(ticker);
     rows.push({
