@@ -870,8 +870,19 @@ groups:
       # ceiling is the ceiling working — the counter records it so the rate is
       # available to a dashboard, and `realtimeStreams.ts` gives the argument
       # for why it is not a page.
+      #
+      # `ignoring(scope)` is load-bearing (R412, methodology M11). A binary
+      # operator between two instant vectors matches one-to-one on the *whole*
+      # label set, and these two do not have the same one: `realtime_streams_open`
+      # is registered in `app.ts` with no labels at all, while
+      # `realtime_stream_capacity` carries `scope` so it can publish a ceiling
+      # per scope. Without the modifier the division found no matching pair,
+      # returned the empty vector, and the rule was incapable of firing — the
+      # same failure as naming a metric nothing exports, one level further in,
+      # and just as invisible: it parses, it evaluates, it produces no series,
+      # and no series is what a healthy hub looks like.
       - alert: RealtimeStreamsNearCapacity
-        expr: realtime_streams_open / (realtime_stream_capacity{scope="total"} > 0) > 0.8
+        expr: realtime_streams_open / ignoring(scope) (realtime_stream_capacity{scope="total"} > 0) > 0.8
         for: 15m
         labels: { severity: ticket }
         annotations:

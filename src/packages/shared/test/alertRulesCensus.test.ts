@@ -554,6 +554,79 @@ describe('alert rules', () => {
     expect(CGROUP_MEMORY_EVENTS.filter((e) => !unwatchable.has(e)).length).toBeGreaterThan(2);
   });
 
+  it('combines two vectors only where their label sets can match', () => {
+    /*
+     * R412, and the sixth direction. Four of the five above are about a rule
+     * that is wrong in a way that leaves it matching nothing — a metric nothing
+     * exports, a label value nothing sets, a label name nothing carries. This
+     * is the same outcome reached one level further in, and it is the level
+     * none of them look at: a binary operator between two instant vectors
+     * matches them **one-to-one on the whole label set**, so two metrics that
+     * both exist, both carry labels this estate really emits, and are both
+     * spelled correctly still produce the empty vector when those label sets
+     * differ.
+     *
+     * `RealtimeStreamsNearCapacity` divided `realtime_streams_open` — registered
+     * in `app.ts` with no labels at all — by `realtime_stream_capacity{scope=
+     * "total"}`, which carries `scope` precisely so it can publish a ceiling per
+     * scope. No pair matched, the expression returned nothing, and the rule was
+     * incapable of firing for as long as it existed. It parses; it evaluates; it
+     * produces no series; and no series is exactly what a hub with room to spare
+     * looks like.
+     *
+     * `ignoring(scope)` (or `on(...)`) is the modifier that says which labels to
+     * match on, so an expression that carries one is deliberate and is left
+     * alone. Only *unaggregated* sides are compared: `sum by (job) (…) / sum by
+     * (job) (…)` sets both label sets from its own `by` lists, and those lists
+     * are already held by the R329 case above.
+     */
+    const labels = registeredLabels();
+    // Vector-matching operators. `or`/`and`/`unless` match the same way
+    // arithmetic does, and a comparison between two vectors does too.
+    const BINARY = /(?:^|[\s)])(?:\/|\*|\+|-|and|unless|or|==|!=|>=|<=|>|<)(?:$|[\s(])/;
+    const AGGREGATION = /\b(?:sum|avg|min|max|count|topk|bottomk|quantile)\s*(?:by|without)?\s*\(/;
+
+    /** The label sets this expression asks Prometheus to match, when it asks. */
+    const unmatchable = (expr: string): string | null => {
+      const bare = expr.replace(/"[^"]*"/g, '""');
+      if (AGGREGATION.test(bare) || /\b(?:on|ignoring)\s*\(/.test(bare)) return null;
+      const metrics = [
+        ...new Set([...bare.matchAll(/[a-z_][a-z0-9_]*/g)].map((m) => baseMetric(m[0]))),
+      ].filter((name) => labels.has(name));
+      // One metric compared against a scalar cannot mismatch; nor can an
+      // expression with no operator joining two of them.
+      if (metrics.length < 2 || !BINARY.test(bare)) return null;
+      const sets = metrics.map((m) => [...labels.get(m)!].sort().join(','));
+      if (new Set(sets).size === 1) return '';
+      return metrics.map((m, i) => `${m}{${sets[i]}}`).join(' vs ');
+    };
+
+    const checked = parsedRules().filter((r) => unmatchable(r.expr) !== null);
+    const mismatched = checked
+      .filter((r) => unmatchable(r.expr) !== '')
+      .map((r) => `${r.name}: ${unmatchable(r.expr)}`);
+
+    // Non-vacuity, both ways. These four really do combine two of this estate's
+    // instruments without aggregating either, so a matcher that stopped
+    // matching would show up here rather than as a green with nothing left to
+    // ask. `RealtimeStreamsNearCapacity` is deliberately not among them any
+    // more — it now carries `ignoring(scope)`, which is what a rule that has
+    // thought about the question looks like.
+    expect(checked.map((r) => r.name)).toEqual(
+      expect.arrayContaining(['MemoryNearCgroupLimit', 'MemoryCeilingMissing', 'SweepFailing', 'SweepStopped']),
+    );
+    // And the expression as it stood, which no other case in this file could
+    // see: both metrics exist, both are spelled right, and the division could
+    // never produce a series.
+    expect(unmatchable('realtime_streams_open / (realtime_stream_capacity{scope="total"} > 0) > 0.8')).toBe(
+      'realtime_streams_open{} vs realtime_stream_capacity{scope}',
+    );
+
+    expect(mismatched, 'rules combining vectors whose labels cannot match, with no on()/ignoring()').toEqual(
+      [],
+    );
+  });
+
   it('pages only on the severities it declares', () => {
     const severities = new Set([...RULES.matchAll(/severity: (\w+)/g)].map((m) => m[1]!));
     // Deliberately two. A third level is where "info" alerts come from, and an
