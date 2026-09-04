@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import {
   buildWebhookPayload,
-  isValidWebhookUrl,
+  webhookUrlRefusal,
   newWebhookSecret,
   WEBHOOK_EVENT_TYPES,
 } from '../domain/partnerWebhooks.js';
@@ -1339,11 +1339,11 @@ export function registerPartnerApiRoutes(
       const { principal, token } = requireToken(req);
       const parsed = WebhookBody.safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid webhook', parsed.error);
-      if (!isValidWebhookUrl(parsed.data.url)) {
-        throw problems.unprocessable(
-          'Webhook URL must be a public http(s) endpoint — loopback, private and link-local addresses are not delivered to',
-        );
-      }
+      // The reason, not the category. See `webhookUrlRefusal` — the sentence
+      // this used to throw described private addresses to a partner who had
+      // pasted a URL with no scheme on it.
+      const urlRefusal = webhookUrlRefusal(parsed.data.url);
+      if (urlRefusal) throw problems.unprocessable(urlRefusal, { errors: [{ path: ['url'] }] });
       const existing = await listWebhooks(deps.pool, token.partnerId);
       if (existing.length >= 10) {
         throw problems.conflict('A partner may register at most 10 webhooks — delete one first');

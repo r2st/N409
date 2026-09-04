@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { quoteForMessage } from './displayText.js';
 import { isPrivateAddress as isPrivateLiteral } from './privateAddress.js';
 
 /**
@@ -412,22 +413,81 @@ export function webhookTargetPolicyAllowsPrivate(): boolean {
   return allowPrivateWebhookTargets;
 }
 
+/** What a webhook URL should look like, said once so every refusal spells it the same. */
+const WEBHOOK_URL_EXAMPLE = 'https://api.example.com/hooks/n409';
+
+/**
+ * Why this webhook URL cannot be registered, in a sentence — `null` when it can.
+ *
+ * {@link isValidWebhookUrl} answers a boolean, and the one route that asks it
+ * had one sentence for every way of failing:
+ *
+ *     'Webhook URL must be a public http(s) endpoint — loopback, private and
+ *      link-local addresses are not delivered to'
+ *
+ * There are four ways to fail here and that sentence describes the *last* of
+ * them. The first is the one a partner actually hits: `api.example.com/hooks`
+ * pasted out of their own documentation, with no scheme, which `new URL()`
+ * refuses outright. Told about loopback and link-local addresses, the reader
+ * checks their firewall, their DNS and their egress rules — every one of which
+ * is fine — because the message named a cause that was not theirs. The same
+ * goes for `ftp://` and for a typo'd `htp://`: nothing in the answer mentions
+ * the scheme.
+ *
+ * So the causes are separated and each says what to change:
+ *
+ *   - no scheme, or a string `new URL()` cannot parse at all;
+ *   - a scheme that is not http(s), named back;
+ *   - a host that is not reachable from the public internet, named back.
+ *
+ * The host and the scheme go through {@link quoteForMessage} rather than into
+ * the sentence raw. `detail` is drawn by the SPA, printed by whatever terminal
+ * a curl caller is looking at, and written into the partner's own log; a
+ * hostname arrives from a request body, and IDNA leaves enough through that
+ * "the value is already normalised" is not a claim worth resting on.
+ *
+ * `allowPrivateTargets` overrides the process policy for a single call; it is
+ * the seam the unit tests use to assert both behaviours in one file.
+ */
+export function webhookUrlRefusal(value: string, allowPrivateTargets?: boolean): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    // A bare host is the overwhelmingly common shape of this failure, and it
+    // has a one-word fix, so it gets its own sentence rather than the generic
+    // "unparseable" that would send the reader looking for a typo they did not
+    // make. Anything already carrying a scheme fell over for some other reason.
+    return /^[a-z][a-z0-9+.-]*:/i.test(value.trim())
+      ? `That webhook URL could not be parsed. It should look like ${WEBHOOK_URL_EXAMPLE}.`
+      : `A webhook URL needs its scheme — start it with https:// (for example ${WEBHOOK_URL_EXAMPLE}).`;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:')
+    return (
+      `Webhook deliveries are HTTP requests, so the URL must be https:// or http:// — ` +
+      `${quoteForMessage(url.protocol.replace(/:$/, ''), 32)} is not delivered to. ` +
+      `For example ${WEBHOOK_URL_EXAMPLE}.`
+    );
+  if (allowPrivateTargets ?? allowPrivateWebhookTargets) return null;
+  if (!isPublicWebhookHost(url.hostname))
+    return (
+      `${quoteForMessage(url.hostname, 128)} is not reachable from the public internet, and this ` +
+      'service delivers from outside your network: loopback, private, link-local and ' +
+      '.local/.internal/.localhost hosts are refused. Give a publicly resolvable host, or a ' +
+      'tunnel that provides one.'
+    );
+  return null;
+}
+
 /**
  * A webhook URL must be plain http(s) — anything else (file:, gopher:, a
  * partner typo) is refused at registration rather than fetched at delivery —
  * and must not name a host inside the network.
  *
- * `allowPrivateTargets` overrides the process policy for a single call; it is
- * the seam the unit tests use to assert both behaviours in one file.
+ * The predicate form, for the callers that only branch on it. The reason a
+ * URL was refused lives in {@link webhookUrlRefusal}, which is what a route
+ * answering a person should use.
  */
 export function isValidWebhookUrl(value: string, allowPrivateTargets?: boolean): boolean {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
-  if (allowPrivateTargets ?? allowPrivateWebhookTargets) return true;
-  return isPublicWebhookHost(url.hostname);
+  return webhookUrlRefusal(value, allowPrivateTargets) === null;
 }

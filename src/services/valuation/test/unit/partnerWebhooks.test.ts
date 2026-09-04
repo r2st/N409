@@ -5,6 +5,7 @@ import {
   isPrivateAddress,
   isPublicWebhookHost,
   isValidWebhookUrl,
+  webhookUrlRefusal,
   newWebhookSecret,
   nextAttemptAt,
   retryDelayMinutes,
@@ -69,6 +70,64 @@ describe('partner webhook domain', () => {
     // …and the same URL passes where a local development environment has
     // deliberately opted in.
     expect(isValidWebhookUrl('http://127.0.0.1:8080/hook', true)).toBe(true);
+  });
+
+  /**
+   * The refusal names the cause the reader can act on.
+   *
+   * Every one of these was the same sentence about loopback and link-local
+   * addresses, including the two failures that have nothing to do with an
+   * address — which is the shape that sends a partner to check their egress
+   * rules over a missing `https://`.
+   */
+  describe('the reason a webhook URL was refused', () => {
+    it('says nothing at all when the URL is fine', () => {
+      expect(webhookUrlRefusal('https://example.com/hook')).toBeNull();
+      expect(webhookUrlRefusal('http://127.0.0.1:8080/hook', true)).toBeNull();
+    });
+
+    it('names the missing scheme, and does not mention private addresses', () => {
+      const refusal = webhookUrlRefusal('api.example.com/hooks/n409');
+      expect(refusal).toMatch(/scheme/i);
+      expect(refusal).toContain('https://');
+      expect(refusal).not.toMatch(/loopback|private|link-local/i);
+    });
+
+    it('separates an unparseable URL that does carry a scheme', () => {
+      const refusal = webhookUrlRefusal('https://');
+      expect(refusal).toMatch(/could not be parsed/i);
+      expect(refusal).not.toMatch(/loopback|private|link-local/i);
+    });
+
+    it('names the scheme it will not deliver over', () => {
+      expect(webhookUrlRefusal('ftp://example.com/hook')).toContain('ftp');
+      expect(webhookUrlRefusal('file:///etc/passwd')).toContain('file');
+      expect(webhookUrlRefusal('ftp://example.com/hook')).not.toMatch(/loopback/i);
+    });
+
+    it('names the host it will not reach, for the case that really is one', () => {
+      expect(webhookUrlRefusal('http://127.0.0.1:8080/hook')).toContain('127.0.0.1');
+      expect(webhookUrlRefusal('http://engine.internal/hook')).toContain('engine.internal');
+      expect(webhookUrlRefusal('http://localhost:3001/api/v1/admin')).toMatch(/loopback/i);
+    });
+
+    /*
+     * The host reaches an RFC 9457 `detail` that the SPA draws and a partner's
+     * own log keeps, and it arrives from a request body. The parser turns away
+     * the reordering controls — `new URL('http://10.0.0.5\u202e/')` throws, so
+     * that case never reaches the sentence — but it has no opinion at all about
+     * length: a 309-character host parses, and `url` is bounded at 2000. So the
+     * bound is the half worth asserting, and `quoteForMessage` is what applies
+     * it.
+     */
+    it('bounds the host it quotes back', () => {
+      const long = `${'a'.repeat(300)}.internal`;
+      expect(new URL(`http://${long}/hook`).hostname).toHaveLength(long.length);
+      const refusal = webhookUrlRefusal(`http://${long}/hook`);
+      expect(refusal).not.toContain(long);
+      expect(refusal).toContain('…');
+      expect(refusal!.length).toBeLessThan(400);
+    });
   });
 
   it('classifies non-routable addresses, including the v6 spellings of v4', () => {
