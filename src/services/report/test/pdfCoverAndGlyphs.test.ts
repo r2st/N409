@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { faceCovers, fontSafe, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  configureReportPdfLogging,
+  faceCovers,
+  fontSafe,
+  renderReportPdf,
+  type ReportPdfInput,
+} from '../src/pdf.js';
 import { pageTexts } from './support/pdfText.js';
 
 /**
@@ -229,5 +235,98 @@ describe('the running footer names the document once', () => {
     const pages = await footers(base({ title: 'Annual Valuation' }));
     const footer = pages[1] ?? pages[0]!;
     expect(footer).toContain('Northwind Robotics, Inc. — Annual Valuation');
+  });
+});
+
+/**
+ * R412: the render that lost the client's own text, saying so.
+ *
+ * The block above establishes that a Han name is set as `????` and calls
+ * closing it "a matter of registering a face that covers CJK" — a person's
+ * job. Until this round the only record that the job was owed was the `????`
+ * itself, in a signed PDF already on its way to an auditor. `issueLog` is the
+ * door this module already reports a degraded render through; these are the
+ * tests that say the loss goes through it too.
+ */
+describe('a render reports the characters it could not set', () => {
+  // The sink is module-level (see `configureReportPdfLogging`), so a test that
+  // installs one has to take it back out or the next file inherits it.
+  afterEach(() => configureReportPdfLogging(null));
+
+  const capture = () => {
+    const lines: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    configureReportPdfLogging({ warn: (obj, msg) => lines.push({ obj, msg }) });
+    return lines;
+  };
+
+  it('names the codepoints a Han company name was replaced with question marks for', async () => {
+    const lines = capture();
+    await renderReportPdf(
+      base({ title: 'IRC 409A Valuation Report — 中国科技', company_name: '中国科技' }),
+      { compress: false },
+    );
+    const line = lines.find((l) => l.obj.reason === 'unrenderable_characters');
+    expect(line).toBeDefined();
+    // The diagnosis is the script, not the client: codepoints, no company name.
+    expect(line!.obj.codepoints).toEqual(
+      expect.arrayContaining(['U+4E2D', 'U+56FD', 'U+79D1', 'U+6280']),
+    );
+    expect(line!.obj.distinct).toBe(4);
+    // Not one character of the document, not even the title that quotes the
+    // company: this line lands in the report service's journal and every
+    // string in a render is the client's own.
+    expect(JSON.stringify(line!.obj)).not.toContain('中国科技');
+    // A person has to add a face; nothing retries a rendered PDF.
+    expect(line!.obj.alert).toBe(true);
+  });
+
+  it('finds a lost character in an authored section body, not just on the cover', async () => {
+    const lines = capture();
+    await renderReportPdf(
+      base({ sections: [{ heading: 'Introduction', html: '<p>The founder is 田中.</p>' }] }),
+      { compress: false },
+    );
+    expect(lines.find((l) => l.obj.reason === 'unrenderable_characters')?.obj.codepoints).toEqual([
+      'U+4E2D',
+      'U+7530',
+    ]);
+  });
+
+  /**
+   * The line has to be worth waking somebody for, which means it must not fire
+   * on the reports the platform renders every day. A 409A is full of `σ`, `−`,
+   * `≤` and smart quotes, and every one of them is a character DejaVu draws.
+   */
+  it('says nothing about an ordinary report, symbols and all', async () => {
+    const lines = capture();
+    await renderReportPdf(
+      base({
+        sections: [
+          { heading: 'Assumptions', html: '<p>σ 62% · T 4.00y · DLOM ≤ 35% · −$1,200,000 · ₹120 · “quoted”</p>' },
+        ],
+      }),
+      { compress: false },
+    );
+    expect(lines.filter((l) => l.obj.reason === 'unrenderable_characters')).toHaveLength(0);
+  });
+
+  /**
+   * A transliteration is not a loss and must not fire this line —
+   * `FALLBACK_GLYPHS` maps a character the face cannot draw to a faithful
+   * spelling, and its own note is that meaning survives. Asserted at the sink
+   * rather than through a render because, as that table also says, the
+   * embedded faces draw every entry in it, so no real report can reach the
+   * branch. The stub face here is what makes the rule testable at all.
+   */
+  it('reports only the characters it gave up on, not the ones it spelled out', () => {
+    const seen: number[] = [];
+    // U+4E2D has no glyph and no spelling → `?`, and reported.
+    expect(fontSafe('a\u4e2db', 'regular', (c) => seen.push(c))).toBe('a?b');
+    expect(seen).toEqual([0x4e2d]);
+    // U+2212 has a glyph, so it is neither replaced nor reported; U+03C3 has
+    // one too, and both are in the table — a hit on the table would be silent
+    // even if the face lost them.
+    expect(fontSafe('\u2212\u03c3', 'regular', (c) => seen.push(c))).toBe('\u2212\u03c3');
+    expect(seen).toEqual([0x4e2d]);
   });
 });

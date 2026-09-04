@@ -741,7 +741,28 @@ export function typographicMinus(text: string): string {
  * themselves so they can measure the form that will be drawn, and then hand
  * that same form to `.text()`, where it is sanitized again.
  */
-export function fontSafe(text: string, face: FaceName = 'regular'): string {
+export function fontSafe(
+  text: string,
+  face: FaceName = 'regular',
+  /**
+   * Told about a character this call gave up on (R412, methodology M11).
+   *
+   * Only the `?` case — a codepoint no face can draw *and* that
+   * {@link FALLBACK_GLYPHS} has no transliteration for. A transliteration is
+   * information-preserving by design ("`sigma` rather than `s`") and firing on
+   * one would make the signal a description of the table rather than of the
+   * document. A `?` is the case the table's own note calls "a font to add, not
+   * a rule to change" — a person's decision, about a deliverable that has
+   * already gone out without it.
+   *
+   * Codepoints only. This is a per-render sink and its consumer logs what it
+   * collects, and the text reaching here is the client's own: a company name,
+   * a shareholder's name, a section an analyst pasted. `U+4E2D` says which
+   * script the face is missing, which is the whole of what the person adding a
+   * font needs, and says nothing about whose report it was.
+   */
+  onUnrenderable?: (code: number) => void,
+): string {
   // Nothing here has anything to do: no hyphen for `typographicMinus` to
   // reconsider, and nothing outside printable ASCII for the three character
   // classes below or for the coverage loop. That is the overwhelming majority
@@ -760,7 +781,13 @@ export function fontSafe(text: string, face: FaceName = 'regular'): string {
     // A codepoint above the BMP arrives as one iteration but two UTF-16 units,
     // so it is judged — and if need be replaced — as the one character it is.
     const code = ch.codePointAt(0)!;
-    safe += faceCovers(face, code) ? ch : (FALLBACK_GLYPHS.get(code) ?? '?');
+    if (faceCovers(face, code)) {
+      safe += ch;
+      continue;
+    }
+    const transliterated = FALLBACK_GLYPHS.get(code);
+    if (transliterated === undefined) onUnrenderable?.(code);
+    safe += transliterated ?? '?';
   }
   return safe;
 }
@@ -2458,11 +2485,44 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
    * is the no-op that guarantees a character the face cannot draw is visibly
    * replaced rather than silently set as a blank box.
    */
-  const drawText = doc.text.bind(doc) as (text: string, ...rest: unknown[]) => PDFKit.PDFDocument;
-  (doc as { text: unknown }).text = (text: unknown, ...rest: unknown[]) =>
+  /*
+   * WHAT THIS RENDER COULD NOT SET (R412, methodology M11).
+   *
+   * `fontSafe` replaces a character no embedded face can draw with `?`, and
+   * `FALLBACK_GLYPHS` says in as many words what that means — "a CJK company
+   * name still does [become `?`] … That is a font to add, not a rule to
+   * change." A person's decision, then. Nobody was told it was owed.
+   *
+   * The deliverable is the only record there was. A company legally named
+   * 中国科技 is set as `????` on the cover of its own valuation, the render
+   * answers 200, the offload client stores the bytes, the report is signed and
+   * published, and it is forwarded to an auditor and filed in a data room in
+   * that state. Support has a client asking why their name is question marks
+   * and nothing anywhere to look at — the same shape this module already
+   * refused to accept one degrade over, when R155 named the ten ways a
+   * white-labelled report comes out with no mark on it and gave the last of
+   * them {@link issueLog}. A missing logo is a conversation with a firm; a
+   * missing name is the client's own text gone out of a legal document.
+   *
+   * Collected per render rather than in a module-level tally: two renders can
+   * be in flight in this service at once (`http_requests_in_flight` is
+   * documented as "concurrent PDF renders, in practice"), and a shared bucket
+   * would report one document's losses against the other's line.
+   *
+   * A set, not a count. pdfkit measures word by word while wrapping, so every
+   * string passes through `fontSafe` many times over and an occurrence tally
+   * would be a number about the layout algorithm. The distinct codepoints are
+   * also the whole of the answer: they name the script whose face is missing.
+   */
+  const unrenderable = new Set<number>();
+  const sanitize = (text: unknown): string =>
     // pdfkit accepts a number here too (it stringifies), so this coerces the
     // same way rather than refusing what the library allows.
-    drawText(fontSafe(typeof text === 'string' ? text : String(text), face), ...rest);
+    fontSafe(typeof text === 'string' ? text : String(text), face, (code) => unrenderable.add(code));
+
+  const drawText = doc.text.bind(doc) as (text: string, ...rest: unknown[]) => PDFKit.PDFDocument;
+  (doc as { text: unknown }).text = (text: unknown, ...rest: unknown[]) =>
+    drawText(sanitize(text), ...rest);
 
   /*
    * …and so does every string it *measures*, which is the same statement or the
@@ -2485,7 +2545,7 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   const measured =
     <T>(fn: (text: string, ...rest: unknown[]) => T) =>
     (text: unknown, ...rest: unknown[]): T =>
-      fn(fontSafe(typeof text === 'string' ? text : String(text), face), ...rest);
+      fn(sanitize(text), ...rest);
   (doc as { widthOfString: unknown }).widthOfString = measured(
     doc.widthOfString.bind(doc) as (text: string, ...rest: unknown[]) => number,
   );
@@ -2961,7 +3021,51 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   docStruct.end();
 
   doc.end();
-  return done;
+  const pdf = await done;
+  reportUnrenderable(unrenderable);
+  return pdf;
+}
+
+/** How many distinct codepoints one line names before it summarises the rest. */
+const LOGGED_CODEPOINTS = 20;
+
+/**
+ * The one line a render leaves behind when it could not set the text it was given.
+ *
+ * `warn` and not `error`: the bytes are a complete, valid, delivered PDF and
+ * every figure in it is right — the reasoning the partner-logo branch above
+ * gives for its own level. What is wrong with it is a person's job to fix, and
+ * cannot be fixed by anything retrying, so it carries `alert: true`, the
+ * estate's one "somebody has to act" contract and the field
+ * `log_alert_lines_total` counts. The condition is narrow enough to be worth
+ * paging on: DejaVu covers Latin, Greek, Cyrillic, Hebrew, Arabic, the currency
+ * block and the mathematical operators this domain writes with, so a line here
+ * means a script nothing on the platform can set, not a stray dash.
+ *
+ * NOT ONE CHARACTER OF THE DOCUMENT, not even its title. Every string this
+ * line could name is the client's own — the company, the title that quotes it,
+ * a section an analyst pasted — and it lands in the report service's journal,
+ * which is the shape `ai/app/documents.py` refuses to put a filename into for
+ * the same reason. The codepoints are the whole diagnosis: they name the script
+ * whose face is missing, and `reqId` on the line joins it to the render that
+ * produced it for anyone entitled to go further.
+ */
+function reportUnrenderable(codes: ReadonlySet<number>): void {
+  if (codes.size === 0) return;
+  const named = [...codes]
+    .sort((a, b) => a - b)
+    .slice(0, LOGGED_CODEPOINTS)
+    .map((c) => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`);
+  issueLog?.warn(
+    {
+      reason: 'unrenderable_characters',
+      distinct: codes.size,
+      codepoints: named,
+      truncated: codes.size > named.length,
+      alert: true,
+    },
+    'characters no embedded face can draw were set as "?" — the report was delivered without them',
+  );
 }
 
 function ensureRoom(doc: PDFKit.PDFDocument, needed: number): void {
