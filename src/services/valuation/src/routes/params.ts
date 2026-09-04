@@ -26,6 +26,39 @@ const Weight = z
   });
 
 const Fraction = z.number().min(0).max(1);
+
+/**
+ * A discount the analyst states outright, held to what the engine will apply.
+ *
+ * `Fraction` admits 1.0, and `compute._check_discount_range` refuses it at both
+ * ends: "a 100% discount says the interest is worthless, which is a conclusion
+ * about the security rather than about its control or its marketability, and
+ * the two applied multiplicatively would make the other one unfalsifiable."
+ * So a DLOM of 1 stored here, under a 200, and the engagement then could not be
+ * calculated at all — the 422 arriving on whoever next pressed Calculate, about
+ * a figure they may not have entered. `routes/engineInputs.ts` states the rule
+ * this breaks a few lines from its own `exit_multiple` check: a refusal the
+ * store defers is a valuation that looks configured and is not.
+ *
+ * Bounded at the *applied* quantum rather than at 1, because R214 moved the
+ * engine's check to run after `_concluded_dlom`'s `round(dlom, 4)`: a stated
+ * 0.99996 is a fraction in [0, 1) here and is refused there as 1.0. Checking
+ * the figure the conclusion is struck with is the same rule, applied at the
+ * door that stores it.
+ *
+ * Only the stated discounts take this. The model and study paths clamp at
+ * `_MAX_DLOM` (0.99) inside the engine and never reach the quantum; the two
+ * that take an analyst's figure without a model to cap it are `params.dlom`
+ * and `dlom_method: 'qualitative'`, which is what `_concluded_dlom`'s docstring
+ * names.
+ */
+const StatedDiscount = z
+  .number()
+  .min(0)
+  .lt(1)
+  .refine((v) => Math.round(v * 1e4) / 1e4 < 1, {
+    message: 'A discount that rounds to 100% concludes the interest is worthless',
+  });
 /** A study year on a firm-supplied evidence table. */
 const StudyYear = z.number().int().min(1900).max(2200).optional();
 /**
@@ -102,7 +135,7 @@ export const ParamsPatchBody = z
     weight_opm: Weight.nullable(),
     weight_income: Weight.nullable(),
     weight_market: Weight.nullable(),
-    dloc: Fraction.nullable(),
+    dloc: StatedDiscount.nullable(),
     // How the DLOC was derived (migration 0132). Null applies `dloc` as a
     // stated figure — the behaviour of every row written before it.
     dloc_method: z.enum(DLOC_METHODS).nullable(),
@@ -140,7 +173,7 @@ export const ParamsPatchBody = z
       .min(1)
       .max(60)
       .nullable(),
-    dlom: Fraction.nullable(),
+    dlom: StatedDiscount.nullable(),
     dlom_method: z.enum(DLOM_METHODS).nullable(),
     /**
      * A discount weighted across several methods, instead of concluded on one.
@@ -155,7 +188,7 @@ export const ParamsPatchBody = z
       .min(2)
       .max(DLOM_METHODS.length)
       .nullable(),
-    dlom_qualitative: Fraction.nullable(),
+    dlom_qualitative: StatedDiscount.nullable(),
     // Restricted-stock study configuration. Validated for shape here and for
     // *membership* by the engine's pre-flight, which owns the study table and
     // is the only thing that can say which names exist.

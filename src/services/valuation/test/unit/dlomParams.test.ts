@@ -373,3 +373,47 @@ describe('validateDlomMethods', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The discounts an analyst states outright, and the range the engine will
+ * actually apply them over (R406, methodology M6).
+ *
+ * `compute._check_discount_range` refuses 1.0 at both ends — a 100% discount is
+ * a conclusion about the security rather than about its control or its
+ * marketability, and two of them applied multiplicatively make each other
+ * unfalsifiable — and R214 moved that check to run *after* `round(dlom, 4)`, so
+ * the refusal is about the figure the conclusion is struck with.
+ *
+ * This schema admitted 1.0. The store returned 200, the engagement looked
+ * configured, and the 422 arrived on whoever next pressed Calculate.
+ */
+describe('stated discounts', () => {
+  for (const field of ['dloc', 'dlom', 'dlom_qualitative'] as const) {
+    describe(field, () => {
+      it('accepts an ordinary discount', () => {
+        expect(ok({ [field]: 0.28 }).success).toBe(true);
+      });
+
+      it('accepts the largest figure the engine will apply', () => {
+        expect(ok({ [field]: 0.9999 }).success).toBe(true);
+      });
+
+      it('refuses a discount of exactly 1', () => {
+        expect(ok({ [field]: 1 }).success).toBe(false);
+      });
+
+      it('refuses a discount that rounds to 1 at the applied quantum', () => {
+        // `_concluded_dlom` rounds to four decimals before the guard runs, so
+        // 0.99996 is refused by the engine as 1.0 — and used to be stored here
+        // as a fraction below one.
+        expect(ok({ [field]: 0.99996 }).success).toBe(false);
+      });
+
+      it('still refuses a negative discount and still allows none at all', () => {
+        expect(ok({ [field]: -0.01 }).success).toBe(false);
+        expect(ok({ [field]: 0 }).success).toBe(true);
+        expect(ok({ [field]: null }).success).toBe(true);
+      });
+    });
+  }
+});
