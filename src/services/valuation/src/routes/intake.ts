@@ -171,6 +171,21 @@ export function registerIntakeRoutes(
       actorType: 'human',
       actorId: principal.id,
     });
+    /*
+     * A repeat comes back with the standing row and its original
+     * `submitted_at`, not with an error: the portal's re-entrant submit already
+     * settled that argument — "the request takes a moment, the button does not
+     * visibly change, and the client presses it again", and telling them it
+     * failed immediately after the press that worked is the one answer that is
+     * both wrong and alarming. Only the null case is left, which is a form with
+     * no required fields and nothing saved against it; `submitQuestionnaire`
+     * used to answer that with a 500.
+     */
+    if (!submitted) {
+      throw problems.conflict(
+        'There are no answers to submit yet — save the questionnaire before submitting it.',
+      );
+    }
     return { submitted_at: submitted.submitted_at, completion, issues };
   });
 
