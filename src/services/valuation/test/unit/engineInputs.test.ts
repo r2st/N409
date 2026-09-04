@@ -134,6 +134,51 @@ describe('EngineInputsBody', () => {
   });
 
   /*
+   * A perpetuity that shrinks (R406). `min(0)` here was the only statement in
+   * the estate that a terminal growth rate cannot be negative: the engine
+   * floors it at -1 and its own remedy text says "-2% is -0.02", the overwrites
+   * registry publishes -0.05 … 0.15 for the same rate, and `healthChecks`
+   * warns on a stored growth below zero — a branch nothing could reach.
+   */
+  describe('a declining perpetuity', () => {
+    it('accepts a negative terminal growth rate', () => {
+      const res = EngineInputsBody.safeParse({
+        income: { discount_rate: 0.14, terminal_growth: -0.02 },
+      });
+      expect(res.success).toBe(true);
+      expect(res.success && res.data.income?.terminal_growth).toBe(-0.02);
+    });
+
+    it('accepts the engine’s own floor of -1 — a flow that stops at the horizon', () => {
+      const res = EngineInputsBody.safeParse({
+        income: { discount_rate: 0.14, terminal_growth: -1 },
+      });
+      expect(res.success).toBe(true);
+    });
+
+    it('refuses a growth rate below the engine’s floor', () => {
+      // Below -100% the Gordon numerator `(1 + g)` goes negative while the
+      // denominator does not, so a positive final cash flow capitalises to a
+      // negative terminal value — and `r > g` is satisfied by every such rate,
+      // so nothing else would catch it.
+      expect(
+        EngineInputsBody.safeParse({ income: { discount_rate: 0.14, terminal_growth: -1.5 } })
+          .success,
+      ).toBe(false);
+    });
+
+    it('leaves r > g satisfied by construction once the growth is negative', () => {
+      // `discount_rate` is `positive()`, so a negative growth can never breach
+      // the Gordon inequality — the reason widening the floor here does not
+      // reopen the divergence the refine below guards.
+      expect(
+        EngineInputsBody.safeParse({ income: { discount_rate: 0.001, terminal_growth: -0.9 } })
+          .success,
+      ).toBe(true);
+    });
+  });
+
+  /*
    * The DCF's two methodology choices. The engine has read all of these, and
    * validated them, since it learned to; this object is `.strict()`, so every
    * one of them was a 400 and no engagement could be stored with the mid-year

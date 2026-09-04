@@ -170,7 +170,35 @@ export const EngineInputsBody = z
         free_cash_flows: z.array(boundedSigned()).max(30).nullable().optional(),
         revenues: z.array(nonNeg).max(30).nullable().optional(),
         discount_rate: z.number().positive().max(1).nullable().optional(),
-        terminal_growth: z.number().min(0).max(1).nullable().optional(),
+        /*
+         * Negative is a perpetuity that shrinks, not a typo (R406, M6).
+         *
+         * `min(0)` here was the only place in the estate that said a terminal
+         * growth rate cannot be negative, and three others say it can:
+         *
+         *   * the engine floors it at -1 and nowhere else — `validate.py`'s
+         *     `out_of_range` check and `projection.terminal_value_gordon` both
+         *     draw the line there, and the engine's own remedy text reads
+         *     "enter the long-run growth rate as a fraction (-2% is -0.02), or
+         *     use -1 for a cash flow that stops at the end of the forecast".
+         *     That instruction was unfollowable: the value never got past this
+         *     schema to reach the engine that offers it.
+         *   * `domain/overwrites.ts` publishes `terminal_growth_rate` over
+         *     -0.05 … 0.15, so the overwrites tab admits the sign this door
+         *     refuses;
+         *   * `domain/healthChecks.ts` raises `terminal_growth_range` as a
+         *     *warning* when the stored growth is below zero — a branch nothing
+         *     could reach, because nothing could store one.
+         *
+         * A declining perpetuity is ordinary work: a wasting asset, a single
+         * expiring contract, a business in run-off. Floored at the engine's own
+         * -1 rather than at the projection route's -0.5, because -1 is the
+         * value the engine names for the case it describes and the pre-flight
+         * exists so that a payload this schema clears is one `/compute` runs.
+         * `r > g` is still enforced below, and is what keeps the Gordon
+         * denominator positive.
+         */
+        terminal_growth: z.number().min(-1).max(1).nullable().optional(),
 
         /**
          * The two methodology choices the DCF offers (approaches.income_dcf).
