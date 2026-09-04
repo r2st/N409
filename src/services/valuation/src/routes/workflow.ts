@@ -156,6 +156,31 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
    * two holders of one read is what a double-clicked button produces, and it
    * used to buy a duplicate transition with its own client email.
    */
+  /*
+   * THE TWO RENDER DEPS TRAVEL WITH THE TRANSITION (R408, methodology M3).
+   *
+   * `TransitionRenderDeps` exists because "four route modules and
+   * `applyValuationState` all have to pass them through to `onStateChanged`,
+   * and a spread-out list of two optional fields is how one of them ends up
+   * with only the first". This was the one that ended up with neither.
+   *
+   * `WorkflowDeps extends TransitionRenderDeps` and `app.ts` hands both in, so
+   * they were on `deps` the whole time and dropped one line before use. Both
+   * are optional on the hook, so nothing typed the omission and nothing
+   * refused it — the transition still fired, still queued the mail, and still
+   * reported success.
+   *
+   * What the client read is the difference. `valuationLinkVars` renders an
+   * absent base URL as the empty string rather than as braces, so every
+   * `{{valuation_link}}` and `{{payment_link}}` in a state-change email sent
+   * from this module arrived as a gap in the sentence — "view your report at
+   * ." — and `{{support_email}}` with it. These are the primary operator doors
+   * for moving an engagement: `/workflow/advance`, `/workflow/restart`, and
+   * every `set_state`/`advance`/`restart` arm of the bulk board. The same
+   * transition driven through `PATCH /valuations/:id` or a review decision
+   * carried a working link, so the identical `draft_ready` template reached two
+   * clients two different ways depending on which control the analyst pressed.
+   */
   const applyState = async (
     valuation: ValuationRow,
     to: ValuationState,
@@ -163,7 +188,13 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     source: string,
   ): Promise<ValuationRow> =>
     applyValuationState(
-      { pool: deps.pool, transport: deps.transport, log: app.log },
+      {
+        pool: deps.pool,
+        transport: deps.transport,
+        log: app.log,
+        publicBaseUrl: deps.publicBaseUrl,
+        settings: deps.settings,
+      },
       valuation,
       to,
       actorFor(principal, source),
