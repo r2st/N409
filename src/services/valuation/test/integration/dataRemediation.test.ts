@@ -9,20 +9,33 @@ import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from '.
 
 const dbUp = await isDbAvailable();
 
+/**
+ * Runs inside the engine's round trip, if a test sets one.
+ *
+ * The window this file's hardest case is about is the one between the engine
+ * being asked and the row being written, and the only way to be *in* it is to
+ * be the engine. A test that has to change the world mid-request puts the
+ * change here.
+ */
+let duringCompute: (() => Promise<void>) | null = null;
+
 /** Engine stub — a clean run with no single-breakpoint backsolve in it. */
 async function startEngineStub() {
   const stub = Fastify({ logger: false });
   stub.get('/engine/v1/health', async () => ({ engine_version: 'stub-1' }));
-  stub.post('/engine/v1/compute', async () => ({
-    engine_version: 'stub-1',
-    results: {
-      equity_value: 12_000_000,
-      fmv_per_share: 1.4,
-      approaches: { opm_backsolve: { method: 'backsolve_waterfall', equity_value: 12_000_000 } },
-      discounts: { dlom: 0.3, dlom_method: 'chaffee' },
-    },
-    warnings: [],
-  }));
+  stub.post('/engine/v1/compute', async () => {
+    await duringCompute?.();
+    return {
+      engine_version: 'stub-1',
+      results: {
+        equity_value: 12_000_000,
+        fmv_per_share: 1.4,
+        approaches: { opm_backsolve: { method: 'backsolve_waterfall', equity_value: 12_000_000 } },
+        discounts: { dlom: 0.3, dlom_method: 'chaffee' },
+      },
+      warnings: [],
+    };
+  });
   await stub.listen({ port: 0, host: '127.0.0.1' });
   const address = stub.server.address();
   const port = typeof address === 'object' && address ? address.port : 0;
@@ -207,6 +220,54 @@ describe.skipIf(!dbUp)('data remediation', () => {
     // It stays listed, because it still needs a human decision.
     const listed = (await queue()).json().stale_backsolves.rows as Array<{ company_name: string }>;
     expect(listed.map((r) => r.company_name)).toContain('Stale Published Co');
+  });
+
+  /**
+   * The publish gate, asked in the window it is actually raced in (R411, M4).
+   *
+   * The check above is resolved once for the whole batch. `MAX_RERUN` is 25
+   * and each iteration spends an engine round trip, so the promise it makes —
+   * nothing here is published — was about the instant the operator pressed the
+   * button, and the row the loop reaches last is written minutes later. An
+   * engagement that publishes inside that window used to get a fresh
+   * `succeeded` calculation written under a signed opinion, which is the one
+   * outcome this whole surface exists to prevent.
+   *
+   * Published from inside the engine's own handler, because that is where the
+   * window is: the request is in flight, the eligibility read has already
+   * happened, and the row has not been written yet.
+   */
+  it('does not write a run for an engagement that publishes mid-batch (R411)', async () => {
+    const racedId = await createValuation('Publishes Mid Batch Co');
+    await staleCalculation(racedId, 1_200_000);
+    duringCompute = async () => {
+      await pool.query(`UPDATE valuations SET state = 'published' WHERE id = $1`, [racedId]);
+    };
+    let res;
+    try {
+      res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/data-remediation/rerun',
+        headers: authHeader(ops.token),
+        payload: { valuation_ids: [racedId] },
+      });
+    } finally {
+      duringCompute = null;
+    }
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().succeeded).toBe(0);
+    // Named, not collapsed into "Re-run failed": the operator has to be able to
+    // tell the gate refusing a row from the engine falling over on one.
+    expect(res.json().results[0].error).toMatch(/left the re-runnable queue/i);
+
+    // Nothing was written. The signed opinion's figure is still the latest run.
+    const { rows } = await pool.query<{ equity_value: string; status: string }>(
+      'SELECT equity_value, status FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC',
+      [racedId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]!.equity_value)).toBe(9_000_000);
   });
 
   it('refuses an id that is not in the queue at all', async () => {

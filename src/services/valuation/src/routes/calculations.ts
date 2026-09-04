@@ -365,6 +365,20 @@ export async function runCalculation(
     baselineId?: string;
     createdBy: string;
     actor: EventActor;
+    /**
+     * A caller's own last question, asked in the same window
+     * `refuseIfRetiredNow` below is asked in and answered the same way — by
+     * throwing, so nothing is written.
+     *
+     * Retirement is the question every caller shares and is asked here for all
+     * of them. A caller can have one of its own: the remediation console's
+     * batch re-run is confined to engagements that have not published, and
+     * "published since you loaded this" is the race its own header says must
+     * not result in a rewritten opinion. Checked once for the batch, that
+     * promise covered the moment the operator pressed the button and not the
+     * minutes of engine round trips after it.
+     */
+    beforePersist?: () => Promise<void>;
   },
 ): Promise<CalculationRow> {
   /*
@@ -425,6 +439,9 @@ export async function runCalculation(
     // draws when it settles a job whose effect it then declines to apply — and
     // turning a recorded engine failure into a 409 would lose it.
     await refuseIfRetiredNow(deps.pool, args.valuation.id, 'accepting calculations');
+    // And whatever else the caller has to be sure of at this instant, for the
+    // same reason and in the same window. See `beforePersist`.
+    await args.beforePersist?.();
     return await createCalculation(
       deps.pool,
       {

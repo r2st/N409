@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { describeForUser, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -169,13 +169,58 @@ export function registerDataRemediationRoutes(
           inputs,
           createdBy: principal.id,
           actor: { actorType: 'engine', actorId: principal.id, source: 'engine-wrapper' },
+          /*
+           * ASKED AGAIN, PER ROW, IN FRONT OF THE WRITE (R411, methodology M4).
+           *
+           * `findRerunnableBacksolves` above is the publish gate this file's
+           * header describes — "the bulk re-run refuses published engagements
+           * by construction rather than by a checkbox someone can tick" — and
+           * it was asked once, for the whole batch, before any of it ran. What
+           * it therefore promised was that nothing was published when the
+           * operator pressed the button. `MAX_RERUN` is 25 and each iteration
+           * spends an engine round trip with a 30s ceiling, so the batch is
+           * minutes long, and the row this loop reaches last was checked at the
+           * start of all of them.
+           *
+           * An engagement that publishes inside that window gets a fresh
+           * `succeeded` calculation written under a signed opinion. That row is
+           * what `latestCalculation` hands the report summary, the exhibits and
+           * the workspace header — so the platform then quotes a different FMV
+           * per share than the PDF the client is holding, with nothing on
+           * either saying they disagree. It is the one outcome this route's own
+           * header says must not happen.
+           *
+           * The same predicate, re-asked for one id in the window
+           * `refuseIfRetiredNow` occupies — after the engine has answered and
+           * before the row exists. It re-reads more than the state: a run
+           * somebody else re-ran in the meantime is no longer a stale backsolve
+           * either, and this row would overwrite their conclusion with one
+           * struck from inputs read before it.
+           */
+          beforePersist: async () => {
+            if ((await findRerunnableBacksolves(deps.pool, [id])).has(id)) return;
+            throw problems.conflict(
+              'This engagement left the re-runnable queue while the batch was running — it has ' +
+                'published, been withdrawn, or already been re-run. Nothing was written for it.',
+            );
+          },
         });
         results.push({ valuation_id: id, ok: true });
       } catch (err) {
         // A 200 body is still a body somebody reads. `err.message` carries the
         // raw upstream detail whenever `opaque` is set, which is the case the
         // flag exists for — see `describeForUser`.
-        const message = err instanceof InternalServiceError ? describeForUser(err) : 'Re-run failed';
+        //
+        // The 409 above is ours, word for word, and it is the one refusal an
+        // operator can act on: it names why this row was skipped and says
+        // nothing was written. Collapsing it into "Re-run failed" beside a
+        // genuine engine fault would hide the publish gate doing its job.
+        const message =
+          err instanceof InternalServiceError
+            ? describeForUser(err)
+            : err instanceof ApiProblem && err.status === 409
+              ? err.detail
+              : 'Re-run failed';
         req.log.warn({ err, valuationId: id }, 'remediation re-run failed');
         results.push({ valuation_id: id, ok: false, error: message });
       }
