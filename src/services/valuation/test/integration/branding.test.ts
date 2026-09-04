@@ -577,3 +577,113 @@ describe.skipIf(!dbUp)('branding cache invalidation is scoped to the tenant writ
     expect((await get('/api/v1/public/branding', { host })).json().branding.name).toBe('Toggler');
   });
 });
+
+/**
+ * The ops console is the *second* writer of these reads (R418, methodology M4).
+ *
+ * `PATCH /api/v1/branding` — the firm's own editor, covered above — held the
+ * branding cache in its route closure, so it was the only door that could
+ * invalidate anything. `PATCH /api/v1/partners/:id` writes the same table from
+ * the ops console: `name`, `brand_color`, `logo_url`, `subdomain` and
+ * `archived_at`, every one of which changes what these three reads answer. It
+ * had no way to name the cache, so it dropped nothing, and the administrator
+ * who had just made the change was served the old one for a full minute — which
+ * reads as a failed save, not as a cache.
+ *
+ * Each of these fails on the pre-R418 code with the *previous* value, and none
+ * of them waits out the TTL: the assertion is that the write took effect on the
+ * next request, which is the only thing the person making it can observe.
+ */
+describe.skipIf(!dbUp)('branding follows a write made through the ops console', () => {
+  let ctx: TestApp;
+  let admin: Awaited<ReturnType<typeof seedUser>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ APP_BASE_DOMAIN: 'app.409.ai' });
+    admin = await seedUser(ctx, { roles: ['admin'] });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const newPartner = async (key: string): Promise<string> => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/partners',
+      headers: authHeader(admin.token),
+      payload: { name: `Firm ${key}`, key },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().partner.id as string;
+  };
+
+  const patchPartner = async (id: string, payload: Record<string, unknown>): Promise<void> => {
+    const res = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/partners/${id}`,
+      headers: authHeader(admin.token),
+      payload,
+    });
+    expect(res.statusCode).toBe(200);
+  };
+
+  const bySlug = (slug: string) => ctx.app.inject({ method: 'GET', url: `/api/v1/public/branding/${slug}` });
+  const byHost = (host: string) =>
+    ctx.app.inject({ method: 'GET', url: '/api/v1/public/branding', headers: { host } });
+
+  it('renames a tenant on the login page it brands', async () => {
+    // `name` is not in BRANDING_PATCH_SCHEMA at all — the console is the only
+    // door onto it — and `publicPartnerName` resolves to it for every tenant
+    // that has not set a brand name, which is most of them.
+    const slug = 'console-rename';
+    const id = await newPartner(slug);
+    // A tenant with white label off resolves to platform branding outright, so
+    // the flag has to be on for the firm's own name to be the one on the page.
+    // The console cannot set it; the firm's own editor does, as in production.
+    await ctx.pool.query('UPDATE partners SET white_label_enabled = true WHERE id = $1', [id]);
+    expect((await bySlug(slug)).json().branding.name).toBe(`Firm ${slug}`);
+
+    await patchPartner(id, { name: 'Renamed In Console' });
+    expect((await bySlug(slug)).json().branding.name).toBe('Renamed In Console');
+  });
+
+  it('serves a firm created under a slug that was 404ing a moment ago', async () => {
+    // The miss is cached as `null` and carries no tag, so nothing about the new
+    // partner's id can reach it: the slug itself has to be dropped.
+    const slug = 'freshly-created';
+    expect((await bySlug(slug)).statusCode).toBe(404);
+    await newPartner(slug);
+    expect((await bySlug(slug)).statusCode).toBe(200);
+  });
+
+  it('stops branding a firm the console archives, and resumes when it is restored', async () => {
+    // The resolution rule itself: all three reads are `AND archived_at IS NULL`.
+    const slug = 'console-archived';
+    const id = await newPartner(slug);
+    expect((await bySlug(slug)).statusCode).toBe(200);
+
+    await patchPartner(id, { archived: true });
+    expect((await bySlug(slug)).statusCode).toBe(404);
+
+    await patchPartner(id, { archived: false });
+    expect((await bySlug(slug)).statusCode).toBe(200);
+  });
+
+  it('moves a tenant to the address the console gives it', async () => {
+    // Both halves in one write: the old label must stop resolving (the tag
+    // reaches it, because that entry resolved to this partner) and the new one
+    // must start (a cached `null`, which only the key can reach).
+    const slug = 'console-moved';
+    const id = await newPartner(slug);
+    await patchPartner(id, { subdomain: 'oldhome' });
+    // White label is what makes a subdomain resolve; the console cannot set it,
+    // so the firm's own editor does, exactly as it would in production.
+    await ctx.pool.query('UPDATE partners SET white_label_enabled = true WHERE id = $1', [id]);
+    expect((await byHost('oldhome.app.409.ai')).json().branding.name).toBe(`Firm ${slug}`);
+    // Warm the address the firm is about to move to, as nobody's.
+    expect((await byHost('newhome.app.409.ai')).json().branding.name).toBe(PLATFORM_BRANDING.name);
+
+    await patchPartner(id, { subdomain: 'newhome' });
+
+    expect((await byHost('newhome.app.409.ai')).json().branding.name).toBe(`Firm ${slug}`);
+    expect((await byHost('oldhome.app.409.ai')).json().branding.name).toBe(PLATFORM_BRANDING.name);
+  });
+});

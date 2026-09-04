@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { conditionalJson, problems, TtlCache } from '@n409/shared';
+import { conditionalJson, problems } from '@n409/shared';
 import { canManageBranding, canManageUsers } from '../auth/rbac.js';
 import {
   BRANDING_PATCH_SCHEMA,
@@ -13,9 +13,11 @@ import {
 } from '../domain/branding.js';
 import { normalizeSubdomain, subdomainFromHost } from '../domain/partnerSubdomain.js';
 import {
-  findBrandingByKey,
   findBrandingByPartnerId,
-  findBrandingBySubdomain,
+  invalidateBranding,
+  loadBrandingByKey,
+  loadBrandingByPartnerId,
+  loadBrandingBySubdomain,
   publicPartnerNameSql,
   updateBranding,
 } from '../repos/branding.js';
@@ -56,7 +58,8 @@ export function registerBrandingRoutes(
   });
 
   /**
-   * Read-through cache for the three resolved-branding reads.
+   * The three resolved-branding reads are served through the read-through
+   * cache in `repos/branding.ts`.
    *
    * These are the most-requested endpoints on the platform that are not static
    * assets, and the docstrings above say why: the signed-out SPA calls
@@ -70,30 +73,11 @@ export function registerBrandingRoutes(
    * worth having and they save different things: the cache stops the query, and
    * the ETag below stops the transmission.
    *
-   * 60s matches the blog's, and the TTL is the *ceiling* on staleness rather
-   * than the mechanism — every write invalidates the tenant it wrote (see PATCH).
+   * The cache moved to the repo when `PATCH /api/v1/partners/:id` turned out to
+   * be a second writer of the same columns with no way to reach it — see
+   * `invalidateBranding`. Nothing about the caching changed: 60s ceiling, one
+   * tag per tenant, every write invalidating the tenant it wrote.
    */
-  const cache = new TtlCache<unknown>({ ttlMs: 60_000 });
-
-  /**
-   * The tag every cached branding entry carries: the partner it resolved to.
-   *
-   * Derived from the loaded row rather than from the key, which is the point.
-   * The same tenant is cached under three unrelated keys — `key:<slug>`,
-   * `subdomain:<label>`, `partner:<id>` — and only the row knows they are the
-   * same tenant. Tagging at load time means a write has to name the partner it
-   * wrote and nothing else; it never has to know how many ways that partner is
-   * filed, which is the knowledge that would go stale when a fourth key shape
-   * is added.
-   *
-   * A miss cached as `null` carries no tag, because there is no tenant for it
-   * to belong to. Those are handled by key at the write site, where the slug
-   * and subdomain being written are known — see PATCH.
-   */
-  const brandingTags = (row: unknown): readonly string[] | undefined => {
-    const id = (row as { id?: string } | null)?.id;
-    return id ? [`partner:${id}`] : undefined;
-  };
 
   /**
    * `public` for the two anonymous reads: the response depends on the request
@@ -118,11 +102,7 @@ export function registerBrandingRoutes(
     // The miss is cached too (as null), so a scan for tenant slugs that do not
     // exist does not turn into a query per 404 — the same reasoning the blog
     // applies to unknown post slugs, and this route is anonymous as well.
-    const source = (await cache.getOrLoad(
-      `key:${key}`,
-      async () => (await findBrandingByKey(deps.pool, key)) ?? null,
-      brandingTags,
-    )) as Awaited<ReturnType<typeof findBrandingByKey>> | null;
+    const source = await loadBrandingByKey(deps.pool, key);
     if (!source) throw problems.notFound();
     return conditionalJson(req, reply, respond(resolveBranding(source)), PUBLIC_REVALIDATE);
   });
@@ -143,11 +123,7 @@ export function registerBrandingRoutes(
     // Keyed by the resolved label rather than by the raw Host: several hosts
     // reduce to one tenant, and caching per Host would hold a copy for each
     // while inventing a new key for every made-up Host header sent at us.
-    const source = (await cache.getOrLoad(
-      'subdomain:' + label,
-      async () => findBrandingBySubdomain(deps.pool, label),
-      brandingTags,
-    )) as Awaited<ReturnType<typeof findBrandingBySubdomain>>;
+    const source = await loadBrandingBySubdomain(deps.pool, label);
     return conditionalJson(req, reply, respond(resolveBranding(source)), PUBLIC_REVALIDATE);
   });
 
@@ -163,11 +139,7 @@ export function registerBrandingRoutes(
     // own tenant rather than by the URI, so a shared cache holding it would
     // serve one firm's brand to another's staff.
     if (!principal.partnerId) return conditionalJson(req, reply, respond(PLATFORM_BRANDING));
-    const source = (await cache.getOrLoad(
-      `partner:${principal.partnerId}`,
-      async () => findBrandingByPartnerId(deps.pool, principal.partnerId!),
-      brandingTags,
-    )) as Awaited<ReturnType<typeof findBrandingByPartnerId>>;
+    const source = await loadBrandingByPartnerId(deps.pool, principal.partnerId);
     return conditionalJson(req, reply, respond(resolveBranding(source)));
   });
 
@@ -266,8 +238,11 @@ export function registerBrandingRoutes(
     // host — so a single firm editing its logo was dumping every other firm's
     // resolved brand and CSS ramps, and each of those tenants then re-queried on
     // its next request.
-    cache.invalidateTag(`partner:${partnerId}`);
-
+    //
+    // Both halves are one call now that the cache lives in the repo, because
+    // the ops console writes these columns too; `invalidateBranding` holds the
+    // tag argument above and the by-key argument below in full.
+    //
     // The tag cannot cover a `null`: a miss cached for a subdomain that
     // resolved to no tenant has no partner to be tagged with, and this handler
     // is exactly what makes such a miss wrong. Two writes do it — a firm
@@ -288,7 +263,7 @@ export function registerBrandingRoutes(
     // BRANDING_PATCH_SCHEMA: a slug is assigned when the partner is created and
     // this handler cannot change it, so no write here can turn a cached
     // `key:<slug> → null` into a lie.
-    if (source.subdomain) cache.delete(`subdomain:${source.subdomain}`);
+    invalidateBranding(partnerId, { subdomain: source.subdomain });
 
     await recordAdminEvent(deps.pool, {
       type: 'branding_updated',

@@ -9,7 +9,7 @@ import { PARTNER_ROLES, ROLE_KEYS, RoleSet, type RoleKey } from '../domain/roles
 import { CAPABILITIES, ROLE_DEFS, capabilitiesFor } from '../domain/permissions.js';
 import { normalizeSubdomain } from '../domain/partnerSubdomain.js';
 import { liveBrand } from '../domain/branding.js';
-import { findBrandingByPartnerId } from '../repos/branding.js';
+import { findBrandingByPartnerId, invalidateBranding } from '../repos/branding.js';
 import { NullablePhone } from '../domain/phone.js';
 import { listValuations } from '../repos/valuations.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
@@ -960,6 +960,11 @@ export function registerAdminUserRoutes(
     if (!parsed.success) throw invalidBody('Invalid partner', parsed.error);
     try {
       const partner = await createPartner(deps.pool, parsed.data);
+      // A slug that did not exist a minute ago is cached as belonging to
+      // nobody, and this is the write that makes that miss wrong: the login
+      // page at `/public/branding/:key` would go on 404ing the firm it was
+      // just created for. The tag cannot reach a `null`, so the slug is named.
+      invalidateBranding(partner.id, { key: partner.key });
       await audit(principal.id, 'partner_created', 'partner', partner.id, partner.name);
       return reply.status(201).send({ partner });
     } catch (err) {
@@ -1046,6 +1051,26 @@ export function registerAdminUserRoutes(
       throw err;
     }
     if (!partner) throw problems.notFound();
+    /*
+     * The second writer of the branding reads, and until now the one that could
+     * not reach their cache — which is why it moved to the repo (R418, M4).
+     *
+     * Every column this form writes is one the three resolved-branding reads
+     * answer from. `name` is what a tenant with white label off is called
+     * everywhere; `brand_color` and `logo_url` are the same two columns the
+     * firm's own editor writes, through a different door; `subdomain` decides
+     * which address resolves here at all; and `archived` is the resolution rule
+     * itself — all three reads are `AND archived_at IS NULL`, so a firm closed
+     * from this page went on branding its own login page for a full minute
+     * after it was closed, and one reopened stayed unbranded for one.
+     *
+     * The tag drops every key the tenant is filed under, including the label it
+     * held before a rename here. The two named keys are for the misses no tag
+     * can carry: the subdomain being claimed (cached as nobody's while it was
+     * unclaimed) and the slug (cached as nobody's while the firm was archived,
+     * since `findBrandingByKey` resolves an archived channel to null).
+     */
+    invalidateBranding(partner.id, { key: partner.key, subdomain: partner.subdomain });
     await audit(principal.id, 'partner_updated', 'partner', partner.id, partner.name, {
       fields: Object.keys(parsed.data),
     });

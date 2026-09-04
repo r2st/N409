@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { TtlCache } from '@n409/shared';
 import type { BrandingPatch, BrandingSource } from '../domain/branding.js';
 
 /**
@@ -145,4 +146,108 @@ export async function updateBranding(
     params,
   );
   return rows[0] ?? null;
+}
+
+/* ── The read-through cache the three resolved-branding reads share ──────────
+ *
+ * Lives here rather than in `routes/branding.ts`, where it was, because the
+ * table has two writers and the cache could only be reached from one of them.
+ *
+ * `PATCH /api/v1/branding` (the firm's own editor, `updateBranding` above) held
+ * the cache in its route closure and invalidated correctly. `PATCH
+ * /api/v1/partners/:id` — the ops console's partner form, `updatePartner` in
+ * repos/adminUsers.ts — writes `name`, `brand_color`, `logo_url`, `subdomain`
+ * and `archived_at` on the same rows and could not invalidate anything, because
+ * the cache was not a thing another module could name. Every one of those
+ * columns changes what these reads answer:
+ *
+ *   * `name` is what `publicPartnerName` resolves to whenever white label is
+ *     off or `brand_name` is blank — which is most tenants — so a firm renamed
+ *     in the console kept its old name on every branded surface.
+ *   * `brand_color` and `logo_url` are the brand itself, and they are in
+ *     `BRANDING_COLUMNS`: the console writes the same two columns the firm's
+ *     own editor does, through a different door.
+ *   * `archived_at` is the whole resolution rule — all three reads are `AND
+ *     archived_at IS NULL` — so a closed firm went on branding the login page
+ *     at its own address after it was closed.
+ *   * `subdomain` moves which address resolves to the tenant at all.
+ *
+ * Sixty seconds of it, so it heals; the point is that the administrator
+ * watching for the change is told the write did not take. Same shape as the
+ * valuation row cache: the TTL is the ceiling on staleness for a writer nobody
+ * wired up, and the invalidation is what makes it correct.
+ */
+const BRANDING_CACHE_TTL_MS = 60_000;
+
+const brandingCache = new TtlCache<BrandingSource | null>({ ttlMs: BRANDING_CACHE_TTL_MS });
+
+/**
+ * The tag every cached entry carries: the partner it resolved to.
+ *
+ * Derived from the loaded row rather than from the key. The same tenant is
+ * cached under three unrelated keys — `key:<slug>`, `subdomain:<label>`,
+ * `partner:<id>` — and only the row knows they are the same tenant, so a write
+ * names the partner it wrote and never has to know how many ways that partner
+ * is filed. A miss cached as `null` carries no tag, because there is no tenant
+ * for it to belong to; those are dropped by key — see {@link invalidateBranding}.
+ */
+const brandingTags = (row: BrandingSource | null): readonly string[] | undefined =>
+  row?.id ? [`partner:${row.id}`] : undefined;
+
+/** Cached {@link findBrandingByKey}, for the signed-out login page. */
+export async function loadBrandingByKey(pool: pg.Pool, key: string): Promise<BrandingSource | null> {
+  return brandingCache.getOrLoad(`key:${key}`, () => findBrandingByKey(pool, key), brandingTags);
+}
+
+/** Cached {@link findBrandingBySubdomain}, for a white-label tenant address. */
+export async function loadBrandingBySubdomain(
+  pool: pg.Pool,
+  subdomain: string,
+): Promise<BrandingSource | null> {
+  return brandingCache.getOrLoad(
+    `subdomain:${subdomain}`,
+    () => findBrandingBySubdomain(pool, subdomain),
+    brandingTags,
+  );
+}
+
+/** Cached {@link findBrandingByPartnerId}, for the signed-in tenant's brand. */
+export async function loadBrandingByPartnerId(
+  pool: pg.Pool,
+  partnerId: string,
+): Promise<BrandingSource | null> {
+  return brandingCache.getOrLoad(
+    `partner:${partnerId}`,
+    () => findBrandingByPartnerId(pool, partnerId),
+    brandingTags,
+  );
+}
+
+/**
+ * Drop a tenant from the branding cache. Call after any statement that writes
+ * a `partners` column these reads resolve — from either writer.
+ *
+ * The tag drops every key the tenant is filed under, whatever that key was
+ * called when it was written, so a rename needs no special handling: the entry
+ * under the *old* subdomain resolved to this partner and is tagged with it.
+ *
+ * What the tag cannot cover is a cached `null` — an address or a slug that
+ * resolved to nobody has no partner to be tagged with, and a write is exactly
+ * what makes such a miss wrong. So `keys` names the slug and the label the
+ * write is claiming, and they are dropped by key: a firm taking `acme`, a firm
+ * already holding `acme` turning white label on, a partner created under a slug
+ * somebody 404'd for a minute ago, and an archived firm reopened under both.
+ */
+export function invalidateBranding(
+  partnerId: string,
+  keys: { key?: string | null; subdomain?: string | null } = {},
+): void {
+  brandingCache.invalidateTag(`partner:${partnerId}`);
+  if (keys.key) brandingCache.delete(`key:${keys.key}`);
+  if (keys.subdomain) brandingCache.delete(`subdomain:${keys.subdomain}`);
+}
+
+/** Empties the cache. For tests. */
+export function clearBrandingCache(): void {
+  brandingCache.clear();
 }
