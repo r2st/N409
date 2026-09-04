@@ -765,7 +765,44 @@ def exit_allocation(exit_value: float, classes: list[dict]) -> dict:
         raise EngineInputError("exit_value must be >= 0 for the waterfall allocation")
     normalized = _normalize(classes)
     segments = _segments(normalized)
+    return _fill_segments(exit_value, normalized, segments)
 
+
+def exit_allocator(classes: list[dict]) -> Callable[[float], dict]:
+    """``exit_allocation`` with the cap table prepared once (R409, M8).
+
+    The same hoist as ``class_per_share_objective``, for the same reason and on
+    the other allocation loop in the engine. PWERM allocates every one of its
+    scenarios — up to 50 — through ``exit_allocation``, and the only thing that
+    changes between them is the exit value: ``_normalize`` over the raw list and
+    ``_segments``' event loop over the normalised one read none of it. At the
+    ``MAX_SHARE_CLASSES`` ceiling of 200 that prep is 3.44 ms, so a 50-scenario
+    PWERM spent ~172 ms rebuilding one structure fifty times.
+
+    ``allocate_pwerm`` already calls ``normalize_share_classes`` before the loop
+    — "this surfaces a bad cap table before we loop over scenarios" — so a
+    malformed table was raising ahead of the first scenario either way, and
+    building the structure here changes nothing about which error a caller gets.
+    ``exit_value`` is the argument that moves, so its guard stays per call.
+    """
+    normalized = _normalize(classes)
+    segments = _segments(normalized)
+
+    def allocate(exit_value: float) -> dict:
+        _finite(exit_value, "exit_value")
+        if exit_value < 0:
+            raise EngineInputError("exit_value must be >= 0 for the waterfall allocation")
+        return _fill_segments(exit_value, normalized, segments)
+
+    return allocate
+
+
+def _fill_segments(exit_value: float, normalized: list[dict], segments: list[dict]) -> dict:
+    """The only part of ``exit_allocation`` that depends on ``exit_value``.
+
+    Reads ``normalized`` and ``segments`` and mutates neither, so one prepared
+    pair serves as many exit values as a PWERM has scenarios.
+    """
     values: dict[str, float] = {c["name"]: 0.0 for c in normalized}
     breakpoints: list[dict] = []
     for seg in segments:

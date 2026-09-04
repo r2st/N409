@@ -27,7 +27,7 @@ import math
 
 from .compounding import compound_factor
 from .errors import EngineInputError
-from .waterfall import exit_allocation, normalize_share_classes
+from .waterfall import exit_allocator, normalize_share_classes
 
 # Informational only — the method never branches on the label, but validating
 # it keeps scenario data clean and self-documenting in the stored payload.
@@ -88,9 +88,15 @@ def allocate_pwerm(
         raise EngineInputError("pwerm.scenarios must be a non-empty list")
     if len(scenarios) > 50:
         raise EngineInputError("pwerm.scenarios: at most 50 scenarios")
-    # Validate the cap table once up front (each exit_allocation re-validates,
-    # but this surfaces a bad cap table before we loop over scenarios).
+    # Validate the cap table once up front (this surfaces a bad cap table
+    # before we loop over scenarios).
     normalized = normalize_share_classes(share_classes)
+    # And build the breakpoint structure once as well (R409, M8). Every
+    # scenario below allocates the same cap table at a different exit value,
+    # and `exit_allocation` re-derived `_normalize` + `_segments` on each of
+    # them — 3.44 ms of a 200-class table, fifty times over, for a structure
+    # that does not depend on the exit value at all.
+    allocate_at = exit_allocator(share_classes)
     shares_by_class = {c["name"]: c["shares"] for c in normalized}
 
     weighted_value: dict[str, float] = {c["name"]: 0.0 for c in normalized}
@@ -124,7 +130,7 @@ def allocate_pwerm(
         if rate <= -1:
             raise EngineInputError(f"scenarios[{i}].discount_rate must exceed -1")
 
-        alloc = exit_allocation(equity, share_classes)
+        alloc = allocate_at(equity)
         discount_factor = compound_factor(rate, t, f"scenarios[{i}].discount_rate")
 
         classes_pv: dict[str, dict] = {}
