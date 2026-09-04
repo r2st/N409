@@ -448,13 +448,35 @@ describe('PortfolioPage — creating an organization', () => {
     expect(await screen.findByText('Mixed currencies')).toBeInTheDocument();
   });
 
-  it('says so when an organization cannot be opened', async () => {
+  it('surfaces the server’s own reason when an organization cannot be opened', async () => {
+    // R427: `describeLoadFailure` prefers a `detail` the server wrote over the
+    // page's own fallback sentence — this API's own `/organizations/:id` sends
+    // a bare 404 by design, but the helper's contract is general, and this
+    // pins it against any detail-carrying refusal.
     const user = userEvent.setup();
     const beta = { ...org, id: 'org2', name: 'Beta Fund' };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       const key = String(url).replace(/^.*\/api\/v1/, '');
       if (key === '/organizations') return jsonResponse({ organizations: [org, beta] });
       if (key === '/organizations/org2') return jsonResponse({ detail: 'gone' }, 404);
+      return jsonResponse(detail);
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Beta Fund' }));
+
+    expect(await screen.findByText('gone')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load the organization.')).toBeNull();
+  });
+
+  it('falls back to its own sentence when the server gives no reason', async () => {
+    const user = userEvent.setup();
+    const beta = { ...org, id: 'org2', name: 'Beta Fund' };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const key = String(url).replace(/^.*\/api\/v1/, '');
+      if (key === '/organizations') return jsonResponse({ organizations: [org, beta] });
+      // What this route actually sends — a bare 404, deliberately, per R180.
+      if (key === '/organizations/org2') return jsonResponse({}, 404);
       return jsonResponse(detail);
     });
 

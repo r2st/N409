@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, describeActionFailure } from '../lib/api';
+import { api, ApiError, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import {
   isEmailAddress,
@@ -517,7 +517,9 @@ function PartnerValuations({ partnerId }: { partnerId: string }) {
         setRows(d.valuations);
         setTotal(d.total);
       })
-      .catch(() => current() && setError('Could not load this partner’s engagements.'));
+      .catch(
+        (err: unknown) => current() && setError(describeLoadFailure(err, 'Could not load this partner’s engagements.')),
+      );
   }, [partnerId, page, claim]);
 
   // The pager is the question. Without this, page 2's engagements sat under a

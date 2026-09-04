@@ -131,6 +131,45 @@ function messageCallArguments(source: string): string[] {
   return out;
 }
 
+/**
+ * Every `.catch(() => …)` body whose arrow takes no parameter — so it has
+ * nothing to hand a helper even if it wanted to. Covers both an expression
+ * body (`.catch(() => current() && setError('X'))`) and a block body
+ * (`.catch(() => { if (x) setError('X'); })`); the R374 census only matched
+ * `set…(` directly after `=>` and so missed every guarded read — the
+ * `useLatestOnly`/`cancelled` idiom this codebase uses on nearly every load.
+ */
+function zeroArgCatchBodies(source: string): string[] {
+  const text = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const out: string[] = [];
+  const re = /\.catch\(\(\)\s*=>\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    let i = m.index + m[0].length;
+    if (text[i] === '{') {
+      const start = i;
+      let depth = 0;
+      for (; i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}' && --depth === 0) {
+          i++;
+          break;
+        }
+      }
+      out.push(text.slice(start, i));
+    } else {
+      const start = i;
+      let depth = 1; // the still-open '(' of '.catch('
+      for (; i < text.length; i++) {
+        if (text[i] === '(') depth++;
+        else if (text[i] === ')' && --depth === 0) break;
+      }
+      out.push(text.slice(start, i));
+    }
+  }
+  return out;
+}
+
 describe('a page that cannot reach the server says so', () => {
   it('finds the files it is auditing', () => {
     // A census that matches nothing passes every assertion under it.
@@ -381,12 +420,26 @@ describe('a page that cannot reach the server says so', () => {
    * otherwise returns the page's own sentence untouched, because the
    * write-flavoured prose ("Nothing was changed") says nothing true about a
    * GET.
+   *
+   * R427 widened this from a fixed `.catch(() => setError(` string match to
+   * `zeroArgCatchBodies`, because the original missed every load guarded by
+   * `useLatestOnly`/`cancelled` — `.catch(() => current() && setError('Could
+   * not load users.'))` has no `err` between `=>` and `setError` either, and
+   * six call sites (`PortfolioPage`, `AdminUsersPage`, `ValuationsPage`,
+   * `PartnerDetailPage`, `SearchPage`, `PackageTab`, `DashboardPage`'s
+   * analytics pivot) had exactly that shape. Three of those seven discard a
+   * `forbidden()` detail that says why the read failed — the same 403 case
+   * `describeLoadFailure` exists for — and none of the seven distinguishes a
+   * validation refusal (a stale sort term, a malformed date range, a search
+   * string over 200 characters) from an outage.
    */
   it('opens the body at every load that displays a sentence', () => {
     const findings = sources
       .filter(({ rel }) => rel !== 'lib/api.ts' && rel !== 'components/ApiReference.tsx')
       .flatMap(({ rel, text }) =>
-        [...text.matchAll(/\.catch\(\(\) => set\w*(?:Error|Note|Message)\(/g)].map(() => rel),
+        zeroArgCatchBodies(text)
+          .filter((body) => /\bset\w*(?:Error|Note|Message)\s*\(/.test(body))
+          .map(() => rel),
       );
     expect(findings, 'loads that discard the server’s refusal unread').toEqual([]);
   });

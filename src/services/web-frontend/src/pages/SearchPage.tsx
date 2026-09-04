@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, describeLoadFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
@@ -60,7 +60,7 @@ export function SearchPage() {
       const current = () => seq === latestRequest.current;
       api<SearchResults>(`/search?q=${encodeURIComponent(q.trim())}&limit=20`)
         .then((data) => current() && setResults(data))
-        .catch(() => current() && setError('Search failed.'))
+        .catch((err: unknown) => current() && setError(describeLoadFailure(err, 'Search failed.')))
         .finally(() => current() && setBusy(false));
     }, 250);
     return () => clearTimeout(timer);

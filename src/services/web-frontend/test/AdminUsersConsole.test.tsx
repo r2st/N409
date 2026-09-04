@@ -230,11 +230,18 @@ describe('AdminUsersPage — the console', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
-  it('says so when the list cannot be loaded', async () => {
+  it('surfaces the server’s own reason when the list cannot be loaded', async () => {
+    // R427: the mock's 500 body carries a `detail` ('No'), and a real refusal
+    // here is usually `forbidden('Administering users', 'user-admin')` — a
+    // role demoted mid-session, or a partner admin whose session outlived a
+    // partner-scope change. Discarding it in favour of a fixed sentence, as
+    // this page used to, told a reader who lost access the same thing an
+    // outage would.
     mockApi({}, { listStatus: 500 });
     renderPage();
 
-    await screen.findByText('Could not load users.');
+    await screen.findByText('No');
+    expect(screen.queryByText('Could not load users.')).toBeNull();
   });
 
   it('says nothing matched rather than showing a bare table', async () => {

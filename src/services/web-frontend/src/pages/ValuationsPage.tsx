@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, apiDownload, describeActionFailure } from '../lib/api';
+import { api, apiDownload, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDate, KIND_LABELS, SOURCE_LABELS, STATE_LABELS } from '../lib/format';
@@ -225,7 +225,7 @@ export function ValuationsPage() {
     q.set('per_page', String(PER_PAGE));
     api<ValuationList>(`/valuations?${q}`)
       .then((d) => current() && setData(d))
-      .catch(() => current() && setError('Could not load valuations.'));
+      .catch((err: unknown) => current() && setError(describeLoadFailure(err, 'Could not load valuations.')));
   }, [claimList, filterQuery, bucket, group, sortParam, page]);
 
   useEffect(reload, [reload]);

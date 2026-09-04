@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { formatPerShare, moneyFormatter, stateLabel } from '../lib/format';
 import { HelpIcon } from '../components/HelpIcon';
 import {
@@ -182,7 +182,7 @@ export function PortfolioPage() {
     const current = claim();
     api<OrgDetail>(`/organizations/${selected}`)
       .then((d) => current() && setDetail(d))
-      .catch(() => current() && setError('Could not load the organization.'));
+      .catch((err: unknown) => current() && setError(describeLoadFailure(err, 'Could not load the organization.')));
   }, [selected, claim]);
 
   const create = async (e: FormEvent) => {

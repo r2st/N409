@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../../lib/api';
+import { api, describeLoadFailure } from '../../lib/api';
 import { formatDateTime, formatPerShare } from '../../lib/format';
 import {
   DOCUMENT_KIND_LABELS,
@@ -170,8 +170,8 @@ export function PackageTab() {
       .then(({ package: data }) => {
         if (!cancelled) setPkg(data);
       })
-      .catch(() => {
-        if (!cancelled) setError('Could not load the valuation package.');
+      .catch((err: unknown) => {
+        if (!cancelled) setError(describeLoadFailure(err, 'Could not load the valuation package.'));
       });
     return () => {
       cancelled = true;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { api, apiDownload, describeActionFailure } from '../lib/api';
+import { api, apiDownload, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { email as emailRule, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
@@ -246,7 +246,7 @@ export function AdminUsersPage() {
     if (showDeleted) query.set('include_deleted', 'true');
     api<UserList>(`/users?${query}`)
       .then((d) => current() && setData(d))
-      .catch(() => current() && setError('Could not load users.'));
+      .catch((err: unknown) => current() && setError(describeLoadFailure(err, 'Could not load users.')));
   }, [q, role, partner, showDeleted, page, claim]);
 
   useEffect(() => {

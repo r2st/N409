@@ -545,7 +545,11 @@ describe('PartnerDetailPage — the engagement list', () => {
     vi.restoreAllMocks();
   });
 
-  it('says so when the engagements will not load', async () => {
+  it('surfaces the server’s own reason when the engagements will not load', async () => {
+    // R427: this route is `requireUserAdmin`-gated, and a real refusal here is
+    // usually `forbidden('Administering users', 'user-admin')` for an admin
+    // whose session outlived a role change — discarding it in favour of a
+    // fixed sentence told them the same thing an outage would.
     mockApi({}, [
       {
         when: (path) => path.includes('/valuations?'),
@@ -554,7 +558,8 @@ describe('PartnerDetailPage — the engagement list', () => {
     ]);
     renderPage();
 
-    expect(await screen.findByText('Could not load this partner’s engagements.')).toBeInTheDocument();
+    expect(await screen.findByText('boom')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load this partner’s engagements.')).toBeNull();
   });
 
   it('says a firm with none has none, rather than showing an empty table', async () => {

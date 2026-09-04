@@ -103,7 +103,7 @@ export function DashboardPage() {
         setAnalytics(data);
         setAnalyticsError(null);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return;
         /*
          * The pivot already on screen is kept, which is the same rule a
@@ -113,7 +113,7 @@ export function DashboardPage() {
          * current. Discarding them was the one outcome that rule exists to
          * prevent, and it happened silently.
          */
-        setAnalyticsError('Analytics could not be loaded.');
+        setAnalyticsError(describeLoadFailure(err, 'Analytics could not be loaded.'));
       })
       .finally(() => !cancelled && setAnalyticsLoading(false));
     return () => {
