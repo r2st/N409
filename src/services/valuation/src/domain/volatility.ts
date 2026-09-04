@@ -227,6 +227,14 @@ export interface VolatilityEngineResponse {
   excluded_companies?: unknown;
 }
 
+/**
+ * The largest recommendation `volatility_estimates.recommended` will store.
+ *
+ * Mirrors `volatility_estimates_recommended_band` in migration 0134. Changing
+ * one without the other puts a 500 back where a 422 is.
+ */
+export const MAX_RECORDABLE_VOLATILITY = 5;
+
 function asMethod(value: unknown): VolatilityMethod {
   const s = typeof value === 'string' ? value : '';
   return s === 'historical' || s === 'ewma' || s === 'parkinson' || s === 'manual' ? s : 'historical';
@@ -272,6 +280,33 @@ export function shapeEstimate(
   const recommended = fin(response.recommended_volatility);
   if (recommended === null || recommended <= 0) {
     throw new VolatilityInputError('The estimator returned no usable volatility');
+  }
+  /*
+   * The other half of the band the row is stored in.
+   *
+   * `volatility_estimates.recommended` carries `CHECK (recommended > 0 AND
+   * recommended <= 5)` (migration 0134), and this door checked only the lower
+   * end of it. The upper end was therefore enforced by the INSERT: a peer set
+   * whose annualised sigma came back above 500% — a feed serving a split
+   * unadjusted, a shell trading in cents, a comp whose closes are noise —
+   * reached `insertVolatilityEstimate`, tripped a check violation, and the
+   * analyst got a 500 with no indication of which of the two things had gone
+   * wrong, while the run's peer measurements and exclusions were discarded
+   * with it.
+   *
+   * Refused here instead, and the refusal says the figure. The adoption door
+   * (`routes/volatility.ts`) is a separate, narrower band — an estimate
+   * between the overwrite field's maximum and this ceiling is a real
+   * measurement worth recording and merely not one to price a §409A off, and
+   * that distinction survives: this bound only rejects what the column would
+   * refuse to hold at all.
+   */
+  if (recommended > MAX_RECORDABLE_VOLATILITY) {
+    throw new VolatilityInputError(
+      `The estimator returned a volatility of ${(recommended * 100).toFixed(1)}%, above the ` +
+        `${MAX_RECORDABLE_VOLATILITY * 100}% ceiling this platform records. Check the comparables ` +
+        'in the peer set — a figure this size is normally a price series the feed served wrong.',
+    );
   }
   const observations = new Map(args.series.map((s) => [s.ticker, s.prices.length]));
   const companies: VolatilityCompany[] = (Array.isArray(response.companies) ? response.companies : [])

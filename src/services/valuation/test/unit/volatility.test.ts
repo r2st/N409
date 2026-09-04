@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_RECORDABLE_VOLATILITY,
   measuredCount,
   resolveWindow,
   seriesFromBars,
@@ -146,6 +147,34 @@ describe('shapeEstimate', () => {
     expect(() =>
       shapeEstimate({ ...response, recommended_volatility: 0 }, { series: [], feedFailures: [] }),
     ).toThrow(VolatilityInputError);
+  });
+
+  it('refuses a recommendation above the band the row is stored in', () => {
+    // `volatility_estimates.recommended` is CHECK (> 0 AND <= 5) — a figure
+    // over the ceiling used to reach the INSERT and come back as a 500, taking
+    // the run's peer measurements with it.
+    expect(() =>
+      shapeEstimate({ ...response, recommended_volatility: 5.01 }, { series: [], feedFailures: [] }),
+    ).toThrow(VolatilityInputError);
+    expect(() =>
+      shapeEstimate({ ...response, recommended_volatility: 5.01 }, { series: [], feedFailures: [] }),
+    ).toThrow(/501.0%/);
+  });
+
+  it('records a recommendation between the adoption band and the storage ceiling', () => {
+    // The overwrite field maxes at 3; the column takes up to 5. That gap is
+    // deliberate — the measurement is recorded and refused at adoption, not at
+    // the run that produced it — so the door must not narrow to the same band.
+    expect(
+      shapeEstimate({ ...response, recommended_volatility: 4.2 }, { series: [], feedFailures: [] })
+        .recommended,
+    ).toBe(4.2);
+    expect(
+      shapeEstimate({ ...response, recommended_volatility: MAX_RECORDABLE_VOLATILITY }, {
+        series: [],
+        feedFailures: [],
+      }).recommended,
+    ).toBe(5);
   });
 });
 
