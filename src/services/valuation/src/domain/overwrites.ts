@@ -785,6 +785,30 @@ export function validateOverwriteValue(
     case 'character': {
       if (typeof value !== 'string') return 'must be a string';
       if (value.length === 0) return 'must not be empty';
+      /*
+       * And not blank, which is a different thing from empty and was not
+       * checked (R419, methodology M19). Every bound in this file is a
+       * character count, and a space is a character — the rule
+       * `domain/nonBlankText.ts` was written for, applied there to the fields a
+       * *person's name* goes in, for the reason that applies here too: these
+       * nine are printed.
+       *
+       * `company_legal_name` is drawn on the report cover and on the
+       * certification page; `incorporation_state` and `currency` are stated in
+       * the report; `report_disclaimer` is appended to the conclusion. An
+       * override is a deliberate act with a `reason` beside it — so a
+       * whitespace override was accepted, recorded as the analyst's decision,
+       * shown on the overwrites tab as a value that looks unset, and printed
+       * into the deliverable as nothing at all. The cover of a 409A with no
+       * company on it is the worst possible place to find that out.
+       *
+       * Refused rather than trimmed, for the reason `nonBlankText` gives:
+       * storing a rewrite of what somebody typed, under a 200 saying it was
+       * saved as sent, is a different lie. A value with content keeps its
+       * surrounding spaces exactly as written.
+       */
+      if (value.trim().length === 0)
+        return 'must not be only whitespace — it is stored and printed as written';
       if (value.length > 2000) return 'must be at most 2000 characters';
       return null;
     }

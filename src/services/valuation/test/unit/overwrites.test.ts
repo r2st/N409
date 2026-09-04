@@ -93,4 +93,34 @@ describe('validateOverwriteValue', () => {
     expect(validateOverwriteValue(character, '')).toMatch(/empty/);
     expect(validateOverwriteValue(character, 'x'.repeat(2001))).toMatch(/2000/);
   });
+
+  /*
+   * The bound above is a character count and a space is a character, so
+   * `'   '` was three of them and passed (R419, M19). `company_legal_name` is
+   * the field it passed on: it is drawn on the report cover and on the
+   * certification page, so a blank override printed a 409A with no company on
+   * it, recorded as a deliberate act with a `reason` beside it.
+   */
+  it('rejects a string with nothing in it but whitespace', () => {
+    for (const blank of ['   ', '\t', '\n', ' \u00a0 ']) {
+      expect(validateOverwriteValue(character, blank), JSON.stringify(blank)).toMatch(/whitespace/);
+    }
+  });
+
+  it('leaves the spaces around a value that has content', () => {
+    // Refused, not trimmed: what is stored is what was typed.
+    expect(validateOverwriteValue(character, '  Acme, Inc.  ')).toBeNull();
+  });
+
+  /**
+   * Every printed character field, not just the one the tests happened to
+   * pick — the check is on the class, and this is what says so.
+   */
+  it('applies to every character field in the catalogue', () => {
+    const characters = OVERWRITE_FIELDS.filter((field) => field.class === 'character');
+    expect(characters.length).toBeGreaterThan(0);
+    for (const field of characters) {
+      expect(validateOverwriteValue(field, ' '), field.key).toMatch(/whitespace/);
+    }
+  });
 });
