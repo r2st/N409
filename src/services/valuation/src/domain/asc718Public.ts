@@ -202,16 +202,56 @@ export function binomialLattice(args: {
   const vestStep = Math.min(N, Math.ceil((args.vestingYears / T) * N));
   const exitPerStep = Math.min(Math.max(args.postVestExitRate ?? 0, 0), 1) * dt;
 
+  /*
+   * THE TWO POWERS ARE A TABLE, NOT A CALL PER NODE (R409, methodology M8).
+   *
+   * `price` used to be `s0 * u ** j * d ** (i - j)`, evaluated once per node of
+   * a triangle with (N+1)(N+2)/2 of them. The bases are loop invariants and the
+   * exponents run 0..N, so the whole surface is two vectors of N+1 doubles: the
+   * node lookup is the same three-factor product with the two `Math.pow` calls
+   * replaced by an index. `u ** j` is a deterministic double, so the table holds
+   * the number the call returned and the arithmetic below is bit-identical —
+   * which is the reason for two arrays rather than the one `u ** (2j - i)` the
+   * identity `d = 1/u` allows: that is the same value mathematically and a
+   * different rounding, and this function's output is a disclosed fair value.
+   *
+   * `POST /valuations/:id/asc718` takes up to 100 grants and resolves each
+   * elected `lattice` term with its own tree, synchronously, inside the request.
+   * At the fixed 200 steps that is 2.0 M nodes and 4.0 M `Math.pow` calls;
+   * measured on a $30 at-the-money ten-year grant, 100 grants fell from 66.2 ms
+   * to 22.9 ms of blocked event loop, and one tree at the 2,000-step ceiling
+   * from 77.1 ms to 21.3 ms.
+   */
+  const uPow = new Float64Array(N + 1);
+  const dPow = new Float64Array(N + 1);
+  for (let e = 0; e <= N; e++) {
+    uPow[e] = u ** e;
+    dPow[e] = d ** e;
+  }
   // Backward induction for value; forward sweep for the expected term.
-  let value = new Array<number>(N + 1).fill(0);
-  const price = (i: number, j: number) => s0 * u ** j * d ** (i - j);
+  let value = new Float64Array(N + 1);
+  const price = (i: number, j: number) => s0 * uPow[j]! * dPow[i - j]!;
   for (let j = 0; j <= N; j++) value[j] = Math.max(0, price(N, j) - k);
-  // Record, per step, whether an exercisable node triggers exercise, so the
-  // forward pass can attribute probability mass to an exercise time.
-  const exercisesAt: boolean[][] = [];
+  /*
+   * Record, per step, whether an exercisable node triggers exercise, so the
+   * forward pass can attribute probability mass to an exercise time.
+   *
+   * One flat `Uint8Array` over the whole triangle rather than an array of
+   * arrays of `boolean`. The old shape allocated N arrays whose elements V8
+   * holds as tagged pointers — 2.0 M of them at 200 steps per grant, 16 MB of
+   * short-lived heap per request at the 100-grant cap, all of it to carry one
+   * bit per node. `rowOffset` is the triangular number for each step, so
+   * `flags[rowOffset[i] + j]` is the node's bit.
+   */
+  const rowOffset = new Int32Array(N + 1);
+  for (let i = 0, offset = 0; i <= N; i++) {
+    rowOffset[i] = offset;
+    offset += i + 1;
+  }
+  const exercisesAt = new Uint8Array(((N + 1) * (N + 2)) / 2);
   for (let i = N - 1; i >= 0; i--) {
-    const next = new Array<number>(i + 1).fill(0);
-    const flags = new Array<boolean>(i + 1).fill(false);
+    const next = new Float64Array(i + 1);
+    const rowStart = rowOffset[i]!;
     for (let j = 0; j <= i; j++) {
       const cont = disc * (pClamped * (value[j + 1] ?? 0) + (1 - pClamped) * (value[j] ?? 0));
       const s = price(i, j);
@@ -222,10 +262,9 @@ export function binomialLattice(args: {
       // grant-date fair value relative to a freely-traded option.
       if (vested && s >= m * k) {
         next[j] = s - k;
-        flags[j] = true;
+        exercisesAt[rowStart + j] = 1;
       } else {
         next[j] = cont;
-        flags[j] = false;
       }
       // The post-vest exit hazard, in the value as well as in the term. A
       // leaver takes `max(S − K, 0)` at this node instead of continuing. From
@@ -236,23 +275,23 @@ export function binomialLattice(args: {
         next[j] = (1 - exitPerStep) * (next[j] ?? 0) + exitPerStep * Math.max(0, s - k);
       }
     }
-    exercisesAt[i] = flags;
     value = next;
   }
   const fairValue = value[0] ?? 0;
 
   // Forward probability sweep: propagate mass down the tree, absorbing it at
   // exercise nodes (and at maturity) to build the expected exit time.
-  let prob = [1];
+  let prob = new Float64Array(1);
+  prob[0] = 1;
   let expTerm = 0;
   let absorbed = 0;
   for (let i = 0; i < N; i++) {
-    const nextProb = new Array<number>(i + 2).fill(0);
-    const flags = exercisesAt[i] ?? [];
+    const nextProb = new Float64Array(i + 2);
+    const rowStart = rowOffset[i]!;
     for (let j = 0; j <= i; j++) {
       const mass = prob[j] ?? 0;
       if (mass <= 0) continue;
-      if (flags[j]) {
+      if (exercisesAt[rowStart + j] === 1) {
         expTerm += mass * i * dt;
         absorbed += mass;
       } else {
