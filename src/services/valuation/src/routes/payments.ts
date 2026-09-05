@@ -18,6 +18,7 @@ import {
 import {
   addonFlags,
   EXPRESS_DELIVERY_DAYS,
+  STANDARD_DELIVERY_DAYS,
   priceForKind as priceForKindImpl,
   quoteLines,
   quotePrice as quotePriceImpl,
@@ -129,6 +130,9 @@ function paidAt(payment: { settled_at: Date | null; updated_at: Date }): Date {
 
 /** This handler's door, in the inbound-webhook counter's vocabulary. */
 const WEBHOOK_SOURCE: InboundWebhookSource = 'stripe-payments';
+
+/** For striking `due_date` a whole number of `delivery_days` past settlement. */
+const MS_PER_DAY = 86_400_000;
 
 const paymentsUnavailable = (detail: string) =>
   new ApiProblem({
@@ -1852,6 +1856,18 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         if (valuation && valuation.paid_status === 'unpaid') {
           const amount =
             typeof session.amount_total === 'number' ? session.amount_total : Number(payment.amount_cents);
+          const paidAt = new Date();
+          // The SLA clock the `delivery_days` promise runs on. Neither figure
+          // was ever turning into an actual deadline: `delivery_days` was
+          // patched here for express only, and nothing anywhere read it back
+          // against a date to produce `due_date` — the comment below has
+          // guarded against a due date leaking onto an unpaid engagement for
+          // as long as this file has existed, protecting a computation that
+          // never ran. The dashboard's overdue/due-soon bands, the due-date
+          // sort and the `{{due_date}}` reminder template all read
+          // `valuations.due_date`, and it stayed null through every paid
+          // engagement unless an ops user typed one in by hand.
+          const deliveryDays = payment.express ? EXPRESS_DELIVERY_DAYS : STANDARD_DELIVERY_DAYS;
           let updated: ValuationRow;
           try {
             updated = await patchValuation(
@@ -1860,14 +1876,20 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
               {
                 paid_status: 'paid',
                 amount_cents: amount,
-                paid_at: new Date(),
+                paid_at: paidAt,
                 // Express is a promise that only starts costing us once the
                 // money is in, so the SLA moves here and not at checkout — an
                 // abandoned or bounced express order must not leave a
                 // one-business-day due date on an unpaid engagement. Written
                 // through patchValuation so the change lands in the audit trail
                 // attributed to Stripe, like the paid fields beside it.
-                ...(payment.express ? { delivery_days: EXPRESS_DELIVERY_DAYS } : {}),
+                delivery_days: deliveryDays,
+                // An ops-set due date is a deliberate override and is left
+                // alone; otherwise the promise just paid for becomes the
+                // deadline, struck from the moment the SLA actually starts.
+                ...(valuation.due_date === null
+                  ? { due_date: new Date(paidAt.getTime() + deliveryDays * MS_PER_DAY) }
+                  : {}),
               },
               { actorType: 'system', source: 'stripe' },
               // Only on the resumed path — see resumeAbandoned. It is what stops

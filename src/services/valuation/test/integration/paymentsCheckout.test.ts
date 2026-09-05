@@ -5,6 +5,7 @@ import {
   EXPRESS_DELIVERY_CENTS,
   EXPRESS_DELIVERY_DAYS,
   QSBS_LETTER_CENTS,
+  STANDARD_DELIVERY_DAYS,
   priceForKind,
 } from '../../src/domain/pricing.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
@@ -556,21 +557,71 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
       const vid = await newValuation('Express Co');
       await pending(vid, 'cs_express', true);
 
-      const before = await ctx.pool.query<{ delivery_days: number | null }>(
-        'SELECT delivery_days FROM valuations WHERE id = $1',
+      const before = await ctx.pool.query<{ delivery_days: number | null; due_date: Date | null }>(
+        'SELECT delivery_days, due_date FROM valuations WHERE id = $1',
         [vid],
       );
       // Not at checkout: an abandoned express order must not leave a
       // one-business-day due date on an engagement nobody paid for.
       expect(before.rows[0]?.delivery_days).toBeNull();
+      expect(before.rows[0]?.due_date).toBeNull();
 
+      const before_ms = Date.now();
       const res = await deliver(completed({ id: 'cs_express', amount_total: PRICE }));
       expect(res.statusCode).toBe(200);
-      const after = await ctx.pool.query<{ delivery_days: number | null }>(
-        'SELECT delivery_days FROM valuations WHERE id = $1',
+      const after = await ctx.pool.query<{ delivery_days: number | null; due_date: Date | null }>(
+        'SELECT delivery_days, due_date FROM valuations WHERE id = $1',
         [vid],
       );
       expect(after.rows[0]?.delivery_days).toBe(EXPRESS_DELIVERY_DAYS);
+      // The promise just paid for is the deadline, struck from settlement —
+      // not left null for an ops user to notice and enter by hand.
+      const dueMs = after.rows[0]!.due_date!.getTime();
+      const expectedMs = before_ms + EXPRESS_DELIVERY_DAYS * 86_400_000;
+      expect(Math.abs(dueMs - expectedMs)).toBeLessThan(60_000);
+    });
+
+    it('gives a standard engagement a due date too, not only an express one', async () => {
+      // `delivery_days` and `due_date` used to be populated for express alone —
+      // the ordinary majority of paid engagements got neither, and the firm
+      // dashboard's overdue/due-soon bands and the due-date sort had nothing to
+      // read for them until an ops user set one by hand.
+      const vid = await newValuation('Standard Co');
+      await pending(vid, 'cs_standard');
+
+      const before_ms = Date.now();
+      const res = await deliver(completed({ id: 'cs_standard', amount_total: PRICE }));
+      expect(res.statusCode).toBe(200);
+      const after = await ctx.pool.query<{ delivery_days: number | null; due_date: Date | null }>(
+        'SELECT delivery_days, due_date FROM valuations WHERE id = $1',
+        [vid],
+      );
+      expect(after.rows[0]?.delivery_days).toBe(STANDARD_DELIVERY_DAYS);
+      const dueMs = after.rows[0]!.due_date!.getTime();
+      const expectedMs = before_ms + STANDARD_DELIVERY_DAYS * 86_400_000;
+      expect(Math.abs(dueMs - expectedMs)).toBeLessThan(60_000);
+    });
+
+    it('leaves an ops-set due date alone when the settlement lands', async () => {
+      // A due date an ops user typed in by hand is a deliberate override, and
+      // settlement must not clobber it the way it fills in an absent one.
+      const vid = await newValuation('Overridden Co');
+      const opsSet = new Date('2030-01-15T00:00:00.000Z');
+      await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${vid}`,
+        headers: authHeader(ops.token),
+        payload: { due_date: opsSet.toISOString() },
+      });
+      await pending(vid, 'cs_overridden');
+
+      const res = await deliver(completed({ id: 'cs_overridden', amount_total: PRICE }));
+      expect(res.statusCode).toBe(200);
+      const after = await ctx.pool.query<{ due_date: Date | null }>(
+        'SELECT due_date FROM valuations WHERE id = $1',
+        [vid],
+      );
+      expect(after.rows[0]?.due_date?.toISOString()).toBe(opsSet.toISOString());
     });
 
     it('acknowledges a session we never issued instead of failing the delivery', async () => {
