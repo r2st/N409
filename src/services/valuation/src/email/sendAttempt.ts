@@ -1,5 +1,6 @@
 import { logUnretried } from '@n409/shared';
 import type { FastifyBaseLogger } from 'fastify';
+import { recordEmailSendAttempt } from '../observability/emailDeliveryMetrics.js';
 import type { EmailOutboxRow } from '../repos/emailOutbox.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 
@@ -66,6 +67,7 @@ export async function sendAndRecord(
     await transport.send(email);
   } catch (err) {
     await handlers.onFailed(err);
+    recordEmailSendAttempt('failed');
     return 'failed';
   }
   try {
@@ -79,7 +81,14 @@ export async function sendAndRecord(
         'email was delivered but the outbox could not be marked sent; the row stays queued and a sweep may deliver it again',
       );
     }
+    // The transport still took it — counted 'unrecorded', not 'failed'. A
+    // relay that is refusing this platform outright and a `pg` blip on the
+    // bookkeeping write afterwards are different incidents, and folding the
+    // second into the first's outcome is the exact miscount this module's
+    // docstring already spent its whole existence arguing against.
+    recordEmailSendAttempt('unrecorded');
     return 'unrecorded';
   }
+  recordEmailSendAttempt('sent');
   return 'sent';
 }

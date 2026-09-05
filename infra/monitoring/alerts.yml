@@ -1243,6 +1243,67 @@ groups:
         annotations:
           summary: 'the {{ $labels.source }} webhook is being called and has no signing secret configured'
 
+  - name: n409-email-delivery
+    rules:
+      # R436, methodology M11. Every bounce, complaint and transport refusal
+      # already lands somewhere — a suppressed address, a ledger row, a failed
+      # outbox status — and the only place any of it was summed was
+      # `GET /api/v1/admin/email/delivery-stats`, an ops-session-gated dashboard
+      # nobody is paged to open. That is a number that is right the instant
+      # somebody happens to load the page and silent every other instant. A
+      # relay refusing everything this platform hands it, or a complaint rate
+      # climbing toward the point a receiving network blocklists the sending
+      # domain, produced nothing here could fire on; the first symptom would
+      # have been a client quietly no longer receiving their own reports, or
+      # every client's mail bouncing at once with nobody told.
+      #
+      # `email_send_attempts_total` is the transport-level half: did the relay
+      # take the message at all. A ratio against `sent`, not a bare count of
+      # `failed` — one relay hiccup is Tuesday, the relay refusing most of what
+      # it is handed for a quarter hour is the credentials being wrong or the
+      # relay being down, and only the platform's own attempts can say which.
+      - alert: EmailTransportFailing
+        expr: |
+          sum(rate(email_send_attempts_total{outcome="failed"}[15m]))
+            / sum(rate(email_send_attempts_total{outcome=~"sent|failed"}[15m])) > 0.5
+        for: 15m
+        labels: { severity: page }
+        annotations:
+          summary: 'more than half of outbound mail is being refused by the transport — the relay may be down or its credentials wrong'
+          runbook: 'journalctl -u n409-valuation | grep "email was delivered\|SMTP" — then check the relay credentials and its own status page'
+
+      # The semantic half, and the ratio that matters most for reputation: a
+      # hard bounce means the relay accepted the message and the *recipient*
+      # rejected it outright, as opposed to a transport failure that says
+      # nothing about any address. `email_send_attempts_total{outcome="sent"}`
+      # is the denominator — a bare bounce count cannot tell two hard bounces
+      # out of ten thousand sends from two out of twenty, and receiving
+      # networks judge a sending domain by the second number, not the first.
+      - alert: EmailBounceRateHigh
+        expr: |
+          sum(rate(email_delivery_events_total{kind="bounced",bounce="hard"}[2h]))
+            / sum(rate(email_send_attempts_total{outcome="sent"}[2h])) > 0.05
+        for: 1h
+        labels: { severity: ticket }
+        annotations:
+          summary: 'more than 5% of sent mail is hard-bouncing — sending reputation is degrading'
+          runbook: 'GET /api/v1/admin/email/delivery-stats for the per-template breakdown; a single workflow mail pointed at a stale list bounces faster than the estate as a whole'
+
+      # A complaint is not a delivery failure at all — the message arrived and
+      # a human pressed the spam button — and it is the single fastest way a
+      # sending domain gets rate-limited or blocklisted by a receiving network,
+      # after which every client's mail is affected, not only the one that
+      # complained. So no ratio and no floor: unlike a bounce, which is common
+      # enough at low volume to need a denominator before it means anything,
+      # one complaint is already the condition an operator should know about.
+      - alert: EmailComplaintReceived
+        expr: increase(email_delivery_events_total{kind="complained"}[1h]) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'a recipient marked mail from this platform as spam'
+          runbook: 'GET /api/v1/admin/email/delivery-stats and /api/v1/admin/email-outbox/:id/delivery-events for the message; confirm the address is now suppressed'
+
   - name: n409-identity
     rules:
       # An SSO refusal is a 302. R273 said so in as many words when it gave

@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { MetricsRegistry } from '@n409/shared';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { retryFailedEmails } from '../../src/hooks/emailRetry.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../../src/repos/emailOutbox.js';
@@ -11,6 +12,7 @@ import {
   releaseSuppression,
   suppressAddress,
 } from '../../src/repos/emailDelivery.js';
+import { registerEmailDeliveryMetrics, resetEmailDeliveryMetrics } from '../../src/observability/emailDeliveryMetrics.js';
 import type { EmailTransport } from '../../src/hooks/stateChange.js';
 
 /**
@@ -411,6 +413,49 @@ describe.skipIf(!dbUp)('email delivery tracking', () => {
       expect(row.delivered_at).toBeNull();
       expect(row.bounced_at).toBeNull();
       expect(await listDeliveryEvents(ctx.pool, email.id)).toHaveLength(1);
+    });
+  });
+
+  describe('the reputation counter, wired to the real ledger insert', () => {
+    afterEach(() => resetEmailDeliveryMetrics());
+
+    it('counts a fresh bounce once and a redelivery of the same event not at all', async () => {
+      const registry = new MetricsRegistry();
+      registerEmailDeliveryMetrics(registry);
+      const email = await seed({ toEmail: 'reputation@test.example.com' });
+      const event = {
+        outboxId: email.id,
+        kind: 'bounced' as const,
+        occurredAt: new Date('2026-08-15T10:00:00Z'),
+        source: 'webhook:test',
+        providerEventId: 'reputation-1',
+        bounceKind: 'hard' as const,
+      };
+
+      expect(await recordDeliveryEvent(ctx.pool, event)).toBe(true);
+      // The provider redelivering the same event — the ordinary shape of an
+      // at-least-once webhook stream — must not report the bounce twice, or
+      // a bounce-rate rule sees a receiving network's retry policy rather
+      // than this platform's own reputation.
+      expect(await recordDeliveryEvent(ctx.pool, event)).toBe(false);
+
+      expect(registry.render()).toContain('email_delivery_events_total{kind="bounced",bounce="hard"} 1');
+    });
+
+    it('counts the in-band SMTP rejection, not only a provider webhook', async () => {
+      // `recordSendFailure` is the path that carries essentially all of this
+      // platform's real bounce traffic today — there is no provider webhook
+      // configured, the transport is raw SMTP — so a counter wired only to
+      // the webhook route would be a metric with no traffic reaching it in
+      // production, indistinguishable from a healthy zero.
+      const registry = new MetricsRegistry();
+      registerEmailDeliveryMetrics(registry);
+      const email = await seed({ toEmail: 'gone-via-smtp@test.example.com' });
+      const err = new FakeSmtpError('SMTP RCPT failed: 550 5.1.1 unknown mailbox', 'rcpt', 550);
+
+      await recordSendFailure(ctx.pool, email, err);
+
+      expect(registry.render()).toContain('email_delivery_events_total{kind="bounced",bounce="hard"} 1');
     });
   });
 

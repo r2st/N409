@@ -7,6 +7,7 @@ import {
   type BounceKind,
   type DeliveryEventKind,
 } from '../domain/emailDelivery.js';
+import { recordEmailDeliveryEvent } from '../observability/emailDeliveryMetrics.js';
 import { sliceChars } from '../domain/textSlice.js';
 
 /**
@@ -102,12 +103,27 @@ export async function recordDeliveryEvent(
   // route have the pool, while the auto-email sweep is already holding one
   // client for its whole pass and taking a second from the same pool to record
   // a bounce is how a sweep deadlocks itself against its own pool ceiling.
-  return isPool(db) ? withTransaction(db, run) : withClientTransaction(db, run);
+  const fresh = isPool(db) ? await withTransaction(db, run) : await withClientTransaction(db, run);
+  // Counted on a fresh insert only, same as `applied` in the webhook route: a
+  // provider redelivering a batch it never got a 2xx for must not report the
+  // same complaint or bounce again every time it retries.
+  if (fresh) recordEmailDeliveryEvent(input.kind, resolvedBounceKind(input));
+  return fresh;
 }
 
 /** `pg.Pool` has `connect`; a `PoolClient` has `release`. */
 function isPool(db: pg.Pool | pg.PoolClient): db is pg.Pool {
   return typeof (db as pg.PoolClient).release !== 'function';
+}
+
+/**
+ * The bounce kind a 'bounced'/'complained' event carries, applying the same
+ * default `applyEvent` folds into the row — read here too, so the metric and
+ * the column can never disagree about what an unclassified event meant.
+ */
+function resolvedBounceKind(input: DeliveryEventInput): BounceKind | null {
+  if (input.kind !== 'bounced' && input.kind !== 'complained') return null;
+  return input.bounceKind ?? (input.kind === 'complained' ? 'complaint' : 'hard');
 }
 
 /**
@@ -148,7 +164,7 @@ async function applyEvent(client: pg.PoolClient, input: DeliveryEventInput): Pro
 
     case 'bounced':
     case 'complained': {
-      const kind: BounceKind = input.bounceKind ?? (input.kind === 'complained' ? 'complaint' : 'hard');
+      const kind = resolvedBounceKind(input)!;
       await client.query(
         `UPDATE email_outbox
             SET bounced_at = LEAST(COALESCE(bounced_at, $2::timestamptz), $2::timestamptz),

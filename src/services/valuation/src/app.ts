@@ -165,6 +165,7 @@ import {
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
+import { registerEmailDeliveryMetrics } from './observability/emailDeliveryMetrics.js';
 import { registerSsoMetrics } from './observability/ssoOutcomes.js';
 import { registerScimMetrics } from './observability/scimRequests.js';
 import { registerSignInMetrics } from './observability/signInOutcomes.js';
@@ -967,6 +968,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // design. Payments stop being fulfilled and bounces stop being recorded with
   // nothing on this box saying so.
   registerInboundWebhookMetrics(metricsRegistry);
+  // Sending reputation. Every bounce, complaint and transport refusal already
+  // lands somewhere — the outbox row, the suppression list, the ledger — and
+  // the only place any of it was summed was an ops-session-gated dashboard
+  // nobody is paged to open. A complaint spike that gets the sending domain
+  // blocklisted, or a relay that has started refusing every message this
+  // platform hands it, produced nothing a rule could fire on; the first
+  // symptom was a client quietly no longer receiving their own reports.
+  registerEmailDeliveryMetrics(metricsRegistry);
   // And how the two identity-provider flows are going. Every SSO refusal is
   // answered as a 302 — R273 said so when it gave them a log line — so an
   // expired signing certificate or a narrowed domain rule refuses every
