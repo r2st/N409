@@ -758,6 +758,37 @@ describe('the import format is a vocabulary, not a string', () => {
     });
   });
 
+  /**
+   * `rows` is the client-parsed-sheet path: `z.record(z.string(), z.unknown())`
+   * per entry left both the key length and the key count unbounded, so a row
+   * nobody's spreadsheet produced still cost every subsequent row of the
+   * import a parse and a walk for columns no mapping ever names (R438, M6).
+   */
+  describe('ImportBody.rows bounds', () => {
+    it('accepts a real row', () => {
+      const res = ImportBody.safeParse({ rows: [{ Class: 'Common', Shares: '1000' }] });
+      expect(res.success).toBe(true);
+    });
+
+    it('refuses a column heading longer than a spreadsheet header', () => {
+      const res = ImportBody.safeParse({ rows: [{ ['h'.repeat(201)]: 'x' }] });
+      expect(res.success).toBe(false);
+    });
+
+    it('refuses a row with more columns than any real sheet has', () => {
+      const wide = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`col${i}`, 'x']));
+      const res = ImportBody.safeParse({ rows: [wide] });
+      expect(res.success).toBe(false);
+      expect(res.error?.issues[0]?.message).toBe('Each row may have at most 100 columns');
+    });
+
+    it('accepts a row at exactly the column ceiling', () => {
+      const atLimit = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`col${i}`, 'x']));
+      const res = ImportBody.safeParse({ rows: [atLimit] });
+      expect(res.success).toBe(true);
+    });
+  });
+
   it('a key outside the set resolves to no preset at all — which is the bug', () => {
     // The behaviour the schema now stands in front of, asserted so the reason
     // for the enum stays visible.

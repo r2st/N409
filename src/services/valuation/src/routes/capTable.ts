@@ -71,12 +71,36 @@ const MAX_MAPPING_KEYS = 32;
 const MAX_MAPPING_KEY_CHARS = 64;
 const MAX_MAPPING_COLUMN_CHARS = 200;
 
+/**
+ * Bounds on each entry of `ImportBody.rows` — see the field's own note.
+ *
+ * A row's keys are spreadsheet column headings, the same category of string
+ * as `mapping`'s values, so they share its 200-character ceiling. The count
+ * is the same shape `mapping` was bounded for (R430, M6): `parseCapTableSheet`
+ * only ever reads the ~8 `CAP_TABLE_FIELDS` back out of a row via `readCell`,
+ * so `z.record(z.string(), z.unknown())` left every other key paid for and
+ * never used — parsed, hashed, walked by every row of an import — for no
+ * column any mapping names. Generous past any real export (`FORMAT_PRESETS`'
+ * widest preset maps under 20 headings) so a wide but genuine sheet still
+ * imports.
+ */
+const MAX_ROW_KEYS = 100;
+
 export const ImportBody = z
   .object({
     format: z.enum(FORMAT_PRESET_KEYS).default('generic'),
     /** Raw CSV text, OR pre-parsed rows from a client-side parser. */
     csv: z.string().max(2_000_000).optional(),
-    rows: z.array(z.record(z.string(), z.unknown())).max(MAX_CAP_TABLE_ENTRIES).optional(),
+    rows: z
+      .array(
+        z
+          .record(z.string().max(MAX_MAPPING_COLUMN_CHARS), z.unknown())
+          .refine((row) => Object.keys(row).length <= MAX_ROW_KEYS, {
+            message: `Each row may have at most ${MAX_ROW_KEYS} columns`,
+          }),
+      )
+      .max(MAX_CAP_TABLE_ENTRIES)
+      .optional(),
     /**
      * Source line of each entry of `rows`, as the upload endpoint reported it.
      *
