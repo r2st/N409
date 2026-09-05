@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { required, useFormValidation } from '../../lib/useFormValidation';
 import { api, describeActionFailure } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
@@ -176,6 +176,128 @@ function SourceBadge({ source }: { source: string }) {
   );
 }
 
+/**
+ * Renders the comparable-company table, up to `COMPARABLE_PAGE_LIMIT` (500)
+ * rows.
+ *
+ * Memoized (R443, methodology M8): `ComparablesTab` holds the exclude-reason
+ * form's `reason` and the add-peer form's `draft` in the same component that
+ * renders this table below both forms, so every keystroke into either one
+ * re-ran a 500-row map whose `comparables`/`columns` had not changed. `columns`
+ * is itself derived with `useMemo` in the caller for the same reason —
+ * recomputing a fresh array from `data` on every render would have handed this
+ * component a new `columns` reference on every keystroke and defeated the
+ * memo just as surely as an unmemoized table would have.
+ */
+export const ComparablesTable = memo(function ComparablesTable({
+  comparables,
+  columns,
+  canEdit,
+  retired,
+  busy,
+  onExclude,
+  onInclude,
+  onRemove,
+}: {
+  comparables: Comparable[];
+  columns: MultipleKey[];
+  canEdit: boolean;
+  retired: boolean;
+  busy: boolean;
+  onExclude: (id: string) => void;
+  onInclude: (row: Comparable) => void;
+  onRemove: (row: Comparable) => void;
+}) {
+  return (
+    <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
+      <table className="w-full min-w-[720px] text-sm" aria-label="Comparable companies">
+        <thead>
+          <tr className="border-b border-paper-300 text-left">
+            <th className="overline px-5 py-3 font-semibold text-ink-400">Company</th>
+            {columns.map((key) => (
+              <th key={key} className="overline px-4 py-3 text-right font-semibold text-ink-400">
+                {MULTIPLE_LABELS[key]}
+              </th>
+            ))}
+            <th className="overline px-4 py-3 text-right font-semibold text-ink-400">Score</th>
+            <th className="overline px-5 py-3 font-semibold text-ink-400">Status</th>
+            {canEdit && <th className="px-5 py-3" />}
+          </tr>
+        </thead>
+        <tbody>
+          {comparables.map((row) => (
+            <tr
+              key={row.id}
+              className={`border-b border-paper-200 last:border-0 ${row.included ? '' : 'bg-paper-50 text-ink-400'}`}
+            >
+              <td className="px-5 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-ink-900">{row.name}</span>
+                  {row.ticker && <span className="tnum text-xs text-ink-400">{row.ticker}</span>}
+                  <SourceBadge source={row.source} />
+                  {/* Where the figures came from, beside who chose the row —
+                      a multiple cannot be checked without both. Absent on
+                      rows written before the columns existed, and silence
+                      is better than guessing a vintage for them. */}
+                  {row.figures_source && (
+                    <span
+                      className="text-[0.7rem] text-ink-400"
+                      title={row.figures_as_of ? `Figures as at ${row.figures_as_of.slice(0, 10)}` : undefined}
+                    >
+                      {FIGURES_LABELS[row.figures_source] ?? row.figures_source}
+                    </span>
+                  )}
+                </div>
+              </td>
+              {columns.map((key) => (
+                <td key={key} className="tnum px-4 py-3 text-right">
+                  {multiple(row.multiples[key])}
+                </td>
+              ))}
+              <td className="tnum px-4 py-3 text-right">{row.score === null ? '—' : row.score.toFixed(2)}</td>
+              <td className="px-5 py-3">
+                {row.included ? (
+                  <span className="text-ink-500">Included</span>
+                ) : (
+                  <span title={row.exclude_reason ?? undefined}>
+                    Excluded — {row.exclude_reason ?? 'no reason recorded'}
+                  </span>
+                )}
+              </td>
+              {canEdit && (
+                <td className="px-5 py-3 text-right whitespace-nowrap">
+                  {/* Inside the cell rather than around it: a `fieldset`
+                      between `tr` and `td` is not a thing the HTML parser
+                      will keep, and `display: contents` only hides that
+                      from the layout. */}
+                  <WriteGate closed={retired}>
+                    {row.included ? (
+                      <Button variant="ghost" onClick={() => onExclude(row.id)} disabled={busy}>
+                        Exclude
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" onClick={() => onInclude(row)} disabled={busy}>
+                        Include
+                      </Button>
+                    )}
+                    {/* A screened row is excluded, never deleted — the set has to
+                      show what was considered. Only analyst rows offer this. */}
+                    {row.source === 'analyst' && (
+                      <Button variant="ghost" onClick={() => onRemove(row)} disabled={busy}>
+                        Remove
+                      </Button>
+                    )}
+                  </WriteGate>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+});
+
 export function ComparablesTab() {
   const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<ComparablesResponse | null>(null);
@@ -200,7 +322,7 @@ export function ComparablesTab() {
     void load();
   }, [load, token]);
 
-  const run = async (work: () => Promise<unknown>, failure: string) => {
+  const run = useCallback(async (work: () => Promise<unknown>, failure: string) => {
     setBusy(true);
     setError(null);
     try {
@@ -213,17 +335,20 @@ export function ComparablesTab() {
     } finally {
       setBusy(false);
     }
-  };
+  }, [load]);
 
-  const include = (row: Comparable) =>
-    run(
-      () =>
-        api(`/valuations/${valuation.id}/comparables/${row.id}`, {
-          method: 'PATCH',
-          body: { included: true },
-        }),
-      'Could not include the comparable.',
-    );
+  const include = useCallback(
+    (row: Comparable) =>
+      run(
+        () =>
+          api(`/valuations/${valuation.id}/comparables/${row.id}`, {
+            method: 'PATCH',
+            body: { included: true },
+          }),
+        'Could not include the comparable.',
+      ),
+    [run, valuation.id],
+  );
 
   const excludeValidation = useFormValidation({ reason }, { reason: required('reason', 'A reason') });
 
@@ -244,11 +369,14 @@ export function ComparablesTab() {
     }
   });
 
-  const remove = (row: Comparable) =>
-    run(
-      () => api(`/valuations/${valuation.id}/comparables/${row.id}`, { method: 'DELETE' }),
-      'Could not remove the comparable.',
-    );
+  const remove = useCallback(
+    (row: Comparable) =>
+      run(
+        () => api(`/valuations/${valuation.id}/comparables/${row.id}`, { method: 'DELETE' }),
+        'Could not remove the comparable.',
+      ),
+    [run, valuation.id],
+  );
 
   const screen = () =>
     run(
@@ -385,14 +513,22 @@ export function ComparablesTab() {
     }
   });
 
+  // `included`/`columns` feed the memoized table below, so they are derived
+  // with useMemo against `data` alone — plain consts here would hand it a new
+  // `columns` array (and so break its memoization) on every keystroke into
+  // `reason` or `draft`, neither of which `data` depends on.
+  const included = useMemo(() => data?.comparables.filter((c) => c.included) ?? [], [data]);
+  // Only the multiples some retained comp actually has: a column of dashes
+  // says nothing about the set.
+  const columns = useMemo(
+    () => MULTIPLE_ORDER.filter((key) => included.some((c) => typeof c.multiples[key] === 'number')),
+    [included],
+  );
+
   if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
-  const included = data.comparables.filter((c) => c.included);
   const primary = data.statistics[data.primary_multiple];
-  // Only the multiples some retained comp actually has: a column of dashes
-  // says nothing about the set.
-  const columns = MULTIPLE_ORDER.filter((key) => included.some((c) => typeof c.multiples[key] === 'number'));
 
   return (
     <div>
@@ -537,96 +673,16 @@ export function ComparablesTab() {
           </EmptyState>
         </div>
       ) : (
-        <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
-          <table className="w-full min-w-[720px] text-sm" aria-label="Comparable companies">
-            <thead>
-              <tr className="border-b border-paper-300 text-left">
-                <th className="overline px-5 py-3 font-semibold text-ink-400">Company</th>
-                {columns.map((key) => (
-                  <th key={key} className="overline px-4 py-3 text-right font-semibold text-ink-400">
-                    {MULTIPLE_LABELS[key]}
-                  </th>
-                ))}
-                <th className="overline px-4 py-3 text-right font-semibold text-ink-400">Score</th>
-                <th className="overline px-5 py-3 font-semibold text-ink-400">Status</th>
-                {data.can_edit && <th className="px-5 py-3" />}
-              </tr>
-            </thead>
-            <tbody>
-              {data.comparables.map((row) => (
-                <tr
-                  key={row.id}
-                  className={`border-b border-paper-200 last:border-0 ${row.included ? '' : 'bg-paper-50 text-ink-400'}`}
-                >
-                  <td className="px-5 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-ink-900">{row.name}</span>
-                      {row.ticker && <span className="tnum text-xs text-ink-400">{row.ticker}</span>}
-                      <SourceBadge source={row.source} />
-                      {/* Where the figures came from, beside who chose the row —
-                          a multiple cannot be checked without both. Absent on
-                          rows written before the columns existed, and silence
-                          is better than guessing a vintage for them. */}
-                      {row.figures_source && (
-                        <span
-                          className="text-[0.7rem] text-ink-400"
-                          title={
-                            row.figures_as_of ? `Figures as at ${row.figures_as_of.slice(0, 10)}` : undefined
-                          }
-                        >
-                          {FIGURES_LABELS[row.figures_source] ?? row.figures_source}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  {columns.map((key) => (
-                    <td key={key} className="tnum px-4 py-3 text-right">
-                      {multiple(row.multiples[key])}
-                    </td>
-                  ))}
-                  <td className="tnum px-4 py-3 text-right">
-                    {row.score === null ? '—' : row.score.toFixed(2)}
-                  </td>
-                  <td className="px-5 py-3">
-                    {row.included ? (
-                      <span className="text-ink-500">Included</span>
-                    ) : (
-                      <span title={row.exclude_reason ?? undefined}>
-                        Excluded — {row.exclude_reason ?? 'no reason recorded'}
-                      </span>
-                    )}
-                  </td>
-                  {data.can_edit && (
-                    <td className="px-5 py-3 text-right whitespace-nowrap">
-                      {/* Inside the cell rather than around it: a `fieldset`
-                          between `tr` and `td` is not a thing the HTML parser
-                          will keep, and `display: contents` only hides that
-                          from the layout. */}
-                      <WriteGate closed={retired}>
-                        {row.included ? (
-                          <Button variant="ghost" onClick={() => setExcluding(row.id)} disabled={busy}>
-                            Exclude
-                          </Button>
-                        ) : (
-                          <Button variant="ghost" onClick={() => include(row)} disabled={busy}>
-                            Include
-                          </Button>
-                        )}
-                        {/* A screened row is excluded, never deleted — the set has to
-                          show what was considered. Only analyst rows offer this. */}
-                        {row.source === 'analyst' && (
-                          <Button variant="ghost" onClick={() => remove(row)} disabled={busy}>
-                            Remove
-                          </Button>
-                        )}
-                      </WriteGate>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ComparablesTable
+          comparables={data.comparables}
+          columns={columns}
+          canEdit={data.can_edit}
+          retired={retired}
+          busy={busy}
+          onExclude={setExcluding}
+          onInclude={include}
+          onRemove={remove}
+        />
       )}
 
       {/* Included peers sort first, so a truncated set has dropped its

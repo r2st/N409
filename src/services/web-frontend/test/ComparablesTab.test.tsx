@@ -1,8 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { useState } from 'react';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
-import { ComparablesTab } from '../src/pages/valuation/ComparablesTab';
+import { ComparablesTab, ComparablesTable } from '../src/pages/valuation/ComparablesTab';
 import type { Valuation } from '../src/lib/types';
 
 vi.mock('../src/lib/auth', () => ({
@@ -830,5 +831,148 @@ describe('ComparablesTab', () => {
       await screen.findByText('Alpha Analytics');
       expect(screen.queryByRole('button', { name: 'Find peers with AI' })).not.toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * `ComparablesTab` holds the exclude-reason form's `reason` and the add-peer
+ * form's `draft` in the same component that renders this table (up to
+ * `COMPARABLE_PAGE_LIMIT` — 500 — rows) below both forms, so every keystroke
+ * into either one re-ran the table's map with an unchanged `comparables` and
+ * `columns`. `ComparablesTable` is memoized against exactly that (R443,
+ * methodology M8).
+ *
+ * As with `EntriesTable` (R425), a DOM assertion or `Profiler.onRender` cannot
+ * distinguish a real re-render from a memo bailout that still commits — the
+ * technique that can is patching `.type` on the `memo(...)` object, which
+ * counts invocations of the render function itself.
+ */
+describe('ComparablesTable', () => {
+  const trueRender = (ComparablesTable as unknown as { type: (props: unknown) => unknown }).type;
+
+  afterEach(() => {
+    (ComparablesTable as unknown as { type: typeof trueRender }).type = trueRender;
+  });
+
+  function spyOnRender() {
+    const spy = vi.fn(trueRender);
+    (ComparablesTable as unknown as { type: typeof trueRender }).type = spy;
+    return spy;
+  }
+
+  const ROWS = [
+    {
+      id: 'c1',
+      ticker: 'AAA',
+      name: 'Alpha Analytics',
+      sic: '7372',
+      source: 'market_feed',
+      included: true,
+      exclude_reason: null,
+      ev: 1000,
+      revenue_ltm: 100,
+      revenue_ntm: null,
+      ebitda_ltm: null,
+      ebitda_ntm: null,
+      score: 0.82,
+      multiples: { ev_revenue_ltm: 10, ev_revenue_ntm: null, ev_ebitda_ltm: null, ev_ebitda_ntm: null },
+      figures_source: null,
+      figures_as_of: null,
+    },
+  ];
+
+  const props = {
+    comparables: ROWS,
+    columns: ['ev_revenue_ltm'] as MultipleKey[],
+    canEdit: true,
+    retired: false,
+    busy: false,
+    onExclude: () => {},
+    onInclude: () => {},
+    onRemove: () => {},
+  };
+
+  it('does not re-render when an unrelated state update leaves its props unchanged', async () => {
+    const renderSpy = spyOnRender();
+    function Harness() {
+      const [tick, setTick] = useState(0);
+      return (
+        <div>
+          <button onClick={() => setTick((t) => t + 1)}>unrelated update</button>
+          <span data-testid="tick">{tick}</span>
+          <ComparablesTable {...props} />
+        </div>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'unrelated update' }));
+    expect(screen.getByTestId('tick')).toHaveTextContent('1');
+    // The harness re-rendered (the tick advanced); the memoized table, whose
+    // props are unchanged every render, must not have run its render function
+    // again.
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does re-render once comparables actually changes', () => {
+    // Positive control: proves the spy sees a render at all, so the count
+    // staying at 1 above is the memo bailing out and not a harness that never
+    // triggers a second render in this test environment.
+    const renderSpy = spyOnRender();
+    const { rerender } = render(<ComparablesTable {...props} />);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<ComparablesTable {...props} comparables={[...ROWS]} />);
+    expect(renderSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * The isolated `ComparablesTable` tests above prove the memo bails out given
+ * stable props; they cannot see whether `ComparablesTab` actually hands it
+ * stable props on every render (`columns` in particular is derived fresh from
+ * `data` on every render unless `useMemo`'d, which would defeat the memo just
+ * as surely as an unmemoized table). These drive the real tab.
+ */
+describe('ComparablesTab wiring into ComparablesTable', () => {
+  const trueRender = (ComparablesTable as unknown as { type: (props: unknown) => unknown }).type;
+
+  afterEach(() => {
+    (ComparablesTable as unknown as { type: typeof trueRender }).type = trueRender;
+  });
+
+  function spyOnRender() {
+    const spy = vi.fn(trueRender);
+    (ComparablesTable as unknown as { type: typeof trueRender }).type = spy;
+    return spy;
+  }
+
+  it('does not re-render the table while typing an exclude reason', async () => {
+    mockApi();
+    const renderSpy = spyOnRender();
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Exclude' })[0]!);
+    const reasonField = await screen.findByLabelText(/why is this company not comparable/i);
+    await userEvent.type(reasonField, 'acquired mid-period');
+
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-render the table while typing into the add-peer form', async () => {
+    mockApi();
+    const renderSpy = spyOnRender();
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add peer' }));
+    await userEvent.type(screen.getByLabelText('Company name'), 'Gamma Corp');
+
+    expect(renderSpy).toHaveBeenCalledTimes(1);
   });
 });
