@@ -120,6 +120,16 @@ const Env = z.object({
    * for why absence is never the answer for a gauge-backed rule.
    */
   BACKUP_ROOT: z.string().default('/opt/n409-backups'),
+  /*
+   * Where `infra/backup/pg-verify.sh` stamps its outcome, read the same way
+   * `BACKUP_ROOT` is (R437). It cannot write into `BACKUP_ROOT` itself —
+   * `n409-backup-verify.service` mounts that path read-only, deliberately, so
+   * a restore rehearsal can never touch the dumps it is proving — so it gets a
+   * state directory of its own, provisioned as that unit's `StateDirectory=`.
+   * Empty switches `n409_backup_verify_watched` to 0, the same "said out loud
+   * rather than by being silent" rule `BACKUP_ROOT` follows.
+   */
+  BACKUP_VERIFY_STATE_DIR: z.string().default('/var/lib/n409-backup-verify'),
   // Encrypt document blobs at rest with AES-256-GCM (audit B-5 P1). 32 bytes as
   // 64 hex chars or base64; unset leaves blobs in the clear (dev). Legacy
   // plaintext blobs are still readable after the key is enabled.

@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { MetricsRegistry } from '@n409/shared';
 
@@ -139,5 +139,129 @@ export function registerBackupMetrics(registry: MetricsRegistry, root: string): 
       return SETS.flatMap((set) => (r[set] ? [{ value: r[set]!.count, labels: { set } }] : []));
     },
     ['set'],
+  );
+}
+
+/**
+ * What `pg-verify.sh` last did, read from the two stamp files it writes.
+ *
+ * WHY THIS EXISTS (R437, methodology M5). The gauges above answer "did the
+ * nightly dump run" from artefacts `pg-backup.sh` writes into `BACKUP_ROOT`.
+ * They say nothing about whether that dump actually *restores* — that is
+ * `pg-verify.sh`'s job, it is the one check in the estate that "produces
+ * evidence rather than inference" (its own header), and until now its result
+ * went nowhere but a journal on a box nobody logs into. `n409-backup-verify
+ * .service` cannot write its stamp into `BACKUP_ROOT` — `ReadOnlyPaths=` there
+ * is deliberate, "verification restores into a database, never into the
+ * backup directory" — so it needs a directory of its own, provisioned as a
+ * systemd `StateDirectory=` the way `ReadOnlyPaths` on the other unit is: a
+ * path both the script and this process are given, rather than one either
+ * side has to invent.
+ *
+ * Two files, not one, for the same reason `pg-backup.sh`'s dumps and
+ * `pg-verify.sh`'s own SKIPPED line are already kept apart: `last_attempt`
+ * moves on every run, success, failure or a deliberate
+ * `FLAG_BACKUP_VERIFICATION=off`, and answers "is the job still running at
+ * all". `last_success` moves only on a run that actually restored the dump
+ * and asked it the sanity questions — a SKIPPED week or a FAILED one both
+ * leave it exactly where it was, which is the property that makes its age
+ * the number worth paging on: an operator who has switched verification off
+ * for a month is still owed to know the last *proof* is a month stale.
+ */
+const VERIFY_ATTEMPT_FILE = 'last_attempt';
+const VERIFY_SUCCESS_FILE = 'last_success';
+
+export interface BackupVerifyReading {
+  /** The word `pg-verify.sh` wrote on its last run: VERIFIED, FAILED or SKIPPED. */
+  lastResult: string | null;
+  /** Seconds since that run, or null when no attempt has ever been recorded. */
+  lastAttemptAgeSeconds: number | null;
+  /** Seconds since the last run that actually restored the dump, or null when none ever did. */
+  lastSuccessAgeSeconds: number | null;
+}
+
+/**
+ * The verify state under `dir`, or null when the directory itself cannot be
+ * read — the same "path is wrong" vs "nothing has happened yet" distinction
+ * `readBackupSet` draws, for the same reason: a `VERIFY_STATE_DIR` that is
+ * unset or whose mount is gone must read as unwatched, not as a healthy job
+ * that has simply never run.
+ */
+export function readBackupVerifyState(dir: string, now: number = Date.now()): BackupVerifyReading | null {
+  try {
+    // Existence of the directory is what "watched" means here; an empty one
+    // (a freshly provisioned host, before the first Sunday) is not an error.
+    statSync(dir);
+  } catch {
+    return null;
+  }
+
+  const ageOf = (file: string): number | null => {
+    try {
+      const { mtimeMs } = statSync(path.join(dir, file));
+      // Clamped at zero for the reason readBackupSet's is: a clock skew must
+      // read as "just happened", not as a negative that no rule can match.
+      return Math.max(0, (now - mtimeMs) / 1000);
+    } catch {
+      return null;
+    }
+  };
+
+  const lastResult = (() => {
+    try {
+      // Trimmed: the script writes the word with a trailing newline.
+      return readFileSync(path.join(dir, VERIFY_ATTEMPT_FILE), 'utf8').trim() || null;
+    } catch {
+      return null;
+    }
+  })();
+
+  return {
+    lastResult,
+    lastAttemptAgeSeconds: ageOf(VERIFY_ATTEMPT_FILE),
+    lastSuccessAgeSeconds: ageOf(VERIFY_SUCCESS_FILE),
+  };
+}
+
+/**
+ * Publish the restore-verification state under `dir`.
+ *
+ * `n409_backup_verify_watched` is minted whatever happens, including for an
+ * unset `BACKUP_VERIFY_STATE_DIR` — the same rule every gauge in this file
+ * follows, so an absent series can never be misread as a healthy job.
+ * `n409_backup_verify_failed` is the fast path pg-verify.sh's own header
+ * argues for ("non-zero is a page: a backup that does not restore is
+ * indistinguishable from no backup") — it flips the scrape after a bad run,
+ * rather than waiting for `last_success_seconds` to cross a multi-day
+ * threshold. That threshold gauge is what catches the slower failure: weeks
+ * of `FLAG_BACKUP_VERIFICATION=off`, or a timer that stopped firing, where
+ * every individual run (or non-run) looks unremarkable on its own.
+ */
+export function registerBackupVerifyMetrics(registry: MetricsRegistry, dir: string): void {
+  const read = (): BackupVerifyReading | null => (dir ? readBackupVerifyState(dir) : null);
+
+  registry.gauge(
+    'n409_backup_verify_watched',
+    '1 while this process can read the backup-verification state directory; 0 when it is unset or unreadable and BackupVerifyStale/BackupVerifyFailed are matching nothing',
+    () => (read() ? 1 : 0),
+  );
+
+  registry.gauge(
+    'n409_backup_verify_last_success_seconds',
+    'Seconds since a restore verification last actually proved a dump restorable. Absent when none ever has — see n409_backup_verify_watched to tell that apart from an unreadable state directory.',
+    () => {
+      const r = read();
+      const age = r?.lastSuccessAgeSeconds;
+      return age === null || age === undefined ? [] : [{ value: age }];
+    },
+  );
+
+  registry.gauge(
+    'n409_backup_verify_failed',
+    '1 when the most recent restore-verification attempt did not verify (a real failure, not a deliberate FLAG_BACKUP_VERIFICATION=off skip); 0 otherwise, including when none has ever run.',
+    () => {
+      const r = read();
+      return r?.lastResult === 'FAILED' ? 1 : 0;
+    },
   );
 }

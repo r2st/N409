@@ -46,15 +46,30 @@
 #                    Kill switch. Off (0/false/no/off/disabled) skips both modes
 #                    and exits 0 with a SKIPPED line. Unset means on. See the
 #                    block below the argument parsing for why 0 and not 1.
+#   VERIFY_STATE_DIR Where this run's outcome is stamped for the valuation
+#                    service to read (R437). Default /var/lib/n409-backup-verify
+#                    — must match n409-backup-verify.service's StateDirectory=,
+#                    and must NOT be under $BACKUP_ROOT, which the unit mounts
+#                    read-only. See observability/backups.ts.
 #
 # Exit codes: 0 verified — or deliberately skipped, see FLAG_BACKUP_VERIFICATION
 # — 1 verification failed, 2 usage/configuration error.
 # Non-zero is a page: a backup that does not restore is indistinguishable from
 # no backup, and it is worth knowing on a Tuesday rather than during an outage.
+#
+# THAT PAGE WENT NOWHERE UNTIL NOW (R437, methodology M5). Every exit above is
+# a `log` line, and `log` writes to stderr — the journal of a unit nobody
+# scrapes and, per the timer's own schedule, nobody is watching at 4am Sunday
+# when it fires. `pg-backup.sh` got exactly this fix in R428, read from the
+# artefacts it writes into $BACKUP_ROOT; this script cannot use that directory
+# for its own stamp, because the unit deliberately mounts it read-only — "a
+# restore rehearsal can never touch the dumps it is proving" is the whole
+# reason ReadOnlyPaths= is there. So it gets a directory of its own.
 set -euo pipefail
 
 ENV_FILE="${ENV_FILE:-/opt/N409/.env}"
 BACKUP_ROOT="${BACKUP_ROOT:-/opt/n409-backups}"
+VERIFY_STATE_DIR="${VERIFY_STATE_DIR:-/var/lib/n409-backup-verify}"
 PG_RESTORE="${PG_RESTORE:-pg_restore}"
 PSQL="${PSQL:-psql}"
 MIN_TABLES="${MIN_TABLES:-40}"
@@ -63,7 +78,27 @@ MIN_TABLES="${MIN_TABLES:-40}"
 REQUIRED_TABLES="${REQUIRED_TABLES:-valuations users valuation_params calculations schema_migrations}"
 
 log() { printf '%s n409-verify: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo '?')" "$*" >&2; }
-die() { log "ERROR: $*"; exit 1; }
+
+# Stamps this run's outcome — VERIFIED, FAILED or SKIPPED — for
+# `n409_backup_verify_failed`/`_last_success_seconds` to read. Only VERIFIED
+# touches `last_success`; a SKIPPED or FAILED run must leave it exactly where
+# it was, because "seconds since a restore last actually proved out" is the
+# number worth paging on regardless of *why* it has not moved.
+#
+# Best-effort and never the reason this script fails: a state directory this
+# run cannot write to must not turn an otherwise-good verification into a
+# reported failure — it turns `n409_backup_verify_watched` to 0 on the next
+# scrape instead, which is BackupVerifyUnwatched's job, not this one's.
+stamp_result() {
+  if mkdir -p "$VERIFY_STATE_DIR" 2>/dev/null && printf '%s\n' "$1" >"$VERIFY_STATE_DIR/last_attempt" 2>/dev/null
+  then
+    [[ "$1" == "VERIFIED" ]] && touch "$VERIFY_STATE_DIR/last_success" 2>/dev/null
+  else
+    log "warning: could not stamp verification result ($1) in $VERIFY_STATE_DIR"
+  fi
+  return 0
+}
+die() { log "ERROR: $*"; stamp_result FAILED; exit 1; }
 
 QUICK=0
 DUMP=""
@@ -104,6 +139,7 @@ flag_off() {
 
 if flag_off; then
   log "SKIPPED: FLAG_BACKUP_VERIFICATION=${FLAG_BACKUP_VERIFICATION} — nothing was restored and nothing was verified"
+  stamp_result SKIPPED
   exit 0
 fi
 
@@ -176,7 +212,8 @@ if (( QUICK )); then
 
   (( checked > 0 )) || die "no dumps found under $BACKUP_ROOT"
   log "quick verify: $checked checked, $failed failed, $unmanifested without a checksum manifest, $undigested with a manifest that could not be recomputed"
-  (( failed == 0 )) || exit 1
+  (( failed == 0 )) || { stamp_result FAILED; exit 1; }
+  stamp_result VERIFIED
   exit 0
 fi
 
@@ -262,3 +299,4 @@ MIGRATIONS="${MIGRATIONS//[[:space:]]/}"
 log "  schema_migrations: $MIGRATIONS applied"
 
 log "VERIFIED: $(basename "$DUMP") restores cleanly ($TABLES tables, $MIGRATIONS migrations)"
+stamp_result VERIFIED

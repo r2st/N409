@@ -172,7 +172,7 @@ import { registerSignInMetrics } from './observability/signInOutcomes.js';
 import { registerIntegrationCallbackMetrics } from './observability/integrationCallbacks.js';
 import { registerApiTokenAuthMetrics } from './observability/apiTokenAuth.js';
 import { registerPartnerApiGuardMetrics } from './observability/partnerApiGuard.js';
-import { registerBackupMetrics } from './observability/backups.js';
+import { registerBackupMetrics, registerBackupVerifyMetrics } from './observability/backups.js';
 import { registerRealtimeStreamMetrics } from './observability/realtimeStreams.js';
 import { registerRequestThrottleMetrics } from './observability/requestThrottle.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
@@ -851,6 +851,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    * died. See `observability/backups.ts`.
    */
   registerBackupMetrics(metricsRegistry, config.BACKUP_ROOT);
+  /*
+   * Whether the newest dump actually *restores* — the other half of R428's gap
+   * (R437). `pg-backup.sh`'s artefacts above say a dump was written; only
+   * `pg-verify.sh` restoring it says the platform can recover from it, and
+   * until now that result went nowhere but a journal. See
+   * `observability/backups.ts` for why it needs a state directory of its own.
+   */
+  registerBackupVerifyMetrics(metricsRegistry, config.BACKUP_VERIFY_STATE_DIR);
   const diskRoles = { documents: config.DOCUMENTS_DIR };
   const diskWatched = registerDiskMetrics(metricsRegistry, diskRoles);
   /*

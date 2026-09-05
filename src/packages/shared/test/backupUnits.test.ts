@@ -87,6 +87,17 @@ describe('n409-backup-verify.service', () => {
     expect(timeout).toBeDefined();
     expect(Number(timeout!.split('=')[1])).toBeGreaterThanOrEqual(1800);
   });
+
+  // R437: the result of the restore rehearsal has somewhere to be written that
+  // is not the read-only backup directory above.
+  it('gets a writable state directory of its own, distinct from the read-only backup root', () => {
+    const stateDir = lines.find((l) => l.startsWith('StateDirectory='))?.split('=')[1];
+    expect(stateDir).toBeDefined();
+    const env = lines.find((l) => l.startsWith('Environment=VERIFY_STATE_DIR='))?.split('=').slice(2).join('=');
+    expect(env).toBeDefined();
+    expect(env).toBe(`/var/lib/${stateDir}`);
+    expect(env).not.toContain('/opt/n409-backups');
+  });
 });
 
 describe('n409-backup-verify.timer', () => {

@@ -39,6 +39,14 @@ EnvironmentFile=/opt/N409/.env
 # infra/backup/README.md.
 EnvironmentFile=/etc/n409/backup-verify.env
 Environment=BACKUP_ROOT=/opt/n409-backups
+# Where this run's outcome is stamped for the valuation service to read
+# (R437) — must match BACKUP_VERIFY_STATE_DIR in /opt/N409/.env.
+# `StateDirectory=` creates it (owned by this unit's User=/Group=) and adds it
+# to the write paths ProtectSystem=strict below otherwise removes; it is the
+# one directory this unit may write to that is not the private, torn-down-on-
+# exit /tmp PrivateTmp= gives it.
+Environment=VERIFY_STATE_DIR=/var/lib/n409-backup-verify
+StateDirectory=n409-backup-verify
 ExecStart=/opt/N409/infra/backup/pg-verify.sh
 # A restore of a production-sized dump is not a two-minute job, and a
 # verification killed by a timeout would report as a failed verification —

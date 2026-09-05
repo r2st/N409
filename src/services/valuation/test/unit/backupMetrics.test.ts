@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MetricsRegistry } from '@n409/shared';
-import { readBackupSet, registerBackupMetrics } from '../../src/observability/backups.js';
+import {
+  readBackupSet,
+  readBackupVerifyState,
+  registerBackupMetrics,
+  registerBackupVerifyMetrics,
+} from '../../src/observability/backups.js';
 
 /**
  * The failure nothing on this box reported (R428, methodology M11).
@@ -171,5 +176,144 @@ describe('the configured root', () => {
     expect(inUnit, 'the backup unit no longer sets BACKUP_ROOT').toBeTruthy();
     expect(config).toContain(`BACKUP_ROOT: z.string().default('${inUnit}')`);
     expect(example).toContain(`BACKUP_ROOT=${inUnit}`);
+  });
+
+  it('is also the one the verify unit stamps to', async () => {
+    // Same drift risk one file over (R437): the verify unit's StateDirectory=
+    // and this service's BACKUP_VERIFY_STATE_DIR are two files agreeing on one
+    // path with nothing to compare them, and it is the exact shape that let
+    // the verify pair itself go uninstalled for five days (see this file's
+    // header).
+    const { readFileSync } = await import('node:fs');
+    const url = await import('node:url');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const repo = path.resolve(here, '../../../../..');
+    const unit = readFileSync(path.join(repo, 'infra/backup/n409-backup-verify.service'), 'utf8');
+    const config = readFileSync(path.join(repo, 'src/services/valuation/src/config.ts'), 'utf8');
+    const example = readFileSync(path.join(repo, '.env.example'), 'utf8');
+
+    const inUnit = /^Environment=VERIFY_STATE_DIR=(.+)$/m.exec(unit)?.[1];
+    expect(inUnit, 'the verify unit no longer sets VERIFY_STATE_DIR').toBeTruthy();
+    expect(config).toContain(`BACKUP_VERIFY_STATE_DIR: z.string().default('${inUnit}')`);
+    expect(example).toContain(`BACKUP_VERIFY_STATE_DIR=${inUnit}`);
+  });
+});
+
+/**
+ * The other half of R428's gap: `pg-backup.sh` proves a dump was written;
+ * only `pg-verify.sh` restoring it proves the platform can recover from it,
+ * and until now that result went nowhere but a journal.
+ */
+describe('reading the backup-verify state', () => {
+  it('reports no series at all for a directory that cannot be read', () => {
+    // The same "path is wrong" vs "nothing has happened yet" distinction
+    // readBackupSet draws — an unset or missing VERIFY_STATE_DIR must read as
+    // unwatched, not as a healthy job that has simply never run.
+    expect(readBackupVerifyState(path.join(root(), 'no-such-dir'))).toBeNull();
+  });
+
+  it('reads a fresh, empty state directory as "never attempted", not as an error', () => {
+    const dir = root();
+    const reading = readBackupVerifyState(dir)!;
+    expect(reading).toEqual({ lastResult: null, lastAttemptAgeSeconds: null, lastSuccessAgeSeconds: null });
+  });
+
+  it('reports the last outcome and its age', () => {
+    const dir = root();
+    writeFileSync(path.join(dir, 'last_attempt'), 'VERIFIED\n');
+    const when = new Date(Date.now() - 3 * 3600_000);
+    utimesSync(path.join(dir, 'last_attempt'), when, when);
+
+    const reading = readBackupVerifyState(dir)!;
+    expect(reading.lastResult).toBe('VERIFIED');
+    expect(reading.lastAttemptAgeSeconds).toBeGreaterThan(2.5 * 3600);
+    expect(reading.lastAttemptAgeSeconds).toBeLessThan(3.5 * 3600);
+  });
+
+  it('keeps last_success frozen through a later failure or skip', () => {
+    // A SKIPPED or FAILED run must leave `last_success` exactly where it was —
+    // "seconds since a restore last actually proved out" is the number worth
+    // paging on regardless of why it has not moved since.
+    const dir = root();
+    const success = new Date(Date.now() - 9 * 24 * 3600_000);
+    writeFileSync(path.join(dir, 'last_success'), '');
+    utimesSync(path.join(dir, 'last_success'), success, success);
+    writeFileSync(path.join(dir, 'last_attempt'), 'FAILED\n');
+
+    const reading = readBackupVerifyState(dir)!;
+    expect(reading.lastResult).toBe('FAILED');
+    expect(reading.lastSuccessAgeSeconds).toBeGreaterThan(8.5 * 24 * 3600);
+  });
+});
+
+describe('the backup-verify gauges', () => {
+  it('reports watched, the age of the last success, and whether the last attempt failed', () => {
+    const dir = root();
+    writeFileSync(path.join(dir, 'last_attempt'), 'VERIFIED\n');
+    const when = new Date(Date.now() - 5000);
+    utimesSync(path.join(dir, 'last_attempt'), when, when);
+    writeFileSync(path.join(dir, 'last_success'), '');
+    utimesSync(path.join(dir, 'last_success'), when, when);
+
+    const registry = new MetricsRegistry();
+    registerBackupVerifyMetrics(registry, dir);
+    const text = registry.render();
+
+    expect(text).toContain('n409_backup_verify_watched 1');
+    expect(text).toContain('n409_backup_verify_failed 0');
+    // Anchored to a line start with no `#`, so this cannot be satisfied by the
+    // HELP comment above it — the metric carries no labels, so unlike
+    // n409_backup_age_seconds{set="..."} there is no braced suffix to search
+    // for instead.
+    expect(text).toMatch(/^n409_backup_verify_last_success_seconds \d+(\.\d+)?$/m);
+  });
+
+  it('flags the fast path: a failed attempt pages before any staleness threshold', () => {
+    // pg-verify.sh's own header: "non-zero is a page — a backup that does not
+    // restore is indistinguishable from no backup". This gauge is what lets
+    // that fire on the very next scrape rather than waiting on
+    // last_success_seconds to cross a multi-day rule.
+    const dir = root();
+    writeFileSync(path.join(dir, 'last_attempt'), 'FAILED\n');
+
+    const registry = new MetricsRegistry();
+    registerBackupVerifyMetrics(registry, dir);
+    const text = registry.render();
+
+    expect(text).toContain('n409_backup_verify_failed 1');
+  });
+
+  it('does not count a deliberate skip as a failure', () => {
+    // FLAG_BACKUP_VERIFICATION=off is an operator's choice, not a fault — it is
+    // covered by last_success_seconds going stale, not by this gauge.
+    const dir = root();
+    writeFileSync(path.join(dir, 'last_attempt'), 'SKIPPED\n');
+
+    const registry = new MetricsRegistry();
+    registerBackupVerifyMetrics(registry, dir);
+    expect(registry.render()).toContain('n409_backup_verify_failed 0');
+  });
+
+  it('publishes no age at all when nothing has ever succeeded', () => {
+    // There is no number that means "never" — the same rule n409_backup_age
+    // _seconds follows for a set with no dump.
+    const dir = root();
+    writeFileSync(path.join(dir, 'last_attempt'), 'FAILED\n');
+
+    const registry = new MetricsRegistry();
+    registerBackupVerifyMetrics(registry, dir);
+    // Not a plain `not.toContain`: the HELP text names the metric too, and
+    // this gauge carries no labels to tell the two apart by a braced suffix.
+    expect(registry.render()).not.toMatch(/^n409_backup_verify_last_success_seconds \d/m);
+  });
+
+  it('reports unreadable or unset as watched=0 rather than as no series at all', () => {
+    for (const configured of [path.join(root(), 'not-here'), '']) {
+      const registry = new MetricsRegistry();
+      registerBackupVerifyMetrics(registry, configured);
+      const text = registry.render();
+      expect(text).toContain('n409_backup_verify_watched 0');
+      expect(text).not.toMatch(/^n409_backup_verify_last_success_seconds \d/m);
+    }
   });
 });

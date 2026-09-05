@@ -8,7 +8,16 @@
 // created, which URL it restored into, which questions it asked afterwards, and
 // whether it cleaned up.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  statSync,
+  chmodSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -108,8 +117,15 @@ beforeAll(() => {
   chmodSync(stubPsql, 0o755);
 });
 
+// A fixed default rather than one derived from `work`: most tests below don't
+// care where the stamp lands, and pointing every one of them at the same
+// scratch directory (instead of, say, an unwritable default) keeps the
+// unrelated majority from ever having to think about VERIFY_STATE_DIR at all.
+const DEFAULT_VERIFY_STATE_DIR = path.join(tmpdir(), 'n409-vftest-state-shared');
+
 afterAll(() => {
   rmSync(work, { recursive: true, force: true });
+  rmSync(DEFAULT_VERIFY_STATE_DIR, { recursive: true, force: true });
 });
 
 beforeEach(() => {
@@ -125,6 +141,7 @@ function run(args: string[], env: Record<string, string> = {}, backupRoot = path
       DATABASE_URL: DB_URL,
       ENV_FILE: path.join(work, 'does-not-exist.env'),
       BACKUP_ROOT: backupRoot,
+      VERIFY_STATE_DIR: DEFAULT_VERIFY_STATE_DIR,
       PG_RESTORE: stubRestore,
       PSQL: stubPsql,
       STUB_LOG: psqlLog,
@@ -217,6 +234,7 @@ describe('pg-verify.sh --quick', () => {
           DATABASE_URL: DB_URL,
           ENV_FILE: path.join(work, 'does-not-exist.env'),
           BACKUP_ROOT: root,
+          VERIFY_STATE_DIR: DEFAULT_VERIFY_STATE_DIR,
           PG_RESTORE: stubRestore,
           PSQL: stubPsql,
           STUB_LOG: psqlLog,
@@ -436,6 +454,7 @@ describe('pg-verify.sh FLAG_BACKUP_VERIFICATION', () => {
         DATABASE_URL: DB_URL,
         ENV_FILE: path.join(work, 'does-not-exist.env'),
         BACKUP_ROOT: backupRoot,
+        VERIFY_STATE_DIR: DEFAULT_VERIFY_STATE_DIR,
         PG_RESTORE: stubRestore,
         PSQL: stubPsql,
         STUB_LOG: psqlLog,
@@ -502,5 +521,107 @@ describe('pg-verify.sh FLAG_BACKUP_VERIFICATION', () => {
     expect(res.status).toBe(0);
     expect(res.stderr).not.toContain('SKIPPED');
     expect(psqlCalls().length).toBeGreaterThan(0);
+  });
+});
+
+// The result of a run, stamped for the valuation service to read (R437) —
+// see observability/backups.ts for why it cannot share BACKUP_ROOT.
+describe('pg-verify.sh stamps its outcome', () => {
+  function freshStateDir(name: string): string {
+    const dir = path.join(work, `state-${name}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  const lastAttempt = (dir: string): string => readFileSync(path.join(dir, 'last_attempt'), 'utf8').trim();
+  const hasLastSuccess = (dir: string): boolean => existsSync(path.join(dir, 'last_success'));
+
+  it('stamps VERIFIED, and touches last_success, after a restore that checks out', () => {
+    const state = freshStateDir('full-ok');
+    run([], { VERIFY_STATE_DIR: state }, rootWith('stamp-full-ok'));
+    expect(lastAttempt(state)).toBe('VERIFIED');
+    expect(hasLastSuccess(state)).toBe(true);
+  });
+
+  it('stamps FAILED, and leaves last_success untouched, after a restore that does not', () => {
+    const state = freshStateDir('full-fail');
+    expect(() =>
+      run([], { VERIFY_STATE_DIR: state, STUB_RESTORE_FAIL: '1' }, rootWith('stamp-full-fail')),
+    ).toThrow();
+    expect(lastAttempt(state)).toBe('FAILED');
+    expect(hasLastSuccess(state)).toBe(false);
+  });
+
+  it('leaves a prior success exactly where it was after a later failure', () => {
+    // The number worth paging on is "seconds since a restore last actually
+    // proved out", and a run that fails must not move it — the whole reason
+    // it lives in a file separate from last_attempt.
+    const state = freshStateDir('full-regress');
+    run([], { VERIFY_STATE_DIR: state }, rootWith('stamp-full-regress-ok'));
+    expect(lastAttempt(state)).toBe('VERIFIED');
+    const successMtime = statSync(path.join(state, 'last_success')).mtimeMs;
+
+    expect(() =>
+      run(
+        [],
+        { VERIFY_STATE_DIR: state, STUB_RESTORE_FAIL: '1' },
+        rootWith('stamp-full-regress-fail'),
+      ),
+    ).toThrow();
+    expect(lastAttempt(state)).toBe('FAILED');
+    expect(statSync(path.join(state, 'last_success')).mtimeMs).toBe(successMtime);
+  });
+
+  it('stamps SKIPPED, and never touches last_success, when the flag is off', () => {
+    const state = freshStateDir('skip');
+    run([], { VERIFY_STATE_DIR: state, FLAG_BACKUP_VERIFICATION: 'off' }, rootWith('stamp-skip'));
+    expect(lastAttempt(state)).toBe('SKIPPED');
+    expect(hasLastSuccess(state)).toBe(false);
+  });
+
+  it('stamps quick mode the same way as the full restore', () => {
+    const okState = freshStateDir('quick-ok');
+    run(['--quick'], { VERIFY_STATE_DIR: okState }, rootWith('stamp-quick-ok'));
+    expect(lastAttempt(okState)).toBe('VERIFIED');
+    expect(hasLastSuccess(okState)).toBe(true);
+
+    const failState = freshStateDir('quick-fail');
+    const root = path.join(work, 'stamp-quick-fail');
+    writeDump(path.join(root, 'daily', 'n409-20260801-020000.dump'), { corrupt: true });
+    expect(() => run(['--quick'], { VERIFY_STATE_DIR: failState }, root)).toThrow();
+    expect(lastAttempt(failState)).toBe('FAILED');
+    expect(hasLastSuccess(failState)).toBe(false);
+  });
+
+  it('does not let a stamp it cannot write turn a good verification into a failure', () => {
+    // A state directory under a path that does not exist and cannot be
+    // created (a file sitting where a directory belongs) reproduces "the
+    // stamp could not be written" without needing root to construct a
+    // permission failure.
+    const blocker = path.join(work, 'state-blocked-file');
+    writeFileSync(blocker, 'not a directory');
+    const state = path.join(blocker, 'nested');
+
+    const res = spawnSync('bash', [SCRIPT], {
+      env: {
+        ...process.env,
+        DATABASE_URL: DB_URL,
+        ENV_FILE: path.join(work, 'does-not-exist.env'),
+        BACKUP_ROOT: rootWith('stamp-unwritable'),
+        VERIFY_STATE_DIR: state,
+        PG_RESTORE: stubRestore,
+        PSQL: stubPsql,
+        STUB_LOG: psqlLog,
+        VERIFY_DB: 'n409_verify_test',
+      },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    // The run itself still succeeded — a broken stamp path is observability
+    // failing, not the backup — and it said so, rather than leaving a silent
+    // gap of its own.
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain('warning: could not stamp verification result (VERIFIED)');
+    expect(existsSync(state)).toBe(false);
   });
 });

@@ -492,6 +492,43 @@ groups:
           summary: 'the {{ $labels.set }} backup directory cannot be read — BackupStale and BackupsMissing are matching nothing'
           runbook: 'Check BACKUP_ROOT in /opt/N409/.env against the Environment= line in infra/backup/n409-backup.service, and that the n409 user can read it'
 
+      # The other half of the gap this section opened with (R437, M5): the
+      # rules above prove a dump was *written*. Only pg-verify.sh restoring it
+      # proves the platform can recover from it, and until now that result
+      # went nowhere but a journal on the same unwatched box — "non-zero is a
+      # page", per the script's own header, that paged nobody.
+      #
+      # Fast path: pages on the scrape right after a bad run, rather than
+      # waiting for the age gauge below to cross a multi-day threshold.
+      - alert: BackupVerifyFailed
+        expr: n409_backup_verify_failed == 1
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: 'the last restore rehearsal did not verify — the newest backup is unproven and may not be restorable'
+          runbook: 'journalctl -u n409-backup-verify --since -8d; the failing question (table count, a spine table, schema_migrations) is in the log line above FAIL'
+
+      # Slow path: catches what the gauge above cannot — a timer that stopped
+      # firing, or a month under FLAG_BACKUP_VERIFICATION=off, where every
+      # individual scrape looks unremarkable. Ten days, matching
+      # WeeklyBackupStale, so one missed Sunday is caught without paging on a
+      # single slow run.
+      - alert: BackupVerifyStale
+        expr: n409_backup_verify_last_success_seconds > 864000
+        for: 2h
+        labels: { severity: ticket }
+        annotations:
+          summary: 'no backup has been proven restorable in over ten days'
+          runbook: 'systemctl status n409-backup-verify.timer; journalctl -u n409-backup-verify --since -14d; check FLAG_BACKUP_VERIFICATION in /opt/N409/.env'
+
+      - alert: BackupVerifyUnwatched
+        expr: n409_backup_verify_watched == 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the backup-verify state directory cannot be read — BackupVerifyFailed and BackupVerifyStale are matching nothing'
+          runbook: 'Check BACKUP_VERIFY_STATE_DIR in /opt/N409/.env against StateDirectory=/Environment=VERIFY_STATE_DIR= in infra/backup/n409-backup-verify.service'
+
   - name: n409-http
     rules:
       # Rate, not count: "forty 5xx" means nothing without knowing whether that
