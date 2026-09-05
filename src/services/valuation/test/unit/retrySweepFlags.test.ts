@@ -90,7 +90,9 @@ describe('FLAG_RETRY_LADDERS off — the pipeline retry sweep', () => {
     // an active run holds the one-per-valuation index — so a claim the flag
     // then declined to act on would block new triggers for that valuation until
     // the stale reaper came round.
-    await expect(retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: {} as never })).resolves.toEqual({
+    await expect(
+      retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: { enabled: true } as never }),
+    ).resolves.toEqual({
       claimed: 0,
       resumed: 0,
       // Nothing was claimed, so nothing can have been left claimed: the third
@@ -120,9 +122,9 @@ describe('the default is still to retry', () => {
   });
 
   it('the pipeline sweep reaches its claim', async () => {
-    await expect(retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: {} as never })).rejects.toThrow(
-      /the sweep/,
-    );
+    await expect(
+      retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: { enabled: true } as never }),
+    ).rejects.toThrow(/the sweep/);
   });
 
   it('an empty value is unset, not off', async () => {

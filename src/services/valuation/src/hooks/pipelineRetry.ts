@@ -45,6 +45,34 @@ export async function retryFailedPipelineRuns(deps: {
   // ladders, because an active run holds the one-per-valuation index.
   if (!flagEnabled(FLAGS.retryLadders)) return { claimed: 0, resumed: 0, stranded: 0 };
 
+  /*
+   * The deployment-wide switch, honoured here as well (R440, methodology M3).
+   *
+   * `AUTO_PIPELINE=off` shuts both doors that *start* an orchestration: the
+   * upload hook returns null on `deps.enabled` before it creates a row, and
+   * `POST /valuations/:id/pipeline/runs` answers 422 naming the switch. This
+   * sweep is the third door onto the same work and it did not look at it. A run
+   * that failed transiently while the pipeline was on keeps its
+   * `next_attempt_at`, so flipping the switch off and restarting had the boot
+   * sweep claim that backlog and resume it — auto-applying an AI extraction and
+   * recording a draft calculation, unattended, on a deployment where the
+   * operator has just turned unattended orchestration off. It is also the shape
+   * that switch is flipped in: an AI incident, an engine deploy, a cost
+   * blow-out. The one thing it must stop is exactly what the sweep then does.
+   *
+   * The argument is the branch below's, one scope wider — "re-running now would
+   * be the switch being ignored, which is worse than the work not being done".
+   *
+   * BEFORE THE CLAIM, and returning rather than settling, which is the
+   * difference between this and that branch. The per-valuation opt-out is a
+   * decision somebody made in the product about one engagement and it is not
+   * un-made by a restart, so a claimed run is settled `permanent` and taken out
+   * of the ladder. A deployment switch is a pause: the rows keep their schedule
+   * and their remaining attempts, and turning it back on finds the backlog
+   * intact. Same reasoning, and the same shape, as the retry-ladder flag above.
+   */
+  if (!deps.autoPipeline.enabled) return { claimed: 0, resumed: 0, stranded: 0 };
+
   const actor = { actorType: 'system', actorId: 'retry-sweep', source: 'auto-pipeline' } as const;
 
   /*
