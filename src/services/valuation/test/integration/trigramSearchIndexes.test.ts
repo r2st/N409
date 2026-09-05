@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { likeContains, userFullNameSql, userSearchSql } from '../../src/db/like.js';
 import { listUsers, listUserOptions } from '../../src/repos/adminUsers.js';
-import { searchUsers, searchValuations } from '../../src/repos/search.js';
+import { searchDocuments, searchUsers, searchValuations } from '../../src/repos/search.js';
 import { isDbAvailable, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -11,6 +11,7 @@ const dbUp = await isDbAvailable();
 /** Enough rows that a sequential scan is measurably the wrong plan. */
 const USERS = 20_000;
 const VALUATIONS = 20_000;
+const DOCUMENTS = 20_000;
 
 interface PlanNode {
   'Node Type': string;
@@ -78,17 +79,34 @@ const COMPANY_SQL = `SELECT id FROM valuations WHERE company_name ILIKE $1`;
 /** Both arms of the user search, from the one helper the index is built on. */
 const USER_SQL = `SELECT id FROM users WHERE ${userSearchSql('$1')}`;
 const FULL_NAME_SQL = `SELECT id FROM users WHERE ${userFullNameSql()} ILIKE $1`;
+/**
+ * The company/service disjunction exactly as `searchValuations` builds it
+ * (repos/search.ts, `scope: { kind: 'all' }`) — written out for the same
+ * reason `COMPANY_SQL` is: the plan under test has to be the query the
+ * product actually sends, or a rewrite that quietly drops off the index can
+ * pass here while the search box goes back to a scan.
+ */
+const VALUATIONS_SEARCH_SQL = `SELECT id FROM valuations
+   WHERE archived_at IS NULL AND (company_name ILIKE $1 OR service_name ILIKE $1)`;
+/** `searchDocuments`'s join and predicate (repos/search.ts, `{ kind: 'all' }`). */
+const DOCUMENTS_SEARCH_SQL = `SELECT d.id FROM documents d JOIN valuations v ON v.id = d.valuation_id
+   WHERE d.deleted_at IS NULL AND v.archived_at IS NULL AND (d.filename ILIKE $1)`;
 
 /** A needle that appears in exactly one row, so the index is worth choosing. */
 const NEEDLE_COMPANY = 'Zylophone Quarry Holdings';
 const NEEDLE_FIRST = 'Ada';
 const NEEDLE_LAST = 'Lovelace';
 const NEEDLE_EMAIL = 'ada.lovelace@analyticalengine.test';
+/** Matches only on the service-name arm — company_name is deliberately unrelated. */
+const NEEDLE_SERVICE = 'Bramblewood Advisory Retainer';
+const NEEDLE_FILENAME = 'Quixotic-Ventures-cap-table-2026.xlsx';
 
 describe.skipIf(!dbUp)('trigram search indexes (migration 0149)', () => {
   let db: TestDb;
   let ownerId: string;
   let needleUserId: string;
+  let serviceNeedleValuationId: string;
+  let needleDocumentId: string;
 
   beforeAll(async () => {
     db = await setupTestDb();
@@ -123,14 +141,38 @@ describe.skipIf(!dbUp)('trigram search indexes (migration 0149)', () => {
       [ownerId],
     );
     await db.pool.query(
-      `INSERT INTO valuations (id, kind, company_name, user_id)
-       SELECT upper(lpad(to_hex(g + 1000000), 26, '0')), '409a', 'Company ' || g, $1
+      `INSERT INTO valuations (id, kind, company_name, service_name, user_id)
+       SELECT upper(lpad(to_hex(g + 1000000), 26, '0')), '409a', 'Company ' || g, 'Service ' || g, $1
          FROM generate_series(1, ${VALUATIONS}) AS g`,
       [ownerId],
     );
     await db.pool.query(
       `INSERT INTO valuations (id, kind, company_name, user_id) VALUES ($1, '409a', $2, $3)`,
       [newUlid(), NEEDLE_COMPANY, ownerId],
+    );
+    // Matches only through the service_name arm of `searchValuations`'s OR —
+    // the company_name half must not be the reason this row is findable.
+    serviceNeedleValuationId = newUlid();
+    await db.pool.query(
+      `INSERT INTO valuations (id, kind, company_name, service_name, user_id) VALUES ($1, '409a', $2, $3, $4)`,
+      [serviceNeedleValuationId, 'Unrelated Holdings Inc', NEEDLE_SERVICE, ownerId],
+    );
+
+    // Documents, for `searchDocuments` (repos/search.ts) — a filler set plus
+    // one distinctively-named upload, all hanging off the service-name needle
+    // valuation so scope is exercised too.
+    await db.pool.query(
+      `INSERT INTO documents (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path)
+       SELECT upper(lpad(to_hex(g + 2000000), 26, '0')), $1, 'other', 'document-' || g || '.pdf',
+              'application/pdf', 1024, 'x', '/x'
+         FROM generate_series(1, ${DOCUMENTS}) AS g`,
+      [serviceNeedleValuationId],
+    );
+    needleDocumentId = newUlid();
+    await db.pool.query(
+      `INSERT INTO documents (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path)
+       VALUES ($1, $2, 'other', $3, 'application/vnd.ms-excel', 2048, 'y', '/y')`,
+      [needleDocumentId, serviceNeedleValuationId, NEEDLE_FILENAME],
     );
     /*
      * VACUUM, not just ANALYZE — and the difference is the whole reason this
@@ -155,6 +197,7 @@ describe.skipIf(!dbUp)('trigram search indexes (migration 0149)', () => {
      */
     await db.pool.query('VACUUM ANALYZE users');
     await db.pool.query('VACUUM ANALYZE valuations');
+    await db.pool.query('VACUUM ANALYZE documents');
   }, 180_000);
   afterAll(async () => db?.teardown());
 
@@ -253,6 +296,98 @@ describe.skipIf(!dbUp)('trigram search indexes (migration 0149)', () => {
       } finally {
         await db.pool.query('DELETE FROM valuations WHERE id = $1', [id]);
       }
+    });
+  });
+
+  /**
+   * R435 (methodology M8). `searchValuations` ORs `company_name ILIKE` with
+   * `service_name ILIKE` in one WHERE clause, and an OR with one unindexed arm
+   * gets no access path for the disjunction at all — not a slower one, none —
+   * so the whole statement fell back to a sequential scan even though
+   * `company_name` had its own trigram index the whole time. Same shape as
+   * `searchOwnerPlan.test.ts` (R167), on the arm that round did not reach.
+   */
+  describe('service_name (R435)', () => {
+    it('valuations_service_name_trgm_idx is a GIN trigram index over service_name', async () => {
+      const { rows } = await db.pool.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes WHERE tablename = 'valuations' AND indexname = 'valuations_service_name_trgm_idx'`,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.indexdef).toMatch(/USING gin/);
+      expect(rows[0]!.indexdef).toContain('service_name gin_trgm_ops');
+    });
+
+    it("serves both arms of searchValuations's OR under a bitmap OR, not a scan", async () => {
+      const plan = await explain(db.pool, VALUATIONS_SEARCH_SQL, [likeContains(NEEDLE_SERVICE)]);
+      const scan = plan.find((n) => n['Relation Name'] === 'valuations');
+      expect(scan?.['Node Type']).not.toBe('Seq Scan');
+      const used = plan.map((n) => n['Index Name']).filter(Boolean);
+      expect(used).toContain('valuations_company_name_trgm_idx');
+      expect(used).toContain('valuations_service_name_trgm_idx');
+    });
+
+    it('reads a fraction of the blocks the scan the missing index forced', async () => {
+      const withIndex = await explain(db.pool, VALUATIONS_SEARCH_SQL, [likeContains(NEEDLE_SERVICE)]);
+      const withoutIndex = await without(db.pool, 'valuations_service_name_trgm_idx', (c) =>
+        explain(c, VALUATIONS_SEARCH_SQL, [likeContains(NEEDLE_SERVICE)]),
+      );
+
+      const seq = withoutIndex.find((n) => n['Relation Name'] === 'valuations');
+      // Without the second arm's index, Postgres has no plan for the OR as a
+      // whole and reads every row — including the ones company_name's index
+      // could otherwise have served on its own.
+      expect(seq?.['Node Type']).toBe('Seq Scan');
+      expect(seq?.['Rows Removed by Filter'] ?? 0).toBeGreaterThan(VALUATIONS / 2);
+      // /3 rather than /10: a needle that matches through service_name pays for
+      // two bitmap index scans and a BitmapOr, unlike the negative-match probe
+      // above, so the margin is smaller — but still a fraction of a scan that
+      // reads the whole table.
+      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(Math.max(...withoutIndex.map(blocks)) / 3);
+    });
+
+    it('finds an engagement by service name alone — company_name does not match', async () => {
+      const hits = await searchValuations(db.pool, { kind: 'all' }, NEEDLE_SERVICE);
+      expect(hits.map((h) => h.id)).toEqual([serviceNeedleValuationId]);
+    });
+  });
+
+  /**
+   * R435. `searchDocuments` (repos/search.ts) had no index at all behind its
+   * only text predicate — not hidden in an OR, just never given one — so every
+   * keystroke into the document search box read every row in `documents`.
+   */
+  describe('documents.filename (R435)', () => {
+    it('documents_filename_trgm_idx is a GIN trigram index over filename', async () => {
+      const { rows } = await db.pool.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes WHERE tablename = 'documents' AND indexname = 'documents_filename_trgm_idx'`,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.indexdef).toMatch(/USING gin/);
+      expect(rows[0]!.indexdef).toContain('filename gin_trgm_ops');
+    });
+
+    it('serves the filename match from the trigram index, not a scan', async () => {
+      const plan = await explain(db.pool, DOCUMENTS_SEARCH_SQL, [likeContains('Quixotic-Ventures')]);
+      const scan = plan.find((n) => n['Relation Name'] === 'documents');
+      expect(scan?.['Node Type']).not.toBe('Seq Scan');
+      expect(plan.some((n) => n['Index Name'] === 'documents_filename_trgm_idx')).toBe(true);
+    });
+
+    it('reads an order of magnitude fewer blocks than the scan it replaced', async () => {
+      const withIndex = await explain(db.pool, DOCUMENTS_SEARCH_SQL, [likeContains('Quixotic-Ventures')]);
+      const withoutIndex = await without(db.pool, 'documents_filename_trgm_idx', (c) =>
+        explain(c, DOCUMENTS_SEARCH_SQL, [likeContains('Quixotic-Ventures')]),
+      );
+
+      const seq = withoutIndex.find((n) => n['Relation Name'] === 'documents');
+      expect(seq?.['Node Type']).toBe('Seq Scan');
+      expect(seq?.['Rows Removed by Filter'] ?? 0).toBeGreaterThan(DOCUMENTS / 2);
+      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(Math.max(...withoutIndex.map(blocks)) / 10);
+    });
+
+    it('finds a document by filename fragment, scoped through its valuation', async () => {
+      const hits = await searchDocuments(db.pool, { kind: 'all' }, 'Quixotic-Ventures');
+      expect(hits.map((h) => h.id)).toEqual([needleDocumentId]);
     });
   });
 
