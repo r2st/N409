@@ -12,6 +12,7 @@ import {
   issuePath,
   requestIdHeaders,
   type CircuitState,
+  type CircuitTicket,
   type Counter,
   type FailureClass,
   type Histogram,
@@ -556,6 +557,16 @@ export async function postJson<T>(
   const record = opts.record;
 
   const breaker = circuits.get(service);
+  /**
+   * Which call this is, for the settle to hand back (R440, methodology M3).
+   *
+   * Undefined when the flag is off and nothing was acquired, which the breaker
+   * reads as the bookkeeping-only settle it is. When the flag is on it is what
+   * stops *this* call's verdict being credited to whatever period the breaker
+   * is in by the time it finishes: a request admitted while closed and settling
+   * after a trip used to restart the cooldown, or stand in for the trial call.
+   */
+  let ticket: CircuitTicket | undefined;
   try {
     // The breaker wraps the *whole* call, retries included, rather than each
     // attempt. Per-attempt would count one dead upstream twice and trip at half
@@ -570,7 +581,7 @@ export async function postJson<T>(
     // dependency they just had an incident about — which is precisely when the
     // memory is worth having. Read per call, so the flag takes effect on the
     // restart that reloads the unit's EnvironmentFile and needs no rebuild.
-    if (flagEnabled(FLAGS.circuitBreakers)) breaker.acquire();
+    if (flagEnabled(FLAGS.circuitBreakers)) ticket = breaker.acquire();
   } catch (err) {
     if (!(err instanceof CircuitOpenError)) throw err;
     const seconds = Math.max(1, Math.ceil(err.retryAfterMs / 1000));
@@ -617,7 +628,7 @@ export async function postJson<T>(
           Math.max(MIN_ATTEMPT_MS, remaining()),
           record,
         );
-        breaker.recordSuccess();
+        breaker.recordSuccess(ticket);
         return result;
       } catch (err) {
         if (!(err instanceof InternalServiceError) || !isRetryable(err) || attempt >= retries) throw err;
@@ -630,7 +641,7 @@ export async function postJson<T>(
       }
     }
   } catch (err) {
-    breaker.recordFailure(classifyInternalError(err));
+    breaker.recordFailure(classifyInternalError(err), ticket);
     throw err;
   }
 }

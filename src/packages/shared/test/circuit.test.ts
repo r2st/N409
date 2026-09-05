@@ -302,3 +302,116 @@ describe('CircuitRegistry', () => {
     expect(registry.get('ai').snapshot().state).toBe('closed');
   });
 });
+
+/**
+ * Calls admitted before the trip, settling after it (R440, methodology M3).
+ *
+ * Every concurrent caller in flight when a breaker opens becomes one of these,
+ * so on a busy dependency they arrive in a stream rather than one at a time.
+ * The verdict each of them carries is about the period the trip already ended
+ * — read as a verdict about now, they restart the cooldown that has not begun
+ * and stand in for the trial call the breaker is waiting on.
+ *
+ * The ticket `acquire` hands back is what separates the two, and these are the
+ * four ways the difference shows.
+ */
+describe('CircuitBreaker — a call that outlived the trip', () => {
+  it('does not restart the cooldown with a failure from before it', () => {
+    // The one that costs the most: a queue of doomed requests draining after
+    // the trip pushed the first trial call out past the last of them, so the
+    // dependency could be well for minutes with nothing dialling it.
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    const straggler = breaker.acquire(); // admitted while closed
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    expect(breaker.snapshot().state).toBe('open');
+
+    now.ms += 20_000;
+    breaker.recordFailure(TRANSIENT, straggler);
+
+    // Ten seconds left on the original cooldown, not thirty from now.
+    expect(breaker.snapshot().retryAfterMs).toBe(10_000);
+    now.ms += 10_000;
+    expect(breaker.snapshot().state).toBe('half-open');
+  });
+
+  it('does not take the trial slot the live probe is holding', () => {
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    const straggler = breaker.acquire();
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    now.ms += 30_000;
+
+    const probe = breaker.acquire();
+    expect(probe.trial).toBe(true);
+    // The straggler settles mid-probe. Its decrement used to free the slot it
+    // never held, so the next caller was admitted alongside the live trial —
+    // the thundering herd the half-open state exists to prevent.
+    breaker.recordFailure(TRANSIENT, straggler);
+    expect(breaker.allows()).toBe(false);
+    expect(breaker.snapshot().state).toBe('half-open');
+
+    // And the probe's own verdict is still the one that decides.
+    breaker.recordSuccess(probe);
+    expect(breaker.snapshot().state).toBe('closed');
+  });
+
+  it('does not close the breaker with a success from before it', () => {
+    // Closing on this is closing with no probe at all: the call succeeded
+    // against the dependency as it was before the trip.
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    const straggler = breaker.acquire();
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    now.ms += 30_000;
+    expect(breaker.snapshot().state).toBe('half-open');
+
+    breaker.recordSuccess(straggler);
+
+    expect(breaker.snapshot().state).toBe('half-open');
+    expect(breaker.allows()).toBe(true); // still owed a real trial
+  });
+
+  it('keeps the reason the breaker is open when one succeeds', () => {
+    // The `openedBy` guarantee the file already made about this exact case,
+    // now held by ignoring the settle rather than by a special case inside it.
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    const straggler = breaker.acquire();
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    breaker.recordSuccess(straggler);
+    expect(breaker.snapshot().state).toBe('open');
+    expect(breaker.snapshot().openedBy).toBe('syscall.ECONNREFUSED');
+  });
+
+  it('invalidates the tickets outstanding when an operator resets it', () => {
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    const inFlight = breaker.acquire();
+    breaker.reset();
+    // The reset closed it; a failure from before that must not re-open it on
+    // its own, which at threshold 1 it otherwise would.
+    const one = breakerAt(now, { failureThreshold: 1 });
+    const ticket = one.acquire();
+    one.reset();
+    one.recordFailure(TRANSIENT, ticket);
+    expect(one.snapshot().state).toBe('closed');
+    expect(breaker.snapshot().state).toBe('closed');
+    expect(inFlight.trial).toBe(false);
+  });
+
+  it('still reads a settle with no ticket as current, so the flag-off breaker closes', () => {
+    // `postJson` and the report client record outcomes with FLAG_CIRCUIT_BREAKERS
+    // off and never call `acquire`, precisely so a disabled breaker still
+    // watches and "comes back warm". Those settles carry no provenance; read as
+    // stale they could never close it, and turning the flag back on would find
+    // the breaker open against a dependency that has been well for hours.
+    const now = { ms: 0 };
+    const breaker = breakerAt(now);
+    for (let i = 0; i < 3; i++) breaker.recordFailure(TRANSIENT);
+    now.ms += 30_000;
+    expect(breaker.snapshot().state).toBe('half-open');
+    breaker.recordSuccess();
+    expect(breaker.snapshot().state).toBe('closed');
+  });
+});

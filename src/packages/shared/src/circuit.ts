@@ -39,6 +39,63 @@ import type { FailureClass } from './failure.js';
 
 export type CircuitState = 'closed' | 'open' | 'half-open';
 
+/**
+ * What {@link CircuitBreaker.acquire} hands back, and what a settle passes in
+ * to say *which call* is reporting (R440, methodology M3).
+ *
+ * A breaker's inputs are `recordSuccess` and `recordFailure`, and without this
+ * they are anonymous: the breaker cannot tell the verdict of the trial call it
+ * admitted a moment ago from the verdict of a call it admitted a minute ago,
+ * while it was still closed, which has only now finished. Those stragglers are
+ * not exotic — this file already says so about `openedBy` ("a success can
+ * arrive while the breaker is open: the call that reports it was admitted
+ * before the trip and finished after it") and `reportRender.ts` says it again
+ * about its own queue ("the wait this timed out on is the tail of the previous
+ * stall, held by requests issued before the trip"). Every concurrent caller in
+ * flight at the moment of a trip becomes one.
+ *
+ * Read as verdicts about the present, they break the two things the open and
+ * half-open states are for:
+ *
+ *   * THE COOLDOWN NEVER STARTS. A straggler's transient failure arriving
+ *     while the breaker is open re-reached the failure threshold — the tally
+ *     is already past it — and re-tripped, which restamps `openedAt`. A queue
+ *     of requests draining against a dead dependency therefore pushed the
+ *     first trial call out by one full `resetTimeoutMs` past the *last* of
+ *     them, not past the trip. For the report offload, where the fallback is
+ *     an in-process render costing orders of magnitude more than the delegated
+ *     one, that is the expensive path staying on long after the unit is back.
+ *
+ *   * THE SINGLE PROBE IS NOT SINGLE. Any settle arriving while the breaker is
+ *     half-open decremented `halfOpenInFlight` — a counter the straggler never
+ *     incremented, because it was admitted while the breaker was closed. So a
+ *     straggler hands out a second trial slot beside the live probe (the
+ *     thundering herd `acquire` exists to prevent), and its verdict is read as
+ *     the probe's: a straggler failure re-opens the breaker and discards the
+ *     real trial, whose success then lands on an `open` breaker and closes
+ *     nothing.
+ *
+ * The `episode` is the fix and it is one integer: it moves every time the
+ * breaker opens, so a call admitted before the trip carries a number the
+ * breaker has moved past. Such a settle changes no state at all — it is
+ * evidence about a period that is over.
+ *
+ * A settle with NO ticket keeps the old behaviour, and that is deliberate
+ * rather than a compatibility shim: `postJson` and the report client record
+ * their outcomes even when `FLAG_CIRCUIT_BREAKERS` is off, without acquiring
+ * anything, precisely so a breaker switched off "still watches and comes back
+ * warm". Those settles have no provenance to check, and reading them as
+ * current is what keeps that true — a breaker that could never close while the
+ * flag was off would come back open on a healthy dependency, which is worse
+ * than coming back cold.
+ */
+export interface CircuitTicket {
+  /** True when this call took the half-open trial slot. */
+  readonly trial: boolean;
+  /** The breaker's open-episode counter at the moment the call was admitted. */
+  readonly episode: number;
+}
+
 /** Thrown instead of dialling, while the breaker is open. */
 export class CircuitOpenError extends Error {
   readonly circuit: string;
@@ -93,6 +150,11 @@ export class CircuitBreaker {
   private openedBy: string | null = null;
   private halfOpenInFlight = 0;
   private rejected = 0;
+  /**
+   * Which open-episode the breaker is in; moves on every trip and on a reset.
+   * See {@link CircuitTicket} — this is the whole of the straggler fix.
+   */
+  private episode = 0;
 
   private readonly name: string;
   private readonly failureThreshold: number;
@@ -151,17 +213,46 @@ export class CircuitBreaker {
    * is two trial calls, which is the thundering herd the half-open state exists
    * to prevent.
    */
-  acquire(): void {
+  acquire(): CircuitTicket {
     if (!this.allows()) {
       this.rejected += 1;
       throw new CircuitOpenError(this.name, this.cooldownRemaining());
     }
-    if (this.state === 'half-open') this.halfOpenInFlight += 1;
+    const trial = this.state === 'half-open';
+    if (trial) this.halfOpenInFlight += 1;
+    // Handed back so the settle can say which call it is; see {@link CircuitTicket}.
+    return { trial, episode: this.episode };
+  }
+
+  /**
+   * Whether this settle is reporting on a period the breaker has moved past.
+   *
+   * A ticket from before the last trip is a call admitted under a different
+   * regime — it answers "was the dependency well a minute ago", which is the
+   * question the trip already answered. An absent ticket is not stale: see
+   * {@link CircuitTicket} on the flag-off bookkeeping that has no ticket to
+   * carry.
+   */
+  private isStale(ticket?: CircuitTicket): boolean {
+    return ticket !== undefined && ticket.episode !== this.episode;
+  }
+
+  /**
+   * Whether this settle is the verdict of a trial call the breaker is waiting
+   * on — the only kind that may close a half-open breaker or re-open it.
+   */
+  private isTrialVerdict(ticket?: CircuitTicket): boolean {
+    return this.state === 'half-open' && !this.isStale(ticket) && (ticket?.trial ?? true);
   }
 
   /** A call succeeded. Closes a half-open breaker and clears the tally. */
-  recordSuccess(): void {
-    if (this.state === 'half-open') {
+  recordSuccess(ticket?: CircuitTicket): void {
+    // A success from a call admitted before the last trip is not proof of
+    // recovery now — it is the tail of the outage that produced the trip. It
+    // closed the breaker on no probe at all, which is the floodgate this state
+    // exists to hold shut. See {@link CircuitTicket}.
+    if (this.isStale(ticket)) return;
+    if (this.isTrialVerdict(ticket)) {
       this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
       this.transition('closed', 'trial call succeeded');
     }
@@ -200,34 +291,51 @@ export class CircuitBreaker {
    * So the slot goes back and the state stays exactly as it was: still
    * half-open, still owed one real trial, which the next caller supplies.
    */
-  releaseTrial(): void {
-    if (this.state === 'half-open') this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
+  releaseTrial(ticket?: CircuitTicket): void {
+    // Only a slot this call actually took goes back. A straggler handing back a
+    // probe it never held is how the live one comes to share the half-open
+    // state with a second caller.
+    if (this.isTrialVerdict(ticket)) this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
   }
 
   /**
    * A call failed. Only a `transient` classification counts toward opening —
    * see the header note.
    */
-  recordFailure(failure: FailureClass): void {
-    const wasHalfOpen = this.state === 'half-open';
-    if (wasHalfOpen) this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
+  recordFailure(failure: FailureClass, ticket?: CircuitTicket): void {
+    // Same as the success above: a failure from before the trip is the outage
+    // the breaker already opened on, arriving late. Counting it again re-trips
+    // the breaker and restamps `openedAt`, so a queue of doomed requests
+    // draining after the trip pushes the first trial call out past the *last*
+    // of them. See {@link CircuitTicket}.
+    if (this.isStale(ticket)) return;
+
+    const trialFailed = this.isTrialVerdict(ticket);
+    if (trialFailed) this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
 
     if (failure.kind !== 'transient') {
       // A permanent failure during a trial call says nothing about the
       // dependency's health — it says our request was wrong. But it is also not
       // proof of recovery, so a half-open breaker must not close on it either;
       // it goes back to open and waits for a trial that actually answers.
-      if (wasHalfOpen) this.trip(failure.reason, 'trial call failed');
+      if (trialFailed) this.trip(failure.reason, 'trial call failed');
       return;
     }
 
     this.consecutiveFailures += 1;
-    if (wasHalfOpen || this.consecutiveFailures >= this.failureThreshold) {
-      this.trip(failure.reason, wasHalfOpen ? 'trial call failed' : 'failure threshold reached');
-    }
+    // The threshold arm is gated on `closed` because that is the only state it
+    // is a decision in: an open breaker has already made it, and re-making it
+    // is what moved the cooldown. The tally keeps counting either way — it is
+    // "consecutive failures since the last success" and that stays true.
+    if (trialFailed) this.trip(failure.reason, 'trial call failed');
+    else if (this.state === 'closed' && this.consecutiveFailures >= this.failureThreshold)
+      this.trip(failure.reason, 'failure threshold reached');
   }
 
   private trip(reason: string, why: string): void {
+    // Every call admitted before this line now belongs to a period that is
+    // over, and its ticket stops matching. See {@link CircuitTicket}.
+    this.episode += 1;
     this.openedAt = this.now();
     this.openedBy = reason;
     this.halfOpenInFlight = 0;
@@ -242,13 +350,13 @@ export class CircuitBreaker {
    * — can supply it.
    */
   async run<T>(fn: () => Promise<T>, classify: (err: unknown) => FailureClass): Promise<T> {
-    this.acquire();
+    const ticket = this.acquire();
     try {
       const result = await fn();
-      this.recordSuccess();
+      this.recordSuccess(ticket);
       return result;
     } catch (err) {
-      this.recordFailure(classify(err));
+      this.recordFailure(classify(err), ticket);
       throw err;
     }
   }
@@ -267,6 +375,9 @@ export class CircuitBreaker {
 
   /** Force back to closed. For tests and for an operator override. */
   reset(): void {
+    // An operator override is a new period as much as a trip is: calls that
+    // were in flight under the state being overridden must not settle onto it.
+    this.episode += 1;
     this.consecutiveFailures = 0;
     this.halfOpenInFlight = 0;
     this.openedBy = null;

@@ -227,6 +227,7 @@ export {
   type CircuitOptions,
   type CircuitSnapshot,
   type CircuitState,
+  type CircuitTicket,
 } from './circuit.js';
 export {
   FLAGS,

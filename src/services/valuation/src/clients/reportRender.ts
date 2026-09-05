@@ -1,5 +1,5 @@
 import { renderReportPdf as renderLocally, type ReportPdfInput, type RenderOptions } from '@n409/report/pdf';
-import type { Counter, Histogram, MetricsRegistry } from '@n409/shared';
+import type { CircuitTicket, Counter, Histogram, MetricsRegistry } from '@n409/shared';
 import {
   ApiProblem,
   CircuitOpenError,
@@ -485,10 +485,20 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
   }
 
   const breaker = circuits.get(SERVICE);
+  /**
+   * Which call this is; see the twin in `clients/internal.ts` (R440, M3).
+   *
+   * This client is where the straggler is most visible, because the note on
+   * the `releaseTrial` arm below already describes one: "the wait this timed
+   * out on is the tail of the *previous* stall, held by requests issued before
+   * the trip". Those requests settle too, and until they carried a ticket
+   * their verdicts were read as the trial call's.
+   */
+  let ticket: CircuitTicket | undefined;
   try {
     // Same asymmetry as `postJson`: the flag gates the *refusal*, never the
     // bookkeeping, so a breaker switched off still watches and comes back warm.
-    if (flagEnabled(FLAGS.circuitBreakers, env)) breaker.acquire();
+    if (flagEnabled(FLAGS.circuitBreakers, env)) ticket = breaker.acquire();
   } catch (err) {
     if (!(err instanceof CircuitOpenError)) throw err;
     // Not logged at warn: an open breaker is the steady state of a report unit
@@ -524,7 +534,7 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
       }
       return postForPdf(url, input, via, remaining);
     });
-    breaker.recordSuccess();
+    breaker.recordSuccess(ticket);
     record('delegated', 'ok', startedAt);
     return pdf;
   } catch (err) {
@@ -549,12 +559,13 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
        * already over, and the next one thirty seconds later can be consumed
        * the same way.
        */
-      breaker.releaseTrial();
+      breaker.releaseTrial(ticket);
     } else {
       breaker.recordFailure(
         err instanceof DelegationError && err.status !== null
           ? classifyStatus(err.status)
           : classifyFailure(err),
+        ticket,
       );
     }
     // Warn, not error: nothing is broken from the client's point of view — the
