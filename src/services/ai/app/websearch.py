@@ -1199,6 +1199,22 @@ def search_with_provider(
                     "search provider failed, trying the next in the chain",
                     extra={"event": "search_chain_fallback", "provider": chosen},
                 )
+        # Every entry in the chain was either cooling down or just failed, and
+        # nothing above this line said so with an `event` field attached:
+        # `search_chain_fallback` only fires between two attempts, so the walk
+        # ending — the one moment "research is down" becomes true rather than
+        # "this provider is down" — logged nothing at either the deadline-expiry
+        # break above or the ordinary case of the last entry simply failing. The
+        # detail string still reaches the caller (`research.py` folds it into
+        # the 503 it returns), but this service's own logs, and the
+        # `log_degraded_events_total` counter every sibling branch in this
+        # module and in research.py already reports through, saw nothing at all
+        # — a search backend broken in every configured way and a search
+        # backend never called were the same reading from inside this process.
+        _log.warning(
+            "search chain exhausted: no provider answered",
+            extra={"event": "search_chain_failed", "count": len(walk)},
+        )
         raise SearchError("; ".join(errors) or "no search provider answered")
     finally:
         if owns_client:

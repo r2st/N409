@@ -11,6 +11,7 @@ becomes a 503 on somebody's valuation.
 """
 
 import importlib.util
+import logging
 import time
 
 import httpx
@@ -890,6 +891,22 @@ class TestSearchChain:
             search("q", client=stub(lambda r: httpx.Response(500, text="down")))
         detail = str(caught.value)
         assert "duckduckgo" in detail and "wikipedia" in detail
+
+    def test_the_whole_chain_failing_writes_one_warning_naming_itself(self, monkeypatch, caplog):
+        """`search_chain_fallback` fires between two attempts and never on the
+        one that ends the walk — so the moment "research is down" becomes true
+        rather than "this provider is down" used to log nothing at all, with no
+        `event` field for `log_degraded_events_total` (the counter every
+        neighbouring failure in this module and in research.py already reports
+        through) to see. A search backend broken in every configured way and
+        one never called read the same from inside this process."""
+        caplog.set_level(logging.WARNING, logger="websearch")
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+        with pytest.raises(SearchError):
+            search_with_provider("q", client=stub(lambda r: httpx.Response(500, text="down")))
+        line = next(r for r in caplog.records if getattr(r, "event", None) == "search_chain_failed")
+        assert line.levelno == logging.WARNING
+        assert line.count == len(search_chain())
 
     def test_an_empty_result_ends_the_walk_rather_than_continuing_it(self, monkeypatch):
         """A backend that answered "nothing" has answered. Walking on would
