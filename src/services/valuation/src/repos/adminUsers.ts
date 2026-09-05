@@ -259,10 +259,20 @@ export interface PartnerRow {
   valuation_count: number;
 }
 
-/** Per-partner rollups keep the admin Partners page a single request. */
+/**
+ * Per-partner rollups keep the admin Partners page a single request.
+ *
+ * `valuation_count` excludes archived engagements for the same reason
+ * `user_count` excludes deleted users right next to it: the Partners page
+ * links this number to `/valuations?partner_id=…`, which is
+ * `buildValuationWhere`'s default scope and drops archived rows — a badge
+ * that counted them showed a bigger number than the list it linked to
+ * (R434, methodology M4) — the same "a list and the count beside it
+ * disagreeing is the bug itself" shape R55/R56 fixed on the other consoles.
+ */
 const PARTNER_COUNTS_SQL = `
   (SELECT count(*)::int FROM users u WHERE u.partner_id = p.id AND u.deleted_at IS NULL) AS user_count,
-  (SELECT count(*)::int FROM valuations v WHERE v.partner_id = p.id) AS valuation_count`;
+  (SELECT count(*)::int FROM valuations v WHERE v.partner_id = p.id AND v.archived_at IS NULL) AS valuation_count`;
 
 const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url,
   p.email_templates, p.subdomain, p.prepaid, p.cc_emails, p.brand_name, p.white_label_enabled`;
@@ -396,9 +406,15 @@ export async function getPartnerDetail(pool: pg.Pool, id: string): Promise<Partn
   if (!partner) return null;
 
   const [{ rows: groups }, { rows: users }, { rows: activity }] = await Promise.all([
+    // Archived engagements keep the state they were withdrawn in (archiving
+    // stamps `archived_at` and nothing else), so leaving this unfiltered
+    // folded them into whichever bucket they last sat in — the same
+    // `valuations_by_bucket`/`valuations_by_group` the doc comment above
+    // promises agrees with the listing tab strip, which excludes them
+    // (R434, methodology M4).
     pool.query<{ state: string; waiting_on_client: boolean; count: number }>(
       `SELECT state::text, waiting_on_client, count(*)::int AS count FROM valuations
-       WHERE partner_id = $1 GROUP BY state, waiting_on_client`,
+       WHERE partner_id = $1 AND archived_at IS NULL GROUP BY state, waiting_on_client`,
       [id],
     ),
     pool.query(

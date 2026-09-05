@@ -119,6 +119,47 @@ describe.skipIf(!dbUp)('partner management API', () => {
       expect(detail.users.map((u: { id: string }) => u.id)).toContain(orgAdmin.id);
     });
 
+    it('does not fold a withdrawn engagement into the state rollup or the count', async () => {
+      // R434 (M4): archiving stamps `archived_at` and leaves `state` exactly
+      // where it was, so an unfiltered rollup counted a withdrawn engagement
+      // under whichever bucket it was withdrawn in — disagreeing with both
+      // `valuation_count` (fixed alongside this) and the listing tab strip
+      // this page links to, which already excludes archived rows.
+      const partner = await createPartner('Withdrawal Org', 'withdrawal-org');
+      const orgAdmin = await seedUser(ctx, { roles: ['partner'], partnerId: partner.id });
+
+      const kept = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(orgAdmin.token),
+        payload: { kind: '409a', company_name: 'StaysCo' },
+      });
+      expect(kept.statusCode).toBe(201);
+
+      const withdrawn = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(orgAdmin.token),
+        payload: { kind: '409a', company_name: 'GoneCo' },
+      });
+      expect(withdrawn.statusCode).toBe(201);
+      await forceState(ctx, withdrawn.json().valuation.id, 'review');
+      await ctx.pool.query('UPDATE valuations SET archived_at = now() WHERE id = $1', [
+        withdrawn.json().valuation.id,
+      ]);
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/partners/${partner.id}`,
+        headers: authHeader(admin.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const detail = res.json().partner;
+      expect(detail.valuation_count).toBe(1);
+      expect(detail.valuations_by_group).toMatchObject({ open: 1 });
+      expect(detail.valuations_by_group.in_review ?? 0).toBe(0);
+    });
+
     it('is user-admin only', async () => {
       const partner = await createPartner('Locked Org', 'locked-org');
       const res = await ctx.app.inject({
