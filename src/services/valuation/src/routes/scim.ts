@@ -24,6 +24,28 @@ import {
 } from '../domain/scim.js';
 
 /**
+ * The two ways a SCIM bearer can fail, told apart.
+ *
+ * `ScimOutcome`'s own docstring already draws the line for the metric: no
+ * `Bearer` header at all is "a stranger" — this prefix faces the open
+ * internet and is nobody's emergency — while a well-formed one that does not
+ * verify is "almost certainly the directory the firm is relying on", its own
+ * secret rotated, revoked or mistyped. Both used to answer the identical
+ * `Invalid SCIM token`, so the one case that is a real incident — a firm's
+ * whole deprovisioning pipeline silently refused since whenever the secret
+ * changed — read exactly like a scanner finding the endpoint, to the one
+ * reader who could tell the difference: whoever configured the connector.
+ */
+const SCIM_NO_BEARER_DETAIL =
+  'No bearer token was sent with this request. The identity provider’s SCIM connector must send ' +
+  '`Authorization: Bearer <token>` — generate one under Enterprise SSO → SCIM provisioning tokens ' +
+  'and set it as the connector’s API token.';
+const SCIM_BAD_BEARER_DETAIL =
+  'This bearer token is not a current SCIM token — it may have been revoked, rotated or mistyped. ' +
+  'Generate a new one under Enterprise SSO → SCIM provisioning tokens and update the identity ' +
+  'provider’s connector with it.';
+
+/**
  * SCIM 2.0 user provisioning endpoint (feature 9). An IdP (Okta / Azure AD /
  * OneLogin) authenticates with a SCIM bearer token (scim_tokens) and manages
  * users under /scim/v2/Users. Deactivation is a soft delete; reactivation
@@ -243,7 +265,10 @@ export function registerScimRoutes(
         const tokenId = token ? await verifyScimToken(deps.pool, token) : null;
         if (!tokenId) {
           refuseScimRequest(req.log, token ? 'bad_token' : 'unauthenticated');
-          void reply.status(401).header('content-type', CT).send(scimError(401, 'Invalid SCIM token'));
+          void reply
+            .status(401)
+            .header('content-type', CT)
+            .send(scimError(401, token ? SCIM_BAD_BEARER_DETAIL : SCIM_NO_BEARER_DETAIL));
           return null;
         }
         // The denominator, recorded on the token verifying rather than on the

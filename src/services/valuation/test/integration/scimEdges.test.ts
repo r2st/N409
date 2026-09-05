@@ -57,11 +57,11 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
 
   describe('the bearer token', () => {
     it.each([
-      ['no header at all', undefined],
-      ['a scheme that is not Bearer', 'Basic c2NpbTpzY2lt'],
-      ['Bearer with a token nothing issued', 'Bearer scim_not_a_real_token'],
-      ['Bearer with nothing after it', 'Bearer '],
-    ])('refuses %s', async (_label, authorization) => {
+      ['no header at all', undefined, 'no_bearer'],
+      ['a scheme that is not Bearer', 'Basic c2NpbTpzY2lt', 'no_bearer'],
+      ['Bearer with a token nothing issued', 'Bearer scim_not_a_real_token', 'bad_bearer'],
+      ['Bearer with nothing after it', 'Bearer ', 'no_bearer'],
+    ] as const)('refuses %s', async (_label, authorization, shape) => {
       const res = await scim(
         'GET',
         '/scim/v2/Users',
@@ -71,6 +71,17 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
       expect(res.statusCode).toBe(401);
       expect(res.headers['content-type']).toContain(CT);
       expect(res.json().schemas).toEqual(['urn:ietf:params:scim:api:messages:2.0:Error']);
+      // R441, methodology M19: a stranger sending no credential and a
+      // directory whose own secret stopped verifying used to get the
+      // identical "Invalid SCIM token" — collapsing "nobody's emergency"
+      // into the one case that is a firm's real deprovisioning pipeline
+      // silently broken. See ScimOutcome's docstring.
+      if (shape === 'no_bearer') {
+        expect(res.json().detail).toMatch(/no bearer token was sent/i);
+      } else {
+        expect(res.json().detail).toMatch(/not a current SCIM token/i);
+      }
+      expect(res.json().detail).toMatch(/Enterprise SSO/);
     });
 
     it('guards every route, not only the listing', async () => {
