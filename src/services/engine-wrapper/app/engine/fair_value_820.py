@@ -241,29 +241,54 @@ def _rollforward(raw: dict | None, ending_level_3: float) -> dict | None:
     }
 
 
-def _sensitivity(level_3_total: float, shifts: list | None) -> list[dict]:
+def _sensitivity(level_3_total: float, shifts: list | None, unobservable: list[dict]) -> list[dict]:
     """Effect on the Level 3 total of moving one unobservable input.
 
     ``shift`` is the relative change in the measurement the input drives, which
     is what the narrative disclosure states ("a 10% increase in the discount
     rate would decrease fair value by ...").
+
+    THE SHIFT USED TO BE STRUCK ON THE WHOLE LEVEL 3 TOTAL, NOT ON WHAT THE
+    INPUT ACTUALLY DRIVES. An unobservable input is rarely significant to every
+    Level 3 position — a discount-rate input on a $2M position inside a $10M
+    Level 3 book drives $2M of measurement, not $10M — and ``_unobservable_table``
+    already computes exactly that figure per input (the fair value of the
+    positions carrying it, the same weight the weighted-average row is struck
+    on). Scaling the portfolio total instead overstated a −10% discount-rate
+    shift on that book fivefold: −$1,000,000 where −$200,000 is what the named
+    input can move, reported under a caption that says "discount rate" and a
+    number that is four-fifths somebody else's position.
+
+    Falls back to the Level 3 total for an input name the position-level
+    ``inputs[]`` never named — a caller stating a narrative sensitivity without
+    wiring it to specific positions is not told less than it asked for, only
+    that the figure is portfolio-wide rather than input-specific.
     """
     if shifts is None:
         return []
     if not isinstance(shifts, list):
         raise EngineInputError("sensitivity must be a list")
+    driven_fair_value = {row["input"]: row["fair_value"] for row in unobservable}
     out: list[dict] = []
     for i, raw in enumerate(shifts):
         if not isinstance(raw, dict):
             raise EngineInputError(f"sensitivity[{i}] must be an object")
         shift = _num(raw.get("shift"), f"sensitivity[{i}].shift", minimum=-1.0, maximum=1.0)
-        effect = level_3_total * shift
+        name = str(raw.get("input") or f"input {i + 1}")
+        basis_is_input = name in driven_fair_value
+        base = driven_fair_value[name] if basis_is_input else level_3_total
+        effect = base * shift
         out.append(
             {
-                "input": str(raw.get("input") or f"input {i + 1}"),
+                "input": name,
                 "shift": shift,
                 "fair_value_effect": effect,
                 "fair_value_after": level_3_total + effect,
+                # Which base the effect was struck on — the value the named
+                # input actually drives, or the whole Level 3 total when this
+                # input was never tied to a position's `inputs[]`.
+                "basis_fair_value": base,
+                "basis": "input" if basis_is_input else "level_3_total",
             }
         )
     return out
@@ -308,6 +333,7 @@ def fair_value_measurement(
         for p in classified
         if "does not govern" in p["basis"]
     ]
+    unobservable_inputs = _unobservable_table(classified)
 
     return {
         "measurement_date": measurement_date,
@@ -331,7 +357,7 @@ def fair_value_measurement(
         # The positions whose stated level the hierarchy rules overrode. This
         # is the list a reviewer reads first.
         "reclassified_positions": reclassified,
-        "unobservable_inputs": _unobservable_table(classified),
+        "unobservable_inputs": unobservable_inputs,
         "level_3_rollforward": _rollforward(level_3_rollforward, level_3_total),
-        "sensitivity": _sensitivity(level_3_total, sensitivity),
+        "sensitivity": _sensitivity(level_3_total, sensitivity, unobservable_inputs),
     }

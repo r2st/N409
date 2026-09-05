@@ -238,6 +238,37 @@ def test_sensitivity_moves_the_level_3_total():
     (row,) = result["sensitivity"]
     assert row["fair_value_effect"] == pytest.approx(-200_000)
     assert row["fair_value_after"] == pytest.approx(1_800_000)
+    assert row["basis"] == "level_3_total"
+
+
+def test_sensitivity_scales_the_position_the_input_drives_not_the_whole_level_3_book():
+    """An unobservable input is rarely significant to every Level 3 position.
+    Striking the shift on the whole Level 3 total overstates (or understates)
+    the disclosed effect whenever it isn't — here a discount-rate input that
+    drives $2M of an $10M Level 3 book must move $2M x shift, not $10M x shift."""
+    result = fair_value_measurement(
+        positions=[
+            position(
+                name="Revenue-multiple asset",
+                fair_value=8_000_000,
+                level="level_3",
+                inputs=[{"name": "revenue multiple", "level": "level_3", "value": 4.0}],
+            ),
+            position(
+                name="Discount-rate asset",
+                fair_value=2_000_000,
+                level="level_3",
+                inputs=[{"name": "discount rate", "level": "level_3", "value": 0.25}],
+            ),
+        ],
+        sensitivity=[{"input": "discount rate", "shift": -0.10}],
+    )
+    (row,) = result["sensitivity"]
+    assert row["basis"] == "input"
+    assert row["basis_fair_value"] == pytest.approx(2_000_000)
+    # Not -1,000,000 (10% of the $10M Level 3 total).
+    assert row["fair_value_effect"] == pytest.approx(-200_000)
+    assert row["fair_value_after"] == pytest.approx(9_800_000)
 
 
 def test_a_shift_beyond_plus_or_minus_one_is_refused():
