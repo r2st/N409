@@ -679,6 +679,15 @@ export const ADMIN_EVENT_CATALOG = {
   job_alert_opened: D('Job alert opened', 'integration', 'notice'),
   job_alert_resolved: D('Job alert resolved', 'integration', 'info'),
   data_remediation_rerun: D('Data remediation re-run', 'data', 'notice'),
+  /*
+   * A dead-letter replay re-sends a payload to a partner's infrastructure —
+   * the same external effect a live delivery has, run by hand outside the
+   * sweep, and it wrote nothing (R434, methodology M4). `data_remediation_rerun`
+   * just above is the same shape — a reviewed bulk decision over a queue,
+   * `notice` because it is ordinary incident remediation rather than a
+   * security-relevant change.
+   */
+  partner_webhook_deliveries_replayed: D('Partner webhook deliveries replayed', 'integration', 'notice'),
 
   // ── Inbound queues ──────────────────────────────────────────────────────
   //

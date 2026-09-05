@@ -321,6 +321,29 @@ describe.skipIf(!dbUp)('the webhook dead letter queue', () => {
       expect(res.json()).toEqual({ replayed: 1, ids: [fresh] });
     });
 
+    it('leaves a durable record of the operator action, not just a log line', async () => {
+      // R434 (M4): this route re-sends payloads to partner infrastructure by
+      // hand, the same external effect a live delivery has — and wrote only a
+      // `req.log.info` line. `data_remediation_rerun` is the same shape of
+      // action (a reviewed bulk decision over a queue) and has always recorded
+      // one; this route did not.
+      const fresh = await deadLetter();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/webhooks/deliveries/replay',
+        headers: authHeader(opsToken),
+        payload: { ids: [fresh] },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const { rows } = await ctx.pool.query(
+        `SELECT type, subject_type, payload FROM admin_events WHERE type = 'partner_webhook_deliveries_replayed' ORDER BY occurred_at DESC LIMIT 1`,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.subject_type).toBe('partner_webhook_delivery');
+      expect(rows[0]!.payload).toMatchObject({ requested: 1, replayed: 1, ids: [fresh] });
+    });
+
     it('refuses a body it cannot read rather than replaying everything', async () => {
       await deadLetter();
       const res = await app.inject({

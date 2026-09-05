@@ -43,6 +43,7 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { optionalCapabilities, type CapabilityConfig } from '../domain/optionalCapabilities.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { ulidField } from '../domain/ulidField.js';
 
 const DateOnly = z
@@ -364,6 +365,25 @@ export function registerOperationsRoutes(
       },
       'partner webhook deliveries replayed from the dead letter queue',
     );
+    /*
+     * A log line an operator happens to be tailing is not a durable record
+     * of an operator re-sending payloads to partner infrastructure by hand —
+     * `data_remediation_rerun` next door writes exactly this for the same
+     * shape of action. Fire-after-success: the rows are already pending, and
+     * an audit-insert failure must not read back as "nothing was replayed".
+     */
+    await recordAdminEvent(deps.pool, {
+      type: 'partner_webhook_deliveries_replayed',
+      actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+      subjectType: 'partner_webhook_delivery',
+      subjectId: body.data.partner_id ?? null,
+      payload: {
+        requested: body.data.ids?.length ?? null,
+        replayed: replayed.length,
+        ids: replayed.map((d) => d.id),
+        partner_id: body.data.partner_id ?? null,
+      },
+    });
     // The sweep picks these up on its next pass; `next_attempt_at` is now, so
     // that is the interval rather than a backoff. Returning the ids lets the
     // operator confirm the set matched what the listing showed — a count
