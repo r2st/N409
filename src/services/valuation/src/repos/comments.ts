@@ -44,6 +44,22 @@ const SELECT_WITH_AUTHOR = `
  */
 export const COMMENT_PAGE_LIMIT = 5000;
 
+/**
+ * The bound on one comment's `body`, matched to what the chat/note write paths
+ * (`PostBody`/`PatchBody` in routes/comments.ts) already enforce.
+ *
+ * `valuation_comments.body` is an unbounded `text` column, so nothing at the
+ * database layer stops a larger value — and the inbound-email door writes into
+ * the same column through `InboxBody`, whose own cap is 100,000 (an email body,
+ * rightly longer than what a person types into the chat panel). A page of this
+ * thread is read `COMMENT_PAGE_LIMIT` rows at a time with every body in full —
+ * the same "one page sized by whichever writer allows the most" shape that
+ * `support_messages` had (see MAX_SUPPORT_MESSAGE_BODY) — so an oversized
+ * inbound email is cut to this bound before it is stored, not left to reach the
+ * thread whole.
+ */
+export const MAX_COMMENT_BODY = 20_000;
+
 export async function listComments(
   pool: pg.Pool,
   valuationId: string,

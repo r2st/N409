@@ -7,6 +7,7 @@ import { canEditComment, canIngestEmail, canPostComment, visibleCommentKinds } f
 import { parseEmailSubjectRef, type CommentKind } from '../domain/operations.js';
 import {
   COMMENT_PAGE_LIMIT,
+  MAX_COMMENT_BODY,
   createComment,
   deleteComment,
   findCommentById,
@@ -38,13 +39,13 @@ import { ulidField } from '../domain/ulidField.js';
 
 const PostBody = z.object({
   kind: z.enum(['chat', 'note']),
-  body: z.string().min(1).max(20_000),
+  body: z.string().min(1).max(MAX_COMMENT_BODY),
   pinned: z.boolean().optional(),
 });
 
 const PatchBody = z
   .object({
-    body: z.string().min(1).max(20_000),
+    body: z.string().min(1).max(MAX_COMMENT_BODY),
     pinned: z.boolean(),
   })
   .partial()
@@ -65,6 +66,23 @@ const TRUNCATION_NOTICE = '\n\n[truncated — the full email is in the support m
 function withTruncationNotice(body: string): string {
   if (body.length <= MAX_SUPPORT_MESSAGE_BODY) return body;
   return sliceChars(body, MAX_SUPPORT_MESSAGE_BODY - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE;
+}
+
+/**
+ * The comment body, cut to the same bound with a line saying it was cut.
+ *
+ * `InboxBody.body` allows up to 100,000 characters — an email, not a chat
+ * message — and the unmatched path above already cuts to the column it writes
+ * (`support_messages.body`, `MAX_SUPPORT_MESSAGE_BODY`). This is the matched
+ * path's counterpart: it writes into `valuation_comments.body`, the same
+ * column `PostBody` bounds to `MAX_COMMENT_BODY` for the chat/note writers, and
+ * nothing here cut the email writer to the same bound.
+ */
+const COMMENT_TRUNCATION_NOTICE = '\n\n[truncated — this email was longer than a comment can hold]';
+
+function withCommentTruncationNotice(body: string): string {
+  if (body.length <= MAX_COMMENT_BODY) return body;
+  return sliceChars(body, MAX_COMMENT_BODY - COMMENT_TRUNCATION_NOTICE.length) + COMMENT_TRUNCATION_NOTICE;
 }
 
 function actorFor(principal: Principal): EventActor {
@@ -318,7 +336,10 @@ export function registerCommentRoutes(
         valuationId: valuation.id,
         kind: 'email',
         authorId: null,
-        body: email.body,
+        // `InboxBody.body` allows up to 100,000 characters, five times what
+        // `PostBody` lets a chat/note writer put in this same column — see
+        // `withCommentTruncationNotice`.
+        body: withCommentTruncationNotice(email.body),
         emailMeta: {
           from: email.from,
           subject: email.subject,
