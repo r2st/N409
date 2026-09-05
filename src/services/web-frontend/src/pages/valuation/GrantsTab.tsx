@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import {
   all,
   email as emailRule,
@@ -253,6 +253,95 @@ const emptyForm = {
 /** Stable identity for the pre-load render, so the window's memo does not churn. */
 const NO_GRANTS: Grant[] = [];
 
+/**
+ * Renders the windowed grant register — up to `LIST_WINDOW_STEP` (100) rows,
+ * more after "Show more".
+ *
+ * Memoized (R443, methodology M8): `GrantsTab` holds the "new grant" form's
+ * `form` state in the same component that renders this register below it
+ * whenever `showForm` is open, so every keystroke into any of its six fields
+ * re-ran the register's map with an unchanged `grants` array. `busy`, `ops`
+ * and `retired` are otherwise-stable across that typing too, so a shallow
+ * memo bails out exactly when it should — the register still re-renders
+ * (correctly) when `expanded` changes, since which row's detail panel is open
+ * is itself part of what this component draws.
+ */
+export const GrantsList = memo(function GrantsList({
+  grants,
+  expanded,
+  busy,
+  ops,
+  retired,
+  valuationId,
+  onToggleExpand,
+  onCancel,
+}: {
+  grants: Grant[];
+  expanded: string | null;
+  busy: boolean;
+  ops: boolean;
+  retired: boolean;
+  valuationId: string;
+  onToggleExpand: (id: string) => void;
+  onCancel: (id: string) => void;
+}) {
+  return (
+    <ul className="space-y-3">
+      {grants.map((g) => (
+        <li
+          key={g.id}
+          className={`rounded-lg border border-paper-300 bg-surface p-5 shadow-card ${g.status === 'cancelled' ? 'opacity-60' : ''}`}
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="min-w-[10rem]">
+              <div className="font-semibold text-ink-900">{g.grantee_name}</div>
+              {g.grantee_email && <div className="text-xs text-ink-400">{g.grantee_email}</div>}
+            </div>
+            <div className="tnum text-sm text-ink-600">
+              {formatNumber(g.options_count)} @ {formatMoney(Number(g.exercise_price), g.currency)}
+            </div>
+            <div className="text-xs text-ink-400">granted {g.grant_date}</div>
+            <VestingBar vesting={g.vesting} />
+            {g.status === 'cancelled' && (
+              <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 ring-inset">
+                cancelled
+              </span>
+            )}
+            {/* A div rather than a span: the cancel control below is wrapped
+                in a `fieldset`, which is flow content and cannot live
+                inside phrasing. The flex classes are unchanged, so nothing
+                moves. */}
+            <div className="ml-auto flex items-center gap-3">
+              <button
+                className="cursor-pointer text-xs font-semibold text-bond-600 hover:underline"
+                onClick={() => onToggleExpand(g.id)}
+              >
+                {expanded === g.id ? 'Hide detail' : 'Detail'}
+              </button>
+              <WriteGate closed={retired}>
+                {ops && g.status === 'active' && (
+                  <button
+                    className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
+                    disabled={busy}
+                    onClick={() => void onCancel(g.id)}
+                  >
+                    cancel
+                  </button>
+                )}
+              </WriteGate>
+            </div>
+          </div>
+          {expanded === g.id && (
+            <div className="mt-4">
+              <GrantDetailPanel valuationId={valuationId} grant={g} />
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+});
+
 export function GrantsTab() {
   const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
@@ -364,17 +453,22 @@ export function GrantsTab() {
     }
   });
 
-  const cancel = async (id: string) => {
-    setBusy(true);
-    try {
-      await api(`/valuations/${valuation.id}/grants/${id}`, { method: 'DELETE' });
-      await load();
-    } catch (err) {
-      setError(describeActionFailure(err, 'Could not cancel the grant.'));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const cancel = useCallback(
+    async (id: string) => {
+      setBusy(true);
+      try {
+        await api(`/valuations/${valuation.id}/grants/${id}`, { method: 'DELETE' });
+        await load();
+      } catch (err) {
+        setError(describeActionFailure(err, 'Could not cancel the grant.'));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [valuation.id, load],
+  );
+
+  const toggleExpanded = useCallback((id: string) => setExpanded((e) => (e === id ? null : id)), []);
 
   if (!grants)
     return (
@@ -517,59 +611,16 @@ export function GrantsTab() {
           </EmptyState>
         )
       ) : (
-        <ul className="space-y-3">
-          {windowed.map((g) => (
-            <li
-              key={g.id}
-              className={`rounded-lg border border-paper-300 bg-surface p-5 shadow-card ${g.status === 'cancelled' ? 'opacity-60' : ''}`}
-            >
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <div className="min-w-[10rem]">
-                  <div className="font-semibold text-ink-900">{g.grantee_name}</div>
-                  {g.grantee_email && <div className="text-xs text-ink-400">{g.grantee_email}</div>}
-                </div>
-                <div className="tnum text-sm text-ink-600">
-                  {formatNumber(g.options_count)} @ {formatMoney(Number(g.exercise_price), g.currency)}
-                </div>
-                <div className="text-xs text-ink-400">granted {g.grant_date}</div>
-                <VestingBar vesting={g.vesting} />
-                {g.status === 'cancelled' && (
-                  <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 ring-inset">
-                    cancelled
-                  </span>
-                )}
-                {/* A div rather than a span: the cancel control below is wrapped
-                    in a `fieldset`, which is flow content and cannot live
-                    inside phrasing. The flex classes are unchanged, so nothing
-                    moves. */}
-                <div className="ml-auto flex items-center gap-3">
-                  <button
-                    className="cursor-pointer text-xs font-semibold text-bond-600 hover:underline"
-                    onClick={() => setExpanded((e) => (e === g.id ? null : g.id))}
-                  >
-                    {expanded === g.id ? 'Hide detail' : 'Detail'}
-                  </button>
-                  <WriteGate closed={retired}>
-                    {ops && g.status === 'active' && (
-                      <button
-                        className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
-                        disabled={busy}
-                        onClick={() => void cancel(g.id)}
-                      >
-                        cancel
-                      </button>
-                    )}
-                  </WriteGate>
-                </div>
-              </div>
-              {expanded === g.id && (
-                <div className="mt-4">
-                  <GrantDetailPanel valuationId={valuation.id} grant={g} />
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
+        <GrantsList
+          grants={windowed}
+          expanded={expanded}
+          busy={busy}
+          ops={ops}
+          retired={retired}
+          valuationId={valuation.id}
+          onToggleExpand={toggleExpanded}
+          onCancel={cancel}
+        />
       )}
       <ShowMoreRows hidden={hiddenGrants} step={grantStep} noun="grant" onMore={showMoreGrants} />
       {/* Counts the rows the *server* sent, not the rows on screen: the window

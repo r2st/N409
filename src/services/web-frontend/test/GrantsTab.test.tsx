@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
-import { GrantsTab } from '../src/pages/valuation/GrantsTab';
+import { GrantsTab, GrantsList } from '../src/pages/valuation/GrantsTab';
 import type { User, Valuation } from '../src/lib/types';
 
 /**
@@ -718,5 +719,104 @@ describe('GrantsTab', () => {
 
       expect(await screen.findByText(/Could not load the grant\./)).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * `GrantsTab` holds the "new grant" form's `form` state in the same component
+ * that renders the up-to-100-row (per `LIST_WINDOW_STEP`) windowed register
+ * below it whenever `showForm` is open, so every keystroke into any of the
+ * form's six fields re-ran the register's map with an unchanged `grants`
+ * array. `GrantsList` is memoized against exactly that (R443, methodology
+ * M8), the same shape as R425's `EntriesTable`/`WorkbookRow` and this round's
+ * `ComparablesTable`.
+ *
+ * As with those, a DOM assertion or `Profiler.onRender` cannot distinguish a
+ * real re-render from a memo bailout that still commits — patching `.type` on
+ * the `memo(...)` object counts invocations of the render function itself.
+ */
+describe('GrantsList', () => {
+  const trueRender = (GrantsList as unknown as { type: (props: unknown) => unknown }).type;
+
+  afterEach(() => {
+    (GrantsList as unknown as { type: typeof trueRender }).type = trueRender;
+  });
+
+  function spyOnRender() {
+    const spy = vi.fn(trueRender);
+    (GrantsList as unknown as { type: typeof trueRender }).type = spy;
+    return spy;
+  }
+
+  const props = {
+    grants: [GRANT],
+    expanded: null,
+    busy: false,
+    ops: true,
+    retired: false,
+    valuationId: valuation.id,
+    onToggleExpand: () => {},
+    onCancel: async () => {},
+  };
+
+  it('does not re-render when an unrelated state update leaves its props unchanged', async () => {
+    const renderSpy = spyOnRender();
+    function Harness() {
+      const [tick, setTick] = useState(0);
+      return (
+        <div>
+          <button onClick={() => setTick((t) => t + 1)}>unrelated update</button>
+          <span data-testid="tick">{tick}</span>
+          <GrantsList {...props} />
+        </div>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'unrelated update' }));
+    expect(screen.getByTestId('tick')).toHaveTextContent('1');
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does re-render once grants actually changes', () => {
+    // Positive control, so the count staying at 1 above is a memo bailout and
+    // not a harness that never triggers a second render here.
+    const renderSpy = spyOnRender();
+    const { rerender } = render(<GrantsList {...props} />);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<GrantsList {...props} grants={[...props.grants]} />);
+    expect(renderSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('GrantsTab wiring into GrantsList', () => {
+  const trueRender = (GrantsList as unknown as { type: (props: unknown) => unknown }).type;
+
+  afterEach(() => {
+    (GrantsList as unknown as { type: typeof trueRender }).type = trueRender;
+  });
+
+  function spyOnRender() {
+    const spy = vi.fn(trueRender);
+    (GrantsList as unknown as { type: typeof trueRender }).type = spy;
+    return spy;
+  }
+
+  it('does not re-render the register while typing into the new-grant form', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    const renderSpy = spyOnRender();
+    renderTab();
+    await ready();
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'New grant' }));
+    await user.type(screen.getByLabelText(/^Grantee name/), 'Ada Lovelace');
+    await user.type(screen.getByLabelText(/^Number of options/), '1000');
+
+    expect(renderSpy).toHaveBeenCalledTimes(1);
   });
 });
