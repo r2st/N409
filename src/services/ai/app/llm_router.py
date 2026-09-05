@@ -22,6 +22,9 @@ ever reached from behind that gate.
 
 from __future__ import annotations
 
+import time
+from typing import Callable
+
 from . import bedrock, openrouter
 from .openrouter import (
     AuthenticationFailed,
@@ -31,10 +34,74 @@ from .openrouter import (
     RequestRejected,
 )
 
+#: Per-call latency/outcome/token reporting, installed by `main.py` once the
+#: metrics registry exists. None in every unit test that calls `chat()`
+#: directly — the same shape as `observability.set_degraded_event_sink`, so a
+#: caller with nothing installed logs exactly as it always did.
+#:
+#: R444, methodology M11. The router was the one choke point every prompt call
+#: passes through and the one place that reported nothing at all: `llm_usage`
+#: is an `info` line (below `log_degraded_events_total`'s WARNING floor) and
+#: the three provider token ledgers only ever reached `/ready`'s JSON body,
+#: which nothing scrapes or alerts on. Latency was not reported anywhere —
+#: `http_request_duration_seconds` times the whole pipeline route, documents
+#: and anonymization included, with no `model` label to tell one candidate's
+#: latency from another's.
+_metrics_sink: Callable[..., None] | None = None
+
+
+def set_llm_metrics_sink(sink: Callable[..., None] | None) -> None:
+    """Install the callback `chat()` reports every call to.
+
+    Called with keyword arguments `provider`, `model`, `outcome`,
+    `duration_s`, `prompt_tokens`, `completion_tokens`. Null clears it, which
+    is what a test does between cases.
+    """
+    global _metrics_sink
+    _metrics_sink = sink
+
 
 def provider_for(model: str | None) -> str:
     """Which provider owns this model id: 'bedrock' or 'openrouter'."""
     return "bedrock" if bedrock.handles(model) else "openrouter"
+
+
+def _outcome_for(exc: Exception) -> str:
+    """The metrics label for a failed call.
+
+    The same three-way split `main.py`'s status mapping already draws
+    (`RateLimited` → 429, `AuthenticationFailed`/plain `OpenRouterError` → 503,
+    `RequestRejected` → 422), so a dashboard built off this counter groups
+    calls the same way the HTTP layer already does.
+    """
+    if isinstance(exc, RateLimited):
+        return "rate_limited"
+    if isinstance(exc, AuthenticationFailed):
+        return "auth_failed"
+    if isinstance(exc, RequestRejected):
+        return "request_rejected"
+    return "error"
+
+
+def _report(
+    provider: str, model: str, duration_s: float, outcome: str, result: LlmResult | None
+) -> None:
+    """Tell the sink, if one is installed. Never lets a broken sink cost the
+    call it is reporting on — the same guarantee `observability._count_degraded`
+    gives its counter."""
+    if _metrics_sink is None:
+        return
+    try:
+        _metrics_sink(
+            provider=provider,
+            model=model,
+            outcome=outcome,
+            duration_s=duration_s,
+            prompt_tokens=result.prompt_tokens if result is not None else 0,
+            completion_tokens=result.completion_tokens if result is not None else 0,
+        )
+    except Exception:  # noqa: BLE001 - a broken metrics sink must not cost a call
+        pass
 
 
 def chat(
@@ -54,12 +121,22 @@ def chat(
     verdict a provider drew is the whole input to the status `main` answers,
     and Bedrock's used to be discarded on the way through here.
     """
-    if bedrock.handles(model):
-        try:
-            return bedrock.chat(system, user, model=model, client=client)
-        except bedrock.BedrockError as exc:
-            raise _as_openrouter_error(exc) from exc
-    return openrouter.chat(system, user, model=model, client=client)
+    provider = provider_for(model)
+    label = model or "default"
+    started = time.monotonic()
+    try:
+        if bedrock.handles(model):
+            try:
+                result = bedrock.chat(system, user, model=model, client=client)
+            except bedrock.BedrockError as exc:
+                raise _as_openrouter_error(exc) from exc
+        else:
+            result = openrouter.chat(system, user, model=model, client=client)
+    except Exception as exc:
+        _report(provider, label, time.monotonic() - started, _outcome_for(exc), None)
+        raise
+    _report(provider, label, time.monotonic() - started, "success", result)
+    return result
 
 
 def _as_openrouter_error(exc: bedrock.BedrockError) -> OpenRouterError:

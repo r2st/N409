@@ -26,7 +26,7 @@ from .internal_auth import enforce_token_configured, internal_token_middleware, 
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .metrics import MetricsRegistry, install_metrics, make_metrics_middleware
 from .observability import configure_logging, make_request_context_middleware
-from .llm_router import chat, configured_models
+from .llm_router import chat, configured_models, set_llm_metrics_sink
 from .openrouter import (
     DEFAULT_RETRY_AFTER_S,
     OpenRouterError,
@@ -159,6 +159,63 @@ app.add_middleware(make_security_headers_middleware())
 install_error_handlers(app, SERVICE)
 enforce_token_configured()
 install_metrics(app, _metrics, SERVICE, _started)
+
+# LLM call observability (R444, methodology M11). See `llm_router.py`'s header
+# on `_metrics_sink` for what was missing: every outcome only ever reached a
+# log line, and the three provider token ledgers only ever reached `/ready`'s
+# JSON body. `model` here is the prompt registry id the caller asked for, not
+# whichever candidate an OpenRouter chain actually answered with — bounded by
+# the registry rather than by the chain.
+_llm_requests = _metrics.counter(
+    "llm_requests_total",
+    "LLM chat calls through the router, by provider, requested model and outcome",
+    ("provider", "model", "outcome"),
+)
+_llm_duration = _metrics.histogram(
+    "llm_request_duration_seconds",
+    "LLM chat call latency through the router, by provider and requested model",
+    ("provider", "model"),
+)
+_llm_tokens = _metrics.counter(
+    "llm_tokens_total",
+    "Tokens billed on LLM chat calls through the router, by provider, requested model and kind",
+    ("provider", "model", "kind"),
+)
+
+
+def _llm_metrics_sink(
+    *,
+    provider: str,
+    model: str,
+    outcome: str,
+    duration_s: float,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    _llm_requests.inc({"provider": provider, "model": model, "outcome": outcome})
+    _llm_duration.observe(duration_s, {"provider": provider, "model": model})
+    if prompt_tokens:
+        _llm_tokens.inc({"provider": provider, "model": model, "kind": "prompt"}, prompt_tokens)
+    if completion_tokens:
+        _llm_tokens.inc({"provider": provider, "model": model, "kind": "completion"}, completion_tokens)
+
+
+set_llm_metrics_sink(_llm_metrics_sink)
+
+# The three provider token ledgers, published where a scraper can see them.
+# A gauge rather than a counter: each ledger is already the source of truth
+# (`db.query.slow.total` in the TS registry takes the same approach for the
+# same reason), and it is sampled rather than driven through `.inc()` here.
+_metrics.gauge(
+    "llm_token_budget_used_total",
+    "Cumulative tokens billed against each provider's token budget since process start",
+    lambda: (
+        (float(tokens_used()), {"provider": "openrouter"}),
+        (float(bedrock_tokens_used()), {"provider": "bedrock"}),
+        (float(perplexity_tokens_used()), {"provider": "research_primary"}),
+    ),
+    ("provider",),
+)
 
 
 def _rate_limited(exc: RateLimited) -> HTTPException:

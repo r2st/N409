@@ -112,6 +112,48 @@ def test_the_series_every_alert_rule_names_are_published(_token):
     assert "# TYPE http_requests_in_flight gauge" in body
 
 
+def test_llm_call_observability_is_published(_token):
+    """R444, methodology M11. Every prompt call through `llm_router.chat` used
+    to reach only a log line (`llm_usage`, at `info` — below
+    `log_degraded_events_total`'s WARNING floor); latency and the three
+    provider token ledgers reached nothing a scraper could see at all."""
+    body = _scrape({"x-internal-token": TOKEN}).text
+    assert "# TYPE llm_requests_total counter" in body
+    assert "# TYPE llm_request_duration_seconds histogram" in body
+    assert "# TYPE llm_tokens_total counter" in body
+    assert "# TYPE llm_token_budget_used_total gauge" in body
+    assert 'provider="openrouter"' in body
+    assert 'provider="bedrock"' in body
+    assert 'provider="research_primary"' in body
+
+
+def test_a_router_call_is_counted_and_timed_on_the_scrape(_token, monkeypatch):
+    from app import llm_router
+    from app.openrouter import LlmResult
+
+    monkeypatch.setattr(
+        llm_router,
+        "openrouter",
+        type(
+            "P",
+            (),
+            {
+                "chat": staticmethod(
+                    lambda *a, **k: LlmResult(
+                        model="m", content="ok", prompt_tokens=3, completion_tokens=2
+                    )
+                )
+            },
+        )(),
+    )
+    monkeypatch.setattr(llm_router.bedrock, "handles", lambda model: False)
+    llm_router.chat("sys", "user", model="probe/model")
+    body = _scrape({"x-internal-token": TOKEN}).text
+    assert 'llm_requests_total{provider="openrouter",model="probe/model",outcome="success"} 1' in body
+    assert 'llm_tokens_total{provider="openrouter",model="probe/model",kind="prompt"} 3' in body
+    assert 'llm_tokens_total{provider="openrouter",model="probe/model",kind="completion"} 2' in body
+
+
 def test_build_info_reports_the_unknown_source_rather_than_omitting_it(monkeypatch, _token):
     """`BuildProvenanceMissing` selects `source="unknown"`; an absent series is
     indistinguishable from a unit that knows its build."""
