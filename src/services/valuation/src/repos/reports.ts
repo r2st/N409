@@ -152,7 +152,17 @@ export async function getVersionPdf(
  * deliverable.
  */
 export async function latestDeliveredVersion(pool: pg.Pool, reportId: string): Promise<number | null> {
-  const { rows } = await pool.query<{ version: number | null }>(
+  return latestRenderedVersion(pool, reportId);
+}
+
+/**
+ * The newest version holding stored bytes, on the pool or inside a
+ * transaction — the publish gate asks it under the row lock its write takes,
+ * which is why this takes a `Queryable` where {@link latestDeliveredVersion}
+ * took the pool. Same statement; the name says which question is being asked.
+ */
+export async function latestRenderedVersion(db: Queryable, reportId: string): Promise<number | null> {
+  const { rows } = await db.query<{ version: number | null }>(
     'SELECT max(version) AS version FROM report_versions WHERE report_id = $1 AND pdf IS NOT NULL',
     [reportId],
   );

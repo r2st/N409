@@ -6,7 +6,7 @@ import { signedAtByRole, type SignatureRole, type SignedAtByRole } from '../repo
 import { lockPublishGate } from '../repos/publishLock.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { latestQaReviewForCalculation } from '../repos/qaReviews.js';
-import { findReportByValuation, versionWrittenAt } from '../repos/reports.js';
+import { findReportByValuation, latestRenderedVersion, versionWrittenAt } from '../repos/reports.js';
 
 /**
  * Publish gating, called by every path that can set the state — the workflow
@@ -63,6 +63,25 @@ import { findReportByValuation, versionWrittenAt } from '../repos/reports.js';
  *    Rules 4 and 5 are asked of **every** signatory on file, not only `main`
  *    (R380, methodology M3) — the certification page prints a dated line per
  *    role. See {@link staleSignatureRefusal}.
+ *
+ * 6. And the bytes that will be *served* as the deliverable must be of the
+ *    body the gate just passed (R448, methodology M3). Rules 2–5 are all asked
+ *    of `reports.current_version`, and none of them is what a reader gets.
+ *    R327 pinned every outside door of a published engagement — `report.pdf`,
+ *    the auditor portal, the evidence bundle, the partner API — to the newest
+ *    version carrying stored PDF bytes (`deliverableVersion`), on the reading
+ *    that the version somebody rendered is the version that was issued. `POST
+ *    /report/render` stores bytes in any state, and "Render PDF" is on the
+ *    report tab throughout drafting. So: render v3 to look at it, correct a
+ *    chapter (v4), re-run QA against v4, re-sign after v4, publish — rules 2–5
+ *    pass, and from that moment every reader is handed v3: a body the QA
+ *    review did not grade and the signature does not cover, rendered before
+ *    either existed, with the certification page as it stood at the time. The
+ *    version history shows v3 with bytes and v4 without, and nothing else
+ *    says. Refused with the same remedy as rules 3 and 4 — one click of the
+ *    control that exists. An engagement with no stored bytes at all is not
+ *    this case: the lazy render on first download issues the current body,
+ *    which `reportPostPublishEdit.test.ts` pins.
  *
  * Runs on the pool or on a transaction's client. Both readings matter and they
  * are not the same reading — see {@link assertPublishGateForWrite}.
@@ -182,6 +201,17 @@ export async function assertPublishGate(
   const stale = staleSince(signedAt, writtenAt);
   if (stale.length > 0) {
     throw staleSignatureRefusal(stale, 'The report body has been edited', 'an earlier draft');
+  }
+
+  // Rule 6. Same shape as rule 3: `<` rather than `!==`, because a version
+  // newer than the current pointer cannot exist.
+  const rendered = await latestRenderedVersion(db, report.id);
+  if (rendered !== null && rendered < report.current_version) {
+    throw problems.conflict(
+      `The report body has been edited since it was last rendered — v${rendered} is the version ` +
+        `readers would be handed, and v${report.current_version} is the one this gate has checked. ` +
+        `Render the current version before publishing.`,
+    );
   }
 }
 
