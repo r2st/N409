@@ -259,28 +259,48 @@ export async function upsertValuationTag(
  *     `series_a` and the engagement carried two stages at once — the state the
  *     category lock exists to make impossible, reached without a race.
  *
- * So the origin is left alone and the decision lands unconditionally. Every
- * caller is a human acting through an ops-only door; the machine door writes
- * `suggested` through the upsert above and is still refused by its clause.
+ * So the origin is left alone and the decision lands whatever the origin says.
+ * Every caller is a human acting through an ops-only door; the machine door
+ * writes `suggested` through the upsert above and is still refused by its
+ * clause.
+ *
+ * WHAT IT DOES NOT DO IS LAND A DECISION THAT WAS ALREADY MADE (R448,
+ * methodology M3). `status = $3` by key alone re-stamped `decided_by` and
+ * `decided_at` with whoever pressed the control last, and the route put a
+ * second `valuation_tag_decided` on the admin trail for it. The console's
+ * accept/reject controls are drawn from each analyst's own copy of the tag
+ * list, so two people triaging the same engagement's suggestions — or one
+ * double-click — was enough to re-attribute a decision that had already been
+ * taken. `status <> $3` in the predicate makes the write and the "is this a
+ * change" test one statement, and `changed` is what the route records on:
+ * the same shape as `setSupportMessageStatus`.
  *
  * Returns null when the row is gone — deleted between the caller's read and
  * this write — which is the caller's signal that there was nothing to decide.
  */
+export interface TagDecisionWrite {
+  tag: ValuationTagRow;
+  /** False when the tag was already in the status the caller asked for. */
+  changed: boolean;
+}
+
 export async function decideValuationTag(
   pool: pg.Pool | pg.PoolClient,
   valuationId: string,
   slug: string,
   status: Exclude<TagStatus, 'suggested'>,
   actorId: string | null,
-): Promise<ValuationTagRow | null> {
+): Promise<TagDecisionWrite | null> {
   const { rows } = await pool.query<RawValuationTagRow>(
     `UPDATE valuation_tags
         SET status = $3, decided_by = $4, decided_at = now()
-      WHERE valuation_id = $1 AND slug = $2
+      WHERE valuation_id = $1 AND slug = $2 AND status <> $3
       RETURNING *`,
     [valuationId, slug, status, actorId],
   );
-  return rows[0] ? hydrate(rows[0]) : null;
+  if (rows[0]) return { tag: hydrate(rows[0]), changed: true };
+  const standing = await findValuationTag(pool, valuationId, slug);
+  return standing ? { tag: standing, changed: false } : null;
 }
 
 /**

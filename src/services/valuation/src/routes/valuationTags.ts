@@ -11,6 +11,7 @@ import {
   listValuationTags,
   lockTagCategories,
   upsertValuationTag,
+  type TagDecisionWrite,
   type TagUpsert,
   type ValuationTagRow,
 } from '../repos/valuationTags.js';
@@ -198,17 +199,26 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     // look like a machine write to that function's conflict clause, and an
     // already-decided AI tag could not be moved at all. See
     // `decideValuationTag`.
-    const row = await decideTag(id, existing.slug, status, principal);
-    if (!row) throw problems.notFound();
-    await recordAdminEvent(deps.pool, {
-      type: 'valuation_tag_decided',
-      actor: { actorType: 'human', actorId: principal.id },
-      subjectType: 'valuation',
-      subjectId: valuation.id,
-      subjectLabel: valuation.company_name,
-      payload: { slug: existing.slug, source: existing.source, status },
-    });
-    return { tag: presentValuationTag(row) };
+    const written = await decideTag(id, existing.slug, status, principal);
+    if (!written) throw problems.notFound();
+    // Only a real transition reaches the trail: `changed` is decided by the
+    // UPDATE's own predicate, so a decision pressed twice — or by two analysts
+    // off the same list — is recorded once, by the one who made it. 200 either
+    // way, with the row as it stands: the caller asked for a status the tag
+    // now has. `from` is the status the row was read at, not the one the
+    // predicate refused, which under contention can differ from what this
+    // caller saw — the trail dates the move, and the row carries the mover.
+    if (written.changed) {
+      await recordAdminEvent(deps.pool, {
+        type: 'valuation_tag_decided',
+        actor: { actorType: 'human', actorId: principal.id },
+        subjectType: 'valuation',
+        subjectId: valuation.id,
+        subjectLabel: valuation.company_name,
+        payload: { slug: existing.slug, source: existing.source, status, from: existing.status },
+      });
+    }
+    return { tag: presentValuationTag(written.tag) };
   });
 
   /**
@@ -298,7 +308,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     slug: string,
     status: Exclude<TagStatus, 'suggested'>,
     principal: Principal,
-  ): Promise<ValuationTagRow | null> {
+  ): Promise<TagDecisionWrite | null> {
     if (!needsExclusivity(slug, status))
       return decideValuationTag(deps.pool, valuationId, slug, status, principal.id);
 

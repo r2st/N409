@@ -116,7 +116,8 @@ const DECIDED: Record<string, Verdict> = {
       "operator's own write and is deliberately outside that CASE, because `source` records where " +
       'a tag came from and not who is writing — R356 found an accepted AI tag that could not be ' +
       "rejected, nor demoted by the exclusivity rule, because the decision doors handed the row's " +
-      'own origin back to a clause that reads it as a machine',
+      'own origin back to a clause that reads it as a machine; since R448 the decision carries ' +
+      '`status <> $3`, so a decision already taken is not re-dated or re-attributed by a second press',
   },
   'repos/tasks.ts :: review_tasks': {
     unguarded:

@@ -670,6 +670,48 @@ describe.skipIf(!dbUp)('engagement tags', () => {
       expect((await decide(id, 'marketplace', 'accepted')).json().tag.status).toBe('accepted');
     });
 
+    it('records a decision once, by the analyst who made it, however many times it is pressed', async () => {
+      // `decideValuationTag` wrote `status = $3, decided_by = $4, decided_at =
+      // now()` by key alone, and the route put a `valuation_tag_decided` on the
+      // admin trail for every call (round 448, methodology M3). The console's
+      // accept/reject controls are drawn from each analyst's own copy of the
+      // list, so a second analyst pressing "Accept" on a suggestion the first
+      // had already accepted re-dated the decision and re-attributed it. The
+      // answer stays 200: the caller asked for a status the tag now has.
+      const id = await newEngagement('Pressed Twice Co');
+      const second = await seedUser(ctx, { roles: ['reviewer'] });
+      await upsertValuationTag(ctx.pool, id, { slug: 'saas', source: 'ai', status: 'suggested' }, null);
+
+      expect((await decide(id, 'saas', 'accepted')).statusCode).toBe(200);
+      const first = (await findValuationTag(ctx.pool, id, 'saas'))!;
+      expect(first.decided_by).toBe(ops.id);
+
+      const again = await decide(id, 'saas', 'accepted', second.token);
+      expect(again.statusCode).toBe(200);
+      expect(again.json().tag.status).toBe('accepted');
+      const standing = (await findValuationTag(ctx.pool, id, 'saas'))!;
+      expect(standing.decided_by).toBe(ops.id);
+      expect(standing.decided_at).toEqual(first.decided_at);
+
+      const decided = () =>
+        ctx.pool.query<{ actor_id: string; payload: { from: string; status: string } }>(
+          `SELECT actor_id, payload FROM admin_events
+            WHERE subject_id = $1 AND type = 'valuation_tag_decided' ORDER BY occurred_at`,
+          [id],
+        );
+      const { rows } = await decided();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ actor_id: ops.id, payload: { from: 'suggested', status: 'accepted' } });
+
+      // A real reversal is still one line, and it says which status it left.
+      expect((await decide(id, 'saas', 'rejected', second.token)).statusCode).toBe(200);
+      expect((await findValuationTag(ctx.pool, id, 'saas'))!.decided_by).toBe(second.id);
+      expect((await decided()).rows.map((r) => r.payload)).toMatchObject([
+        { from: 'suggested', status: 'accepted' },
+        { from: 'accepted', status: 'rejected' },
+      ]);
+    });
+
     it('is a 404 when the tag went between the read and the decision', async () => {
       // The decision write cannot insert, so a slug with no row is not quietly
       // created by a PATCH.
