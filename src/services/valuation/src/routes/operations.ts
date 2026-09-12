@@ -41,6 +41,7 @@ import {
 import { retryDueDeliveries } from '../hooks/partnerWebhooks.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { withPlanQuota } from '../domain/planQuota.js';
+import { refuseIfFirmWithdrawn } from '../domain/withdrawnFirm.js';
 import { optionalCapabilities, type CapabilityConfig } from '../domain/optionalCapabilities.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
@@ -257,6 +258,10 @@ export function registerOperationsRoutes(
     // retire. Rolling forward from last year's live 409A is the ordinary path
     // and is untouched.
     refuseIfRetired(source, 'available to clone');
+    // The copy carries the source's `partner_id`, so this is the one door that
+    // files fresh work under a firm without taking the firm from the body or
+    // the principal — where `POST /valuations` asks (R449).
+    await refuseIfFirmWithdrawn(deps.pool, source.partner_id);
 
     const parsed = z.object({ roll_forward: z.boolean().default(false) }).safeParse(req.body ?? {});
     if (!parsed.success) throw invalidBody('Invalid clone request', parsed.error);

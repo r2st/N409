@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { withPlanQuota } from '../domain/planQuota.js';
 import { refuseIfClientEditClosed } from '../domain/clientEdits.js';
+import { WITHDRAWN_FIRM_REFUSAL } from '../domain/withdrawnFirm.js';
 import {
   canCreateValuation,
   canReadValuation,
@@ -317,10 +318,7 @@ export function registerValuationRoutes(
       if (partner.archived_at) {
         throw ops && body.partner_id
           ? problems.unprocessable('This partner is archived', { errors: [{ path: ['partner_id'] }] })
-          : problems.conflict(
-              'This firm has been withdrawn from the platform, so no new engagements can be created ' +
-                'under it. Ask an administrator to restore it first.',
-            );
+          : problems.conflict(WITHDRAWN_FIRM_REFUSAL);
       }
     }
 

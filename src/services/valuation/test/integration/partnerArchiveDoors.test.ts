@@ -52,7 +52,7 @@ const DOORS: Record<string, { verdict: Verdict; why: string }> = {
   },
   'valuations.partner_id': {
     verdict: 'refuses',
-    why: 'POST /valuations (R348) — a withdrawn firm acquires no fresh work, whether ops names the field or a member of the firm creates for themselves',
+    why: 'POST /valuations (R348) and POST /valuations/:id/clone (R449, `refuseIfFirmWithdrawn`) — a withdrawn firm acquires no fresh work, whether ops names the field, a member of the firm creates for themselves, or either rolls an existing engagement forward',
   },
   'api_tokens.partner_id': {
     verdict: 'refuses',
