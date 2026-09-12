@@ -711,6 +711,42 @@ groups:
         annotations:
           summary: 'calls to {{ $labels.service }} have been refused locally for half an hour'
 
+      # The one dependency that moves money (R450, methodology M11). Stripe is
+      # not an internal service, so it goes through neither the breaker nor
+      # `upstream_requests_total`; until R450 the only record of a call was the
+      # `warn` line a route wrote when one failed, and nothing on this box
+      # consumes a log field. The two rules below are the `UpstreamErrorRate`
+      # and `UpstreamSlow` pair for that wire.
+      #
+      # `rejected` (4xx) is deliberately *in* this numerator where the upstream
+      # rule leaves it out. For the engine a 4xx is our payload and the fix is
+      # a code change; for Stripe the 4xx that matters is a 401 on every call —
+      # a rotated or revoked secret key — which stops every "Pay now" button on
+      # the platform the moment it happens and is the failure the rule most
+      # needs to catch. A single declined card is one 402 against a day of
+      # 200s and cannot reach the ratio.
+      - alert: StripeErrorRate
+        expr: |
+          sum(rate(stripe_requests_total{outcome!="ok"}[15m]))
+            / sum(rate(stripe_requests_total[15m])) > 0.25
+        for: 15m
+        labels: { severity: page }
+        annotations:
+          summary: 'more than a quarter of calls to Stripe are failing'
+          runbook: "journalctl -u n409-valuation | grep -E 'stripe (checkout session|billing portal session|receipt lookup) failed' — `unreachable: true` on the line is Stripe or the network; `false` with a 401 is the secret key"
+
+      # Ten seconds is half the 20-second deadline in `payments/stripe.ts`. A
+      # Checkout creator this slow is a person looking at a spinner on a
+      # payment page; a receipt fetch this slow is a webhook handler holding a
+      # connection while Stripe counts down its own retry clock.
+      - alert: StripeSlow
+        expr: |
+          histogram_quantile(0.95, sum by (operation, le) (rate(stripe_request_duration_seconds_bucket[15m]))) > 10
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'Stripe {{ $labels.operation }} p95 is over ten seconds; calls are approaching the deadline'
+
   - name: n409-background
     rules:
       # A sweep failing on every tick reads through the saturation gauges

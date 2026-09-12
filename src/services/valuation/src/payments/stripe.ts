@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { recordStripeRequest, stripeOutcomeForStatus, type StripeOperation } from './stripeMetrics.js';
 
 /**
  * Stripe integration (remaining-gaps §3 #1 / §6 P0 #2), dependency-free:
@@ -233,11 +234,21 @@ const STRIPE_TIMEOUT_MS = 20_000;
  * exist), 503 when the connection never stood up (it certainly did not). Both
  * are only read by the log; the route maps `unreachable` to its own answer.
  */
-async function stripeFetch(url: string, init: RequestInit): Promise<Response> {
+async function stripeFetch(operation: StripeOperation, url: string, init: RequestInit): Promise<Response> {
+  // Counted here, on the one path every call takes, rather than at the five
+  // call sites: a sixth operation added without its own line would otherwise
+  // be the one that goes dark (stripeMetrics.ts). The body read is not in the
+  // measurement — a stall mid-body is `stripeBody`'s finding and rare enough
+  // that the headers' arrival is the latency an operator is asking about.
+  const startedAt = performance.now();
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(STRIPE_TIMEOUT_MS) });
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(STRIPE_TIMEOUT_MS) });
+    recordStripeRequest(operation, stripeOutcomeForStatus(res.status), performance.now() - startedAt);
+    return res;
   } catch (err) {
+    const elapsedMs = performance.now() - startedAt;
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      recordStripeRequest(operation, 'timeout', elapsedMs);
       throw new StripeApiError(
         `Stripe did not respond within ${Math.round(STRIPE_TIMEOUT_MS / 1000)}s`,
         504,
@@ -245,6 +256,7 @@ async function stripeFetch(url: string, init: RequestInit): Promise<Response> {
         { cause: err },
       );
     }
+    recordStripeRequest(operation, 'unreachable', elapsedMs);
     throw new StripeApiError('Stripe could not be reached', 503, true, { cause: err });
   }
 }
@@ -354,7 +366,7 @@ export async function createCheckoutSession(
       },
     ],
   });
-  const res = await stripeFetch(`${STRIPE_API}/checkout/sessions`, {
+  const res = await stripeFetch('checkout_session', `${STRIPE_API}/checkout/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
@@ -412,7 +424,7 @@ export async function createSubscriptionCheckoutSession(
       },
     ],
   });
-  const res = await stripeFetch(`${STRIPE_API}/checkout/sessions`, {
+  const res = await stripeFetch('subscription_checkout', `${STRIPE_API}/checkout/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
@@ -450,7 +462,7 @@ export async function createBillingPortalSession(
   secretKey: string,
   args: { customerId: string; returnUrl: string },
 ): Promise<{ id: string; url: string }> {
-  const res = await stripeFetch(`${STRIPE_API}/billing_portal/sessions`, {
+  const res = await stripeFetch('billing_portal', `${STRIPE_API}/billing_portal/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
@@ -492,13 +504,17 @@ export async function createBillingPortalSession(
  * session that had since become expirable.
  */
 export async function expireCheckoutSession(secretKey: string, sessionId: string): Promise<boolean> {
-  const res = await stripeFetch(`${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}/expire`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
+  const res = await stripeFetch(
+    'expire_checkout',
+    `${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}/expire`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
     },
-  });
+  );
   return res.ok;
 }
 
@@ -524,6 +540,7 @@ export interface ChargeReceipt {
  */
 export async function retrieveReceipt(secretKey: string, paymentIntentId: string): Promise<ChargeReceipt> {
   const res = await stripeFetch(
+    'retrieve_receipt',
     `${STRIPE_API}/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge`,
     { headers: { Authorization: `Bearer ${secretKey}` } },
   );

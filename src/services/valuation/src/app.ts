@@ -164,6 +164,7 @@ import {
 } from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
+import { registerStripeMetrics } from './payments/stripeMetrics.js';
 import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
 import { registerEmailDeliveryMetrics } from './observability/emailDeliveryMetrics.js';
 import { registerSsoMetrics } from './observability/ssoOutcomes.js';
@@ -1048,6 +1049,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // aggregated, so "the engine's error rate doubled an hour ago" was not a
   // question anything on this box could answer.
   registerUpstreamMetrics(metricsRegistry);
+  // And the one wire out of this process that moves money, which every round
+  // above left uncounted. Stripe is not an internal service, so it goes through
+  // neither the breaker nor `upstream_requests_total`; R175 gave its outage a
+  // handled error and R225 a `warn` line, and nothing on this box consumes a
+  // log field. A checkout creator that has been answering 5xx for an hour, or
+  // taking fifteen seconds since a deploy, had no series a rule could read.
+  registerStripeMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });
