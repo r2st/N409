@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import {
@@ -10,6 +10,7 @@ import {
   type DocumentCategory,
 } from '../domain/documentCategories.js';
 import { refileTarget, suggestCategory } from '../domain/documentTriage.js';
+import { retiredRefusal } from '../domain/retiredEngagement.js';
 import {
   countUnfiledDocuments,
   findDocumentsByIds,
@@ -174,6 +175,15 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
         });
         continue;
       }
+      // The queue never lists a retired engagement's files
+      // (`listUnfiledDocuments`), but this door takes ids from the body, so a
+      // list loaded before the retention sweep ran — or an id typed in — still
+      // reached the write. Per row, like every other refusal here; the repo
+      // re-asks under a lock for the sweep landing after this read.
+      if (doc.valuation_archived_at !== null) {
+        results.push({ document_id: id, ok: false, error: retiredRefusal('accepting documents') });
+        continue;
+      }
       const target = refileTarget(doc.kind, assignment.category);
       try {
         const moved = await refileDocument(deps.pool, doc, target, actorFor(principal));
@@ -196,9 +206,16 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
         // the second silently overwriting the first's bucket. Re-reading per
         // row is what used to prevent that; keeping the map current does the
         // same without giving back the query.
-        documents.set(id, moved);
+        documents.set(id, { ...moved, valuation_archived_at: doc.valuation_archived_at });
         results.push({ document_id: id, ok: true, category: target.category });
       } catch (err) {
+        // A refusal the repo made on purpose — the engagement was retired
+        // between this route's read and the write — is the row's answer in
+        // its own words, not a failure for the log.
+        if (err instanceof ApiProblem && err.status === 409) {
+          results.push({ document_id: id, ok: false, error: err.detail ?? err.title });
+          continue;
+        }
         /*
          * ONE REFUSED WRITE IS ONE ROW, NOT THE BATCH (R301, methodology M6).
          *

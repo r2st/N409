@@ -4,6 +4,7 @@ import { withTransaction } from '../db/pool.js';
 import { PIPELINE_EVENT_TYPES, type DocumentKind } from '../domain/pipeline.js';
 import { categoryForKind, type DocumentCategory } from '../domain/documentCategories.js';
 import { recordEvent, type EventActor } from '../events/record.js';
+import { refuseIfSubjectRetiredIn } from '../domain/retiredEngagement.js';
 
 export interface DocumentRow {
   id: string;
@@ -126,10 +127,25 @@ export async function findDocumentById(pool: pg.Pool, id: string): Promise<Docum
  * already has to say "unknown document" for a row someone else removed while
  * the queue was on screen.
  */
-export async function findDocumentsByIds(pool: pg.Pool, ids: string[]): Promise<Map<string, DocumentRow>> {
+export interface DocumentWithEngagement extends DocumentRow {
+  /**
+   * The engagement's `archived_at`, carried so a door that names documents
+   * in its body — and so never loads the engagement the way a
+   * valuation-scoped route does — can still ask whether it is retired.
+   */
+  valuation_archived_at: Date | null;
+}
+
+export async function findDocumentsByIds(
+  pool: pg.Pool,
+  ids: string[],
+): Promise<Map<string, DocumentWithEngagement>> {
   if (ids.length === 0) return new Map();
-  const { rows } = await pool.query<DocumentRow>(
-    'SELECT * FROM documents WHERE id = ANY($1) AND deleted_at IS NULL',
+  const { rows } = await pool.query<DocumentWithEngagement>(
+    `SELECT d.*, v.archived_at AS valuation_archived_at
+       FROM documents d
+       JOIN valuations v ON v.id = d.valuation_id
+      WHERE d.id = ANY($1) AND d.deleted_at IS NULL`,
     [[...new Set(ids)]],
   );
   return new Map(rows.map((row) => [row.id, row]));
@@ -339,6 +355,14 @@ export async function refileDocument(
   actor: EventActor,
 ): Promise<DocumentRow | null> {
   return withTransaction(pool, async (client) => {
+    // A retired engagement takes no writes (R89), and this is the one document
+    // write reached through a door that names its rows in the body rather
+    // than under the engagement's id — so `retiredEngagementWrites` could not
+    // drive it and the route above it never loaded the engagement to ask
+    // (R448, methodology M3; the R212 bulk-door shape). Asked here, under a
+    // share lock on the engagement, so a retention sweep landing between the
+    // triage page's read and this write is refused as well.
+    await refuseIfSubjectRetiredIn(client, doc, 'accepting documents');
     const { rows } = await client.query<DocumentRow>(
       `UPDATE documents SET category = $2, kind = $3
         WHERE id = $1 AND deleted_at IS NULL AND category = $4 AND kind = $5

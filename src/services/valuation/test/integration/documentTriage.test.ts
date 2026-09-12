@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { retireValuations } from '../../src/repos/valuationPurge.js';
 import {
   authHeader,
   interceptPoolQueries,
@@ -369,6 +370,104 @@ describe.skipIf(!dbUp)('document triage queue', () => {
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ succeeded: 0, failed: 1 });
 
+    const { rows } = await ctx.pool.query<{ category: string }>(
+      'SELECT category FROM documents WHERE id = $1',
+      [doc.id],
+    );
+    expect(rows[0]!.category).toBe('uploads');
+  });
+
+  /**
+   * A retired engagement takes no writes, through this door too (R448,
+   * methodology M3).
+   *
+   * R89 refused every mutating route under a valuation id on `archived_at`,
+   * and `retiredEngagementWrites` drives that census from the route table.
+   * This door names its documents in the body, so it is not a valuation-scoped
+   * route and the census never reached it — the R212 bulk-door shape. The
+   * queue does not list a retired engagement's files, but a page loaded before
+   * the retention sweep ran, or an id typed in, still reached the write and
+   * put a `document_refiled` on a retired engagement's spine.
+   */
+  it('refuses a document of a retired engagement, per row, and files the rest', async () => {
+    const live = await upload('still-live.pdf');
+    const retiredRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(owner.token),
+      payload: { kind: '409a', company_name: 'Retired Files Co' },
+    });
+    const retiredId = retiredRes.json().valuation.id as string;
+    const boundary = '----n409retired';
+    const uploaded = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${retiredId}/documents`,
+      headers: { ...authHeader(admin.token), 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="withdrawn.pdf"\r\n` +
+          `Content-Type: text/plain\r\n\r\ncontents\r\n--${boundary}--\r\n`,
+      ),
+    });
+    expect(uploaded.statusCode, uploaded.body).toBe(201);
+    const withdrawn = uploaded.json().document.id as string;
+    await retireValuations(ctx.pool, [retiredId]);
+
+    expect((await queueBody()).documents.map((d) => d.id)).not.toContain(withdrawn);
+
+    const res = await file([
+      { document_id: withdrawn, category: 'corporate_documents' },
+      { document_id: live.id, category: 'corporate_documents' },
+    ]);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ succeeded: 1, failed: 1 });
+    expect(res.json().results[0]).toMatchObject({
+      document_id: withdrawn,
+      ok: false,
+      error: 'This engagement has been retired and is no longer accepting documents.',
+    });
+    expect(res.json().results[1]).toMatchObject({ document_id: live.id, ok: true });
+
+    const { rows } = await ctx.pool.query<{ category: string }>(
+      'SELECT category FROM documents WHERE id = $1',
+      [withdrawn],
+    );
+    expect(rows[0]!.category).toBe('uploads');
+    const { rows: trail } = await ctx.pool.query(
+      `SELECT 1 FROM valuation_events WHERE valuation_id = $1 AND type = 'document_refiled'`,
+      [retiredId],
+    );
+    expect(trail).toEqual([]);
+  });
+
+  it('refuses a document whose engagement was retired between the read and the write', async () => {
+    const doc = await upload('raced-retirement.pdf');
+    const fresh = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(owner.token),
+      payload: { kind: '409a', company_name: 'Raced Retirement Co' },
+    });
+    const racedId = fresh.json().valuation.id as string;
+    await ctx.pool.query('UPDATE documents SET valuation_id = $2 WHERE id = $1', [doc.id, racedId]);
+
+    let staged = false;
+    const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+      if (phase !== 'before' || staged || !sql.includes('FOR SHARE')) return undefined;
+      staged = true;
+      await retireValuations(ctx.pool, [racedId]);
+      return undefined;
+    });
+    let res;
+    try {
+      res = await file([{ document_id: doc.id, category: 'corporate_documents' }]);
+    } finally {
+      restore();
+    }
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().results[0]).toMatchObject({
+      ok: false,
+      error: 'This engagement has been retired and is no longer accepting documents.',
+    });
     const { rows } = await ctx.pool.query<{ category: string }>(
       'SELECT category FROM documents WHERE id = $1',
       [doc.id],

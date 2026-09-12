@@ -66,9 +66,18 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
  * work is gone". Worth knowing before writing a message that tells a caller
  * their engagement is unrecoverable — it is not.
  */
+/**
+ * The sentence every retirement refusal is worded in — exported for the doors
+ * that answer per row rather than by throwing (the triage batch), so a refusal
+ * reported inside a results array reads the same as one that ended a request.
+ */
+export function retiredRefusal(doing: string): string {
+  return `This engagement has been retired and is no longer ${doing}.`;
+}
+
 export function refuseIfRetired(valuation: Pick<ValuationRow, 'archived_at'>, doing: string): void {
   if (valuation.archived_at === null) return;
-  throw problems.conflict(`This engagement has been retired and is no longer ${doing}.`);
+  throw problems.conflict(retiredRefusal(doing));
 }
 
 /**
