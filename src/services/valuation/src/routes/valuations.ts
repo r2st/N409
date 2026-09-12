@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { withPlanQuota } from '../domain/planQuota.js';
+import { refuseIfClientEditClosed } from '../domain/clientEdits.js';
 import {
   canCreateValuation,
   canReadValuation,
@@ -458,6 +459,14 @@ export function registerValuationRoutes(
       reply.header('ETag', versionEtag(valuation.version));
       return { valuation };
     }
+    /*
+     * The owner's edits close where the deliverable starts being written —
+     * the line the partner API has drawn since it gained `PUT /valuations/{id}`
+     * and this door, the same owner over a session, never did (R449). Ops
+     * are not asked: correcting a label after review is the analyst's
+     * ordinary path.
+     */
+    if (!isOps(principal)) refuseIfClientEditClosed(valuation, 'Ask your analyst to make the change.');
 
     // `valuations_assigned_reviewer_id_fkey` references `users`, so a reviewer
     // who has since been deleted — or an id from a stale list — is a 23503 in

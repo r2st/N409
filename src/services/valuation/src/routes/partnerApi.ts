@@ -53,6 +53,7 @@ import { reportStatusFor } from '../domain/report.js';
 import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
 import { withPlanQuota } from '../domain/planQuota.js';
+import { refuseIfClientEditClosed } from '../domain/clientEdits.js';
 import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
 import { safeFilename } from '../documents/filename.js';
@@ -888,23 +889,6 @@ export function registerPartnerApiRoutes(
   const SUBMIT_PATH = ['pending', 'started', 'onboarding_completed', 'user_finished'] as const;
   const SUBMIT_TARGET = 'user_finished';
 
-  /**
-   * States in which a partner may still correct the engagement's labels.
-   *
-   * The line is drawn where the deliverable starts being written: once a file
-   * is in `review` an analyst is working from these values, and a company name
-   * that changes underneath them appears in a report nobody re-read. Before
-   * that it is still a submission.
-   */
-  const EDITABLE_STATES: ReadonlySet<string> = new Set([
-    'pending',
-    'started',
-    'onboarding_completed',
-    'user_finished',
-    'completed',
-    'paid',
-  ]);
-
   define(
     {
       method: 'PUT',
@@ -943,12 +927,8 @@ export function registerPartnerApiRoutes(
         // that a correction landed when nothing was written.
         throw problems.unprocessable('No editable fields supplied');
       }
-      if (!EDITABLE_STATES.has(valuation.state)) {
-        throw problems.conflict(
-          `This valuation is '${valuation.state}' — its details are being written into the deliverable ` +
-            'and are no longer editable through the API.',
-        );
-      }
+      // The same line the console's owner PATCH draws — domain/clientEdits.ts.
+      refuseIfClientEditClosed(valuation, 'Contact your account manager.');
 
       // Mapped explicitly rather than spread: the body's names are the API's and
       // the row's are the database's, and a spread would make every future

@@ -101,8 +101,27 @@ export function isFirmAdmin(user: Pick<User, 'roles'> | null): boolean {
   return Boolean(user?.roles.includes('partner')) || canManageUsers(user);
 }
 
+/**
+ * When the owner may still correct their engagement's details (mirrors
+ * domain/clientEdits.ts): before review begins, and not on a stopped file.
+ * Past that line the server answers the PATCH with a 409, so the form is not
+ * drawn — a control whose save is refused is the shape this console keeps
+ * finding.
+ */
+export const CLIENT_EDITABLE_STATES: ReadonlySet<string> = new Set([
+  'pending',
+  'started',
+  'onboarding_completed',
+  'user_finished',
+  'completed',
+  'paid',
+]);
+
 /** Which valuation fields this user may PATCH (mirrors auth/rbac.ts). */
-export function editableFields(user: User | null, valuation: { user_id: string }): Set<string> {
+export function editableFields(
+  user: User | null,
+  valuation: { user_id: string; state: string },
+): Set<string> {
   if (isOps(user)) {
     return new Set([
       'company_name',
@@ -118,7 +137,7 @@ export function editableFields(user: User | null, valuation: { user_id: string }
       'qsbs_attestation',
     ]);
   }
-  if (user && valuation.user_id === user.id) {
+  if (user && valuation.user_id === user.id && CLIENT_EDITABLE_STATES.has(valuation.state)) {
     return new Set(['company_name', 'service_name', 'qsbs_attestation']);
   }
   return new Set();
