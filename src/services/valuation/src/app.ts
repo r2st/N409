@@ -165,6 +165,7 @@ import {
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { registerStripeMetrics } from './payments/stripeMetrics.js';
+import { registerPartnerWebhookDeliveryMetrics } from './observability/partnerWebhookDeliveries.js';
 import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
 import { registerEmailDeliveryMetrics } from './observability/emailDeliveryMetrics.js';
 import { registerSsoMetrics } from './observability/ssoOutcomes.js';
@@ -1056,6 +1057,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // log field. A checkout creator that has been answering 5xx for an hour, or
   // taking fifteen seconds since a deploy, had no series a rule could read.
   registerStripeMetrics(metricsRegistry);
+  // And the events this platform owes a partner, going the other way through
+  // the webhook door R329 instrumented inbound. The retry sweep counts a
+  // delivery only once it has failed; the first attempt — and every delivered
+  // one — was on no series, so a delivery rate had no denominator and a
+  // receiver burning nine of its ten seconds on every event was visible only
+  // as the request that moved the engagement getting slow.
+  registerPartnerWebhookDeliveryMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });

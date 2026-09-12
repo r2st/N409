@@ -3,6 +3,7 @@ import pLimit from 'p-limit';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { describeTransportFailure, FLAGS, flagEnabled, logUnretried } from '@n409/shared';
+import { recordPartnerWebhookDelivery } from '../observability/partnerWebhookDeliveries.js';
 import {
   buildWebhookPayload,
   DELIVERY_HEADER,
@@ -147,9 +148,17 @@ async function postDelivery(
     // Permanent: every remaining attempt would resolve the same way, and the
     // partner needs to see the reason in their delivery log rather than a
     // column of identical timeouts.
-    if (blocked) return { ok: false, error: blocked, permanent: true };
+    if (blocked) {
+      recordPartnerWebhookDelivery(event, 'blocked', null);
+      return { ok: false, error: blocked, permanent: true };
+    }
   }
   const body = JSON.stringify(payload);
+  // Counted here rather than in `settle`, so that a POST whose outcome the
+  // row then refused (`superseded`) is still a POST the receiver saw — and so
+  // the first attempt and the sweep's retries land on the same series
+  // (observability/partnerWebhookDeliveries.ts).
+  const startedAt = performance.now();
   try {
     const res = await fetch(target.url, {
       method: 'POST',
@@ -166,18 +175,25 @@ async function postDelivery(
       redirect: 'manual',
       signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
     });
+    const elapsedMs = performance.now() - startedAt;
     if (res.status >= 300 && res.status < 400) {
+      recordPartnerWebhookDelivery(event, 'redirected', elapsedMs);
       return {
         ok: false,
         error: `receiver redirected (${res.status}) — webhook targets must be a final URL`,
         permanent: true,
       };
     }
-    if (res.ok) return { ok: true };
+    if (res.ok) {
+      recordPartnerWebhookDelivery(event, 'delivered', elapsedMs);
+      return { ok: true };
+    }
+    const permanent = isPermanentDeliveryFailure(res.status);
+    recordPartnerWebhookDelivery(event, permanent ? 'rejected' : 'failed', elapsedMs);
     return {
       ok: false,
       error: `receiver responded ${res.status}`,
-      permanent: isPermanentDeliveryFailure(res.status),
+      permanent,
       // Only read off the statuses that define it. A `Retry-After` on some
       // other 5xx is not a scheduling instruction, and honouring it there
       // would let any misbehaving receiver push its own row to the back of
@@ -195,6 +211,7 @@ async function postDelivery(
     // place they get to find out why their endpoint is not receiving anything.
     // "fetch failed" against an expired certificate or a deleted DNS record
     // sends them to us; the condition sends them to the fix.
+    recordPartnerWebhookDelivery(event, 'unreachable', performance.now() - startedAt);
     return { ok: false, error: describeTransportFailure(err), permanent: false };
   }
 }

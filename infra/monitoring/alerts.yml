@@ -1316,6 +1316,43 @@ groups:
         annotations:
           summary: 'the {{ $labels.source }} webhook is being called and has no signing secret configured'
 
+  - name: n409-partner-webhooks
+    rules:
+      # The other direction through the webhook door (R450, methodology M11).
+      # The events this platform owes a partner were counted only once they
+      # had failed and reached the retry sweep; a delivered one was on no
+      # series, so a delivery rate had no denominator. `SweepWorkFailing` still
+      # reads the ladder giving up; this reads the receivers, first attempt
+      # included.
+      #
+      # `failed|unreachable` only. `rejected` is a receiver saying no for good
+      # — a partner's endpoint, not their host — and `blocked` and `redirected`
+      # are configuration on their side; none of them is fixed by anybody here,
+      # and all three settle the row so the partner's own delivery log already
+      # says so. A ticket, not a page: the ladder retries for six hours, and a
+      # receiver that is down for the length of this window has most likely
+      # been told by its own monitoring.
+      - alert: PartnerWebhookReceiversFailing
+        expr: |
+          sum(rate(partner_webhook_deliveries_total{outcome=~"failed|unreachable"}[30m]))
+            / sum(rate(partner_webhook_deliveries_total[30m])) > 0.5
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'more than half of partner webhook POSTs are failing or reaching nobody'
+          runbook: "journalctl -u n409-valuation | grep 'partner webhook delivery failed' — `webhookId` on the line says whether it is one partner or all of them"
+
+      # A slow receiver is a slow *request*: the first attempt runs in-line
+      # from whatever moved the engagement, serially per webhook. Five seconds
+      # is half the ten-second attempt deadline.
+      - alert: PartnerWebhookReceiversSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(partner_webhook_delivery_duration_seconds_bucket[30m]))) > 5
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'partner webhook receivers are taking over five seconds at p95; the requests that fire them are waiting on it'
+
   - name: n409-email-delivery
     rules:
       # R436, methodology M11. Every bounce, complaint and transport refusal
