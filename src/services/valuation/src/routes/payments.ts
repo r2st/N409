@@ -44,6 +44,7 @@ import {
 } from '../repos/payments.js';
 import { valuationScope } from '../auth/rbac.js';
 import {
+  type ChargeReceipt,
   createCheckoutSession,
   expireCheckoutSession,
   retrieveReceipt,
@@ -1792,9 +1793,41 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // charge is refunded within minutes of being noticed.
         let alreadyBack = { refundedCents: 0, fullyRefunded: false };
         if (deps.stripeSecretKey && intent) {
+          /*
+           * One arm per failure, because they are three different situations
+           * and one `catch` reported all of them as the first (R450,
+           * methodology M11). The old block wrapped the lookup, the receipt
+           * write, the refund reading and the refund write together and logged
+           * `{ err }, 'stripe receipt lookup failed'` — no payment, no
+           * engagement, no intent — so a refund write that failed after Stripe
+           * had *already said* the money was back was filed as a lookup
+           * problem, at `warn`, against an event id and nothing else.
+           */
+          const ids = { sessionId, paymentId: payment.id, valuationId: payment.valuation_id, paymentIntentId: intent };
+          let receipt: ChargeReceipt | null = null;
           try {
-            const receipt = await retrieveReceipt(deps.stripeSecretKey, intent);
-            await setPaymentReceipt(deps.pool, payment.id, receipt);
+            receipt = await retrieveReceipt(deps.stripeSecretKey, intent);
+          } catch (err) {
+            // `warn`, and named for what it costs: this handler is about to
+            // release the engagement, and the one question the charge answers
+            // — has any of this already gone back — goes unasked. The receipt
+            // URL is the lesser loss. `err` carries `unreachable` from
+            // `StripeApiError`, which separates Stripe being down from a key
+            // that no longer reads payment intents.
+            log.warn(
+              { err, ...ids },
+              'stripe receipt lookup failed; releasing the engagement without checking whether the charge was already refunded',
+            );
+          }
+          if (receipt) {
+            try {
+              await setPaymentReceipt(deps.pool, payment.id, receipt);
+            } catch (err) {
+              // The receipt is in hand, so the refund reading below still
+              // happens; what is lost is the link on the payment row, which
+              // nothing comes back for.
+              logUnretried(log, err, ids, 'stripe receipt could not be stored on the payment row');
+            }
             const state = refundState({
               amountCents: Number(payment.amount_cents),
               amountRefunded: receipt.amountRefunded,
@@ -1804,13 +1837,26 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
               // Through the same compare-and-set the webhook path uses, so the
               // `charge.refunded` that may yet arrive with this figure is not
               // news and does not alert a second time.
-              await recordRefund(deps.pool, payment.id, {
-                refundedCents: state.refundedCents,
-                fullyRefunded: state.fullyRefunded,
-              });
+              try {
+                await recordRefund(deps.pool, payment.id, {
+                  refundedCents: state.refundedCents,
+                  fullyRefunded: state.fullyRefunded,
+                });
+              } catch (err) {
+                // `alreadyBack` is already set, so the gate below holds. What
+                // does not hold is the row: it says 'succeeded' and zero
+                // refunded for a charge Stripe reports as returned, and the
+                // `charge.refunded` that would have corrected it may already
+                // have been delivered, matched nothing, and been ledgered —
+                // which is exactly the ordering this lookup exists for.
+                logUnretried(
+                  log,
+                  err,
+                  { ...ids, refundedCents: state.refundedCents, fullyRefunded: state.fullyRefunded },
+                  'a refund Stripe already reports could not be recorded on the payment row',
+                );
+              }
             }
-          } catch (err) {
-            log.warn({ err }, 'stripe receipt lookup failed');
           }
         }
         if (alreadyBack.fullyRefunded) {
