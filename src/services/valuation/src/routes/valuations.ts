@@ -1,14 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, isIsoCalendarDate, isUlid, problems } from '@n409/shared';
-import {
-  consumeValuation,
-  findActiveSubscription,
-  findPlanForSubscription,
-  releaseValuation,
-} from '../repos/billing.js';
-import { planLimitDetail, quotaAwaitsRenewal } from '../domain/billing.js';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
+import { withPlanQuota } from '../domain/planQuota.js';
 import {
   canCreateValuation,
   canReadValuation,
@@ -331,73 +325,12 @@ export function registerValuationRoutes(
 
     // Feature 7: subscribers consume against their plan limit; a user with no
     // active subscription is on the one-time per-valuation flow and unaffected.
-    const subscription = await findActiveSubscription(deps.pool, userId);
-    if (subscription && !(await consumeValuation(deps.pool, userId))) {
-      /*
-       * The plan is read only on the refusal, never on the way through. The
-       * limit itself is enforced inside `consumeValuation`'s own UPDATE, so
-       * this lookup buys nothing but the sentence — and the sentence is the
-       * whole of what the caller gets. A tier retired from the catalogue is
-       * still the tier this subscriber is on, so it is `findPlanForSubscription`
-       * (which does not filter `active`) rather than `findPlan`; a missing row
-       * leaves the figures out and the remedy in.
-       */
-      const plan = await findPlanForSubscription(deps.pool, subscription.plan_tier);
-      /**
-       * And said out loud, which a 402 is not.
-       *
-       * The shared error handler logs 5xx and the two database branches; a 4xx
-       * `ApiProblem` is a described refusal and passes without a line, which is
-       * right for a bad request and wrong for this one. A plan limit reached is
-       * not a malformed call — it is a paying customer being turned away from
-       * the product, the single most actionable commercial signal this service
-       * produces, and it was legible only to the customer who hit it.
-       *
-       * It is also the symptom of the two ways the quota accounting goes wrong,
-       * neither of which anybody can see from the outside: a renewal that moved
-       * `current_period_start` without moving `quota_period_start` (see
-       * `upsertSubscription`, where the reset is gated on the money as well as
-       * the date) leaves an exhausted counter across a period that was in fact
-       * paid for, and a release that failed leaves it one high forever. Both
-       * present as this refusal and nothing else — so the line carries the two
-       * periods that decide which it is.
-       *
-       * `warn` and no alert: the refusal is correct behaviour and the customer
-       * has a remedy in the sentence they were given. What it needs is to be
-       * countable.
-       */
-      req.log.warn(
-        {
-          userId,
-          subscriptionId: subscription.id,
-          planTier: subscription.plan_tier,
-          valuationsUsed: subscription.valuations_used,
-          valuationLimit: plan?.valuation_limit ?? null,
-          quotaPeriodStart: subscription.quota_period_start?.toISOString() ?? null,
-          currentPeriodStart: subscription.current_period_start?.toISOString() ?? null,
-          currentPeriodEnd: subscription.current_period_end?.toISOString() ?? null,
-          subscriptionStatus: subscription.status,
-          awaitingRenewal: quotaAwaitsRenewal(subscription),
-        },
-        'plan valuation limit reached — creation refused',
-      );
-      throw new ApiProblem({
-        status: 402,
-        title: 'Plan limit reached',
-        type: 'urn:n409:problem:plan-limit',
-        detail: planLimitDetail({
-          plan_name: plan?.name ?? 'your plan',
-          valuation_limit: plan?.valuation_limit ?? null,
-          valuations_used: subscription.valuations_used,
-          current_period_end: subscription.current_period_end,
-          awaiting_renewal: quotaAwaitsRenewal(subscription),
-        }),
-      });
-    }
-
-    let valuation;
-    try {
-      valuation = await createValuation(
+    // The draw, the 402 and the refund on a failed insert are
+    // `domain/planQuota.ts`, shared with the three other doors that open an
+    // engagement for a user — the metered account is `userId`, the one the
+    // engagement is opened *for*, not the operator opening it.
+    const valuation = await withPlanQuota(deps.pool, req.log, userId, 'create', () =>
+      createValuation(
         deps.pool,
         {
           kind: body.kind,
@@ -411,34 +344,8 @@ export function registerValuationRoutes(
           gclid: body.gclid,
         },
         actorFor(principal),
-      );
-    } catch (err) {
-      /**
-       * The quota is spent above and the row is inserted here, and the two are
-       * separate statements — `createValuation` is its own transaction, so a
-       * failure means no valuation exists at all. Without this the subscriber
-       * was charged one of the plan's valuations for one they did not get, and
-       * there is no way back: the counter is only ever reset by a renewal, so
-       * on an annual retainer the twelfth could be spent on a 500 and the
-       * customer would wait a year for it.
-       *
-       * Best-effort and logged either way. The failure being handled is the
-       * reason to doubt the next statement too, and a refund that itself throws
-       * must not replace the error the caller needs to see.
-       */
-      if (subscription) {
-        try {
-          const released = await releaseValuation(deps.pool, userId);
-          req.log.warn({ err, userId, released }, 'valuation create failed — plan quota returned');
-        } catch (refundErr) {
-          req.log.error(
-            { err: refundErr, cause: err, userId, alert: true },
-            'valuation create failed and the plan quota it spent could not be returned',
-          );
-        }
-      }
-      throw err;
-    }
+      ),
+    );
     return reply.status(201).send({ valuation });
   });
 

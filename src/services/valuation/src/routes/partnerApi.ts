@@ -52,6 +52,7 @@ import { findReportByValuation, getVersionContent, listVersions } from '../repos
 import { reportStatusFor } from '../domain/report.js';
 import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
+import { withPlanQuota } from '../domain/planQuota.js';
 import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
 import { safeFilename } from '../documents/filename.js';
@@ -751,20 +752,26 @@ export function registerPartnerApiRoutes(
       const parsed = CreateBody.safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid valuation', parsed.error);
       return withIdempotency(req, reply, token, async () => {
-        const valuation = await createValuation(
-          deps.pool,
-          {
-            kind: parsed.data.kind,
-            companyName: parsed.data.company_name,
-            serviceName: parsed.data.service_name,
-            userId: principal.id,
-            partnerId: token.partnerId,
-            source: 'partner',
-            currency: parsed.data.currency,
-            serviceCountries: parsed.data.service_countries,
-            externalId: parsed.data.external_id,
-          },
-          actorFor(principal),
+        // Inside the key claim, so a replay is answered from the receipt and
+        // draws nothing twice. The token's user is the subscriber, if anyone
+        // is: the same account, the same row, over a key instead of a session
+        // — and the console's plan limit did not reach here (R449).
+        const valuation = await withPlanQuota(deps.pool, req.log, principal.id, 'partner-api', () =>
+          createValuation(
+            deps.pool,
+            {
+              kind: parsed.data.kind,
+              companyName: parsed.data.company_name,
+              serviceName: parsed.data.service_name,
+              userId: principal.id,
+              partnerId: token.partnerId,
+              source: 'partner',
+              currency: parsed.data.currency,
+              serviceCountries: parsed.data.service_countries,
+              externalId: parsed.data.external_id,
+            },
+            actorFor(principal),
+          ),
         ).catch((err: unknown) => {
           // The unique index is what arbitrates, not a SELECT before the
           // INSERT: two concurrent creates carrying the same external_id both

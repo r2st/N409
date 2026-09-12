@@ -43,6 +43,7 @@ import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import { ulidField } from '../domain/ulidField.js';
 import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 import { tokenField } from '../domain/credentialFields.js';
+import { withPlanQuota } from '../domain/planQuota.js';
 
 /**
  * Firm-branded client intake.
@@ -223,27 +224,34 @@ export function registerClientIntakeRoutes(
     if (!existing) throw problems.notFound();
     const answers = existing.answers ?? {};
 
-    const result = await convertIntakeLink(deps.pool, {
-      partnerId,
-      id,
-      valuation: {
-        kind: parsed.data.kind,
-        companyName: parsed.data.company_name ?? intakeCompanyName(answers, existing.client_name),
-        userId: principal.id,
-        source: 'partner',
-        currency: parsed.data.currency,
-      },
-      paramsPatch: intakeParamsPatch(answers),
-      actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+    // Drawn against the converting user's plan like every other door that
+    // opens an engagement (domain/planQuota.ts, R449). The three refusals are
+    // thrown *inside* the draw so a conversion the transaction turned away
+    // hands the draw back — "rolled back and told me why" is not a throw on
+    // its own, and the counter must not move for an engagement never opened.
+    const result = await withPlanQuota(deps.pool, req.log, principal.id, 'intake-convert', async () => {
+      const outcome = await convertIntakeLink(deps.pool, {
+        partnerId,
+        id,
+        valuation: {
+          kind: parsed.data.kind,
+          companyName: parsed.data.company_name ?? intakeCompanyName(answers, existing.client_name),
+          userId: principal.id,
+          source: 'partner',
+          currency: parsed.data.currency,
+        },
+        paramsPatch: intakeParamsPatch(answers),
+        actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+      });
+      if (outcome === 'not_found') throw problems.notFound();
+      if (outcome === 'not_submitted') {
+        throw problems.conflict('This questionnaire has not been submitted yet');
+      }
+      if (outcome === 'already_converted') {
+        throw problems.conflict('This intake has already been converted into a valuation');
+      }
+      return outcome;
     });
-
-    if (result === 'not_found') throw problems.notFound();
-    if (result === 'not_submitted') {
-      throw problems.conflict('This questionnaire has not been submitted yet');
-    }
-    if (result === 'already_converted') {
-      throw problems.conflict('This intake has already been converted into a valuation');
-    }
 
     return reply.status(201).send({
       valuation: result.valuation,

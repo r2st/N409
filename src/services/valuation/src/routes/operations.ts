@@ -40,6 +40,7 @@ import {
 } from '../repos/partnerWebhooks.js';
 import { retryDueDeliveries } from '../hooks/partnerWebhooks.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { withPlanQuota } from '../domain/planQuota.js';
 import { optionalCapabilities, type CapabilityConfig } from '../domain/optionalCapabilities.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
@@ -262,11 +263,17 @@ export function registerOperationsRoutes(
 
     // Ops clone on behalf of the original owner; a client clones as themselves.
     const userId = isOps(principal) ? source.user_id : principal.id;
-    const valuation = await cloneValuation(
-      deps.pool,
-      source,
-      { rollForward: parsed.data.roll_forward, userId },
-      { actorType: 'human', actorId: principal.id, source: 'api' },
+    // A clone is new billable work, and a roll-forward is the engagement an
+    // annual retainer counts — drawn against the owner's plan like every other
+    // door that opens one (domain/planQuota.ts, R449). `POST /valuations`
+    // refused the thirteenth; this opened it.
+    const valuation = await withPlanQuota(deps.pool, req.log, userId, 'clone', () =>
+      cloneValuation(
+        deps.pool,
+        source,
+        { rollForward: parsed.data.roll_forward, userId },
+        { actorType: 'human', actorId: principal.id, source: 'api' },
+      ),
     );
     return reply.status(201).send({ valuation });
   });
