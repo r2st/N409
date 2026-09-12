@@ -487,9 +487,16 @@ export function registerDocumentRoutes(
       if (!parsed.success) throw invalidBody('Invalid body', parsed.error);
 
       await loadDocument(deps.pool, valuation.id, documentId);
-      const document = await setDocumentReviewed(deps.pool, documentId, parsed.data.reviewed, principal.id);
-      if (!document) throw problems.notFound();
-      return { document };
+      // 200 either way: the caller asked for a state the file is now in. What
+      // `changed` decides is whether the spine gets a row — see the repo.
+      const written = await setDocumentReviewed(
+        deps.pool,
+        documentId,
+        parsed.data.reviewed,
+        actorFor(principal),
+      );
+      if (!written) throw problems.notFound();
+      return { document: written.document };
     },
   );
 

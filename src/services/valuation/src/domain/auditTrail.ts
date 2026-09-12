@@ -124,6 +124,25 @@ export const EVENT_CATALOG = {
   // deliverable's evidence list prints, so a re-filing changes what the
   // engagement says it relied on.
   document_refiled: D('Document re-filed', 'documents', 'notice', 'client'),
+  /*
+   * The review mark, both ways (R448, methodology M3).
+   *
+   * 0121 added `reviewed_at`/`reviewed_by` as "the missing fact and nothing
+   * more" and kept `reviewed_by` on the row "even though `valuation_events`
+   * also records the actor" — but no event was ever written, so the row was
+   * the only copy. Reopening a file clears both columns, and a second "Mark
+   * reviewed" on an already-cleared file re-stamped them with the second
+   * analyst's id and time. Either way the answer to "who cleared this, and
+   * when" was gone.
+   *
+   * Internal, unlike the four siblings above: the mark is an analyst's own
+   * working state ("I have taken this file into account"), not something done
+   * to the client's document. `info` for the same reason — clearing a stack of
+   * files is the ordinary use of the queue, and a reopen is the mistaken click
+   * the toggle exists to undo, not somebody changing the record.
+   */
+  document_reviewed: D('Document reviewed', 'documents', 'info'),
+  document_review_cleared: D('Document review cleared', 'documents', 'info'),
   document_reminder_sent: D('Document reminder sent', 'documents', 'info', 'client'),
   intake_saved: D('Intake saved', 'documents', 'info', 'client'),
   intake_submitted: D('Intake submitted', 'documents', 'notice', 'client'),

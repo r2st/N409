@@ -151,6 +151,8 @@ export const PIPELINE_EVENT_TYPES = {
   documentDeleted: 'document_deleted',
   documentDownloaded: 'document_downloaded',
   documentRefiled: 'document_refiled',
+  documentReviewed: 'document_reviewed',
+  documentReviewCleared: 'document_review_cleared',
   paramsUpdated: 'params_updated',
   aiJobCompleted: 'ai_job_completed',
   calculationCompleted: 'calculation_completed',

@@ -370,6 +370,12 @@ export async function refileDocument(
   });
 }
 
+export interface DocumentReviewWrite {
+  document: DocumentRow;
+  /** False when the row was already in the state the caller asked for. */
+  changed: boolean;
+}
+
 /**
  * Mark a document reviewed, or put it back in the pending pile (0121).
  *
@@ -377,22 +383,72 @@ export async function refileDocument(
  * that it reaches zero, and an analyst who cleared a row by mistake with no way
  * back would either leave the count wrong or re-upload the file. `reviewed_by`
  * is cleared with the timestamp so a pending row never carries a stale name.
+ *
+ * ONLY A REAL TRANSITION WRITES (R448, methodology M3). This used to UPDATE
+ * by primary key whatever the row said, and the console's control is a toggle
+ * computed from the list each analyst is holding — so two people with the
+ * panel open, the ordinary case for a queue that exists to be worked through,
+ * produced a second "Mark reviewed" over a file the first had already cleared.
+ * Nothing refused it: `reviewed_at` moved to the second press and
+ * `reviewed_by` to the second analyst, and the answer 0121 kept `reviewed_by`
+ * on the row to give — "who cleared this" — was quietly re-attributed. The
+ * reopen half was worse in the other direction: clearing both columns was the
+ * *only* copy of that answer going, because no event was ever written here,
+ * although 0121's own note says the spine "also records the actor".
+ *
+ * `setSupportMessageStatus` and `setContactSubmissionStatus` are the same
+ * flag-with-an-actor shape and already do this: the state the row is in is
+ * read under the lock the write takes, an unchanged state is answered with
+ * the standing row and `changed: false`, and only a move puts a row on the
+ * spine. The reopen's event carries the mark it is clearing — the reviewer
+ * and the time, as the `from` half of its change list — since afterwards the
+ * row can no longer say.
  */
 export async function setDocumentReviewed(
   pool: pg.Pool,
   documentId: string,
   reviewed: boolean,
-  reviewerId: string,
-): Promise<DocumentRow | null> {
-  const { rows } = await pool.query<DocumentRow>(
-    `UPDATE documents
-        SET reviewed_at = CASE WHEN $2 THEN now() ELSE NULL END,
-            reviewed_by = CASE WHEN $2 THEN $3::ulid ELSE NULL END
-      WHERE id = $1 AND deleted_at IS NULL
-      RETURNING *`,
-    [documentId, reviewed, reviewerId],
-  );
-  return rows[0] ?? null;
+  actor: EventActor,
+): Promise<DocumentReviewWrite | null> {
+  return withTransaction(pool, async (client) => {
+    const { rows: held } = await client.query<DocumentRow>(
+      'SELECT * FROM documents WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [documentId],
+    );
+    const before = held[0];
+    if (!before) return null;
+    if ((before.reviewed_at !== null) === reviewed) return { document: before, changed: false };
+
+    const { rows } = await client.query<DocumentRow>(
+      `UPDATE documents
+          SET reviewed_at = CASE WHEN $2 THEN now() ELSE NULL END,
+              reviewed_by = CASE WHEN $2 THEN $3::ulid ELSE NULL END
+        WHERE id = $1
+        RETURNING *`,
+      [documentId, reviewed, actor.actorId ?? null],
+    );
+    const document = rows[0]!;
+    await recordEvent(client, {
+      valuationId: document.valuation_id,
+      type: reviewed ? PIPELINE_EVENT_TYPES.documentReviewed : PIPELINE_EVENT_TYPES.documentReviewCleared,
+      actor,
+      // A change list, in the shape `document_refiled` writes and
+      // `extractChanges` reads, so the change log prints the mark that moved
+      // and — on a clear — the reviewer and time it took off the row.
+      payload: {
+        document_id: document.id,
+        filename: document.filename,
+        changes: {
+          reviewed_by: { from: before.reviewed_by, to: document.reviewed_by },
+          reviewed_at: {
+            from: before.reviewed_at?.toISOString() ?? null,
+            to: document.reviewed_at?.toISOString() ?? null,
+          },
+        },
+      },
+    });
+    return { document, changed: true };
+  });
 }
 
 /**
