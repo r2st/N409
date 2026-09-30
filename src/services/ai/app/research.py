@@ -59,6 +59,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
+from typing import Callable
 
 import httpx
 
@@ -160,6 +162,117 @@ SUPPRESSED_ANSWER = (
 _log = logging.getLogger("research")
 
 _CITATION_RE = re.compile(r"\[(\d{1,2})\]")
+
+#: Per-attempt latency/outcome/token reporting, installed by `main.py` once the
+#: metrics registry exists. None in every unit test that calls `research()`
+#: directly — the same shape as `llm_router.set_llm_metrics_sink` and
+#: `observability.set_degraded_event_sink`, so a caller with nothing installed
+#: logs exactly as it always did.
+#:
+#: R450, methodology M11. R444 instrumented `llm_router.chat` and said in as
+#: many words that this module was left out of it: research "deliberately calls
+#: `openrouter.chat` directly … so it is *not* covered by this and remains a
+#: known, separate gap". This closes it, and the gap was wider than one missing
+#: histogram:
+#:
+#: * **Nothing counted a research call.** The route's own RED
+#:   (`http_requests_total{route="/ai/v1/research"}`) counts requests, and every
+#:   degradation on this path answers **200**: a lapsed Sonar key, a search that
+#:   found nothing, a synthesis model that refused and left the sources unread.
+#:   So the one series that could see this path is the one that reads healthy
+#:   through all of it.
+#: * **The fallback was silent in the channel that alerts.** `research_fallback`
+#:   is a `warning` with an `event`, so `log_degraded_events_total` counts it —
+#:   and `alerts.yml` selects `openrouter_key` and `search_unknown_provider` from
+#:   that counter and not this one. A firm paying for Sonar and being served
+#:   DuckDuckGo for a fortnight matched no rule.
+#: * **The synthesis tokens made the two token instruments disagree.**
+#:   `openrouter.chat` adds every call's tokens to the `OPENROUTER_TOKEN_BUDGET`
+#:   ledger, which `main.py` samples as
+#:   `llm_token_budget_used_total{provider="openrouter"}`. `llm_tokens_total` is
+#:   fed only from the router's sink. Research synthesis is billed to that
+#:   account and passes through the ledger and not the sink, so the gauge and the
+#:   counter drifted apart by exactly the cost of this feature, with nothing
+#:   saying which of the two was short.
+#:
+#: One observation per **attempt**, matching `upstream_requests_total` on the
+#: Node tier: a query Sonar refuses and DuckDuckGo answers reports twice, once
+#: per path. That is what gives a lapsed key a denominator — a `primary` failure
+#: count with no `fallback` beside it cannot separate "Sonar is down" from
+#: "nobody has asked a research question today".
+_metrics_sink: Callable[..., None] | None = None
+
+
+def set_research_metrics_sink(sink: Callable[..., None] | None) -> None:
+    """Install the callback every research attempt is reported to.
+
+    Called with keyword arguments `path`, `provider`, `model`, `outcome`,
+    `duration_s`, `prompt_tokens`, `completion_tokens`. Null clears it, which is
+    what a test does between cases.
+    """
+    global _metrics_sink
+    _metrics_sink = sink
+
+
+def _outcome_for(result: ResearchResult) -> str:
+    """Which of the three endings a 200 on this path actually is.
+
+    Derived from the result rather than reported at each `return`, because the
+    fields are the same thing the callers downstream read: `synthesized` is the
+    contract for "somebody wrote this", `citations` for "from sources that
+    exist". Four returns in `fallback_research` share three outcomes and each
+    already carries its own `event` on a `warning` line naming *which* — the
+    metric's job is the rate, not the diagnosis.
+    """
+    if not result.synthesized:
+        # Retrieval succeeded and the write-up was thrown away: the model
+        # refused (typically an exhausted quota), a content filter withheld it,
+        # or it was cut off at the output cap. `research_unsynthesized`,
+        # `research_suppressed` and `research_truncated` separate those three.
+        return "unsynthesized"
+    if not result.citations:
+        # A question the public record does not cover. Not a failure — but not
+        # an answer either, and a run of them is a retrieval backend serving
+        # empty pages, which looks identical from the route.
+        return "unsourced"
+    return "answered"
+
+
+def _report(
+    *,
+    path: str,
+    provider: str,
+    model: str | None,
+    outcome: str,
+    duration_s: float,
+    result: ResearchResult | None = None,
+) -> None:
+    """Tell the sink, if one is installed.
+
+    Never lets a broken sink cost the call it is reporting on — the same
+    defensive shape as `llm_router._report`, for the same reason: this is an
+    observer of a path that has already done the expensive, billed half of its
+    work.
+    """
+    if _metrics_sink is None:
+        return
+    try:
+        _metrics_sink(
+            path=path,
+            provider=provider,
+            # The *requested* id, not whichever candidate an OpenRouter chain
+            # answered with — bounded by configuration rather than by the chain,
+            # and the same on the failure path as on the success one. R444 drew
+            # this line for `llm_requests_total` and the label has to mean the
+            # same thing on both metrics or they cannot be read together.
+            model=model or "default",
+            outcome=outcome,
+            duration_s=duration_s,
+            prompt_tokens=result.prompt_tokens if result else 0,
+            completion_tokens=result.completion_tokens if result else 0,
+        )
+    except Exception:  # noqa: BLE001 - a broken metrics sink must not cost a call
+        pass
 
 
 def is_configured() -> bool:
@@ -426,30 +539,61 @@ def research(
     errors: list[str] = []
 
     if perplexity.is_configured():
+        asked = perplexity_model(model)
         kwargs: dict = {
-            "model": perplexity_model(model),
+            "model": asked,
             "recency": recency,
             "domains": domains,
             "client": perplexity_client,
         }
         if system:
             kwargs["system"] = system
+        started = time.monotonic()
         try:
-            return perplexity.research(query, **kwargs)
+            primary = perplexity.research(query, **kwargs)
         except ConfidentialityError:
             # Not caught by the `except PerplexityError` below, because it is
             # not one — but re-raised explicitly so that nobody "fixes" the
             # hierarchy later without this line failing loudly first.
+            #
+            # Reported rather than skipped: `assert_public` ran above, so
+            # reaching here means the gate has been moved or a second one
+            # disagrees with it, and a refusal that left no count behind would
+            # make the attempt denominator quietly short of the truth.
+            _report(
+                path="primary",
+                provider="research_primary",
+                model=asked,
+                outcome="refused",
+                duration_s=time.monotonic() - started,
+            )
             raise
         except PerplexityError as exc:
             # The whole point of the fallback. A lapsed key, an exhausted
             # quota or a bad afternoon at Perplexity degrades to the keyless
             # path rather than to a 503 on somebody's valuation.
+            _report(
+                path="primary",
+                provider="research_primary",
+                model=asked,
+                outcome="provider_failed",
+                duration_s=time.monotonic() - started,
+            )
             errors.append(f"perplexity: {exc}")
             _log.warning(
                 "perplexity research failed, falling back to search",
                 extra={"event": "research_fallback", "provider": websearch.configured_provider()},
             )
+        else:
+            _report(
+                path="primary",
+                provider="research_primary",
+                model=asked,
+                outcome=_outcome_for(primary),
+                duration_s=time.monotonic() - started,
+                result=primary,
+            )
+            return primary
 
     if not websearch.is_configured():
         raise ResearchError(
@@ -467,11 +611,40 @@ def research(
     }
     if system:
         fallback_kwargs["system"] = system
+    # `openrouter` and not the search backend: this is the label on the account
+    # the tokens are billed to, and it has to match `llm_tokens_total`'s own
+    # `provider` for the two to be read together — the whole point of reporting
+    # these tokens at all. Which *index* answered is a different question, kept
+    # in the stored row's `model` column and in `websearch`'s own warnings,
+    # because the chain it walks is resolved inside the call.
+    synthesis = synthesis_model(model)
+    started = time.monotonic()
     try:
-        return fallback_research(query, **fallback_kwargs)
+        fallback = fallback_research(query, **fallback_kwargs)
     except ProviderError as exc:
+        _report(
+            path="fallback",
+            provider="openrouter",
+            model=synthesis,
+            # Retrieval failed, so no model was reached and nothing was billed.
+            # Distinct from `unsynthesized`, where the search *did* answer and
+            # the write-up was what was lost: one is a search backend down, the
+            # other an LLM account out of allowance, and they are two different
+            # people's afternoons.
+            outcome="search_failed",
+            duration_s=time.monotonic() - started,
+        )
         errors.append(str(exc))
         raise ResearchError("; ".join(errors)) from exc
+    _report(
+        path="fallback",
+        provider="openrouter",
+        model=synthesis,
+        outcome=_outcome_for(fallback),
+        duration_s=time.monotonic() - started,
+        result=fallback,
+    )
+    return fallback
 
 
 __all__ = [
@@ -491,4 +664,5 @@ __all__ = [
     "is_configured",
     "primary_available",
     "research",
+    "set_research_metrics_sink",
 ]

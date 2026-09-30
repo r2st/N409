@@ -40,6 +40,20 @@ client = TestClient(app)
 TOKEN = "scrape-secret"
 
 
+def _series(body: str) -> dict[str, float]:
+    """Every `name{labels} value` line in a scrape body, by series."""
+    out: dict[str, float] = {}
+    for line in body.splitlines():
+        if line.startswith("#") or " " not in line:
+            continue
+        series, _, value = line.rpartition(" ")
+        try:
+            out[series] = float(value)
+        except ValueError:
+            continue
+    return out
+
+
 @pytest.fixture
 def _token(monkeypatch):
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", TOKEN)
@@ -152,6 +166,62 @@ def test_a_router_call_is_counted_and_timed_on_the_scrape(_token, monkeypatch):
     assert 'llm_requests_total{provider="openrouter",model="probe/model",outcome="success"} 1' in body
     assert 'llm_tokens_total{provider="openrouter",model="probe/model",kind="prompt"} 3' in body
     assert 'llm_tokens_total{provider="openrouter",model="probe/model",kind="completion"} 2' in body
+
+
+def test_research_observability_is_published(_token):
+    """R450, methodology M11. `research.py` reaches OpenRouter directly rather
+    than through `llm_router`, by design — so R444's instrumentation stopped at
+    its door, and every degradation on the path answers 200."""
+    body = _scrape({"x-internal-token": TOKEN}).text
+    assert "# TYPE research_requests_total counter" in body
+    assert "# TYPE research_request_duration_seconds histogram" in body
+
+
+def test_a_research_call_is_counted_and_its_tokens_billed_on_the_scrape(_token, monkeypatch):
+    """The wiring, end to end: `app.main` installs the sink at import, so a
+    research call made against this module has to land on the scrape body.
+
+    The token assertion is the half that matters most. `openrouter.chat` adds
+    every call's tokens to the ledger `llm_token_budget_used_total` samples, and
+    research synthesis passed through that ledger and not through the router's
+    sink — so the gauge and `llm_tokens_total` drifted apart by the cost of this
+    feature, with nothing saying which was short."""
+    from app import research as research_mod
+    from app.openrouter import LlmResult
+    from app.websearch import SearchHit
+
+    monkeypatch.setenv("RESEARCH_SYNTHESIS_MODEL", "probe/research-model")
+    monkeypatch.setattr(
+        research_mod.websearch,
+        "search_with_provider",
+        lambda q, **k: ("duckduckgo", [SearchHit("https://a.example/x", "t", "s")]),
+    )
+    monkeypatch.setattr(
+        research_mod,
+        "chat",
+        lambda system, user, *, model=None, client=None: LlmResult(
+            model="whichever/candidate", content="an answer [1]", prompt_tokens=7, completion_tokens=9
+        ),
+    )
+    # Deltas, not absolutes. These counters are process-cumulative and the sink
+    # is installed at import, so every other suite in this session that calls
+    # `research()` has already moved them — asserting `} 1` passes alone and
+    # fails behind `test_research.py`, which is the same order dependence R444's
+    # own assertion was carrying until this round.
+    before = _series(_scrape({"x-internal-token": TOKEN}).text)
+    research_mod.research("a public question")
+    after = _series(_scrape({"x-internal-token": TOKEN}).text)
+
+    def delta(series: str) -> float:
+        return after.get(series, 0.0) - before.get(series, 0.0)
+
+    assert delta('research_requests_total{path="fallback",outcome="answered"}') == 1
+    assert delta('research_request_duration_seconds_count{path="fallback"}') == 1
+    assert delta('llm_tokens_total{provider="openrouter",model="probe/research-model",kind="prompt"}') == 7
+    assert (
+        delta('llm_tokens_total{provider="openrouter",model="probe/research-model",kind="completion"}')
+        == 9
+    )
 
 
 def test_build_info_reports_the_unknown_source_rather_than_omitting_it(monkeypatch, _token):

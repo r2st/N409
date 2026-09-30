@@ -43,6 +43,7 @@ from .research import (
     ConfidentialityError,
     RECENCY_FILTERS,
     ResearchError,
+    set_research_metrics_sink,
 )
 from .research import is_configured as research_configured
 from .research import primary_available as perplexity_configured
@@ -178,7 +179,7 @@ _llm_duration = _metrics.histogram(
 )
 _llm_tokens = _metrics.counter(
     "llm_tokens_total",
-    "Tokens billed on LLM chat calls through the router, by provider, requested model and kind",
+    "Tokens billed on LLM chat calls, by provider, requested model and kind",
     ("provider", "model", "kind"),
 )
 
@@ -201,6 +202,56 @@ def _llm_metrics_sink(
 
 
 set_llm_metrics_sink(_llm_metrics_sink)
+
+# Research call observability (R450, methodology M11). See `research.py`'s header
+# on `_metrics_sink` for the three things this closes. The short version: every
+# degradation on that path answers 200, so the route's own RED reads healthy
+# through a lapsed Sonar key, an empty index and a synthesis model that refused.
+#
+# Its own request/duration pair rather than more labels on `llm_requests_total`:
+# that counter's `provider`/`model`/`outcome` describe one chat call, and a
+# research attempt is a search *and* a chat, with endings (`unsourced`,
+# `search_failed`) that do not exist for a prompt. The tokens go the other way —
+# into `llm_tokens_total`, because they are billed to the same OpenRouter
+# account the ledger gauge already counts them against, and a second token
+# metric is how the gauge and the counter came to disagree in the first place.
+_research_requests = _metrics.counter(
+    "research_requests_total",
+    "Research attempts, by path (Sonar first, keyless search behind it) and outcome",
+    ("path", "outcome"),
+)
+_research_duration = _metrics.histogram(
+    "research_request_duration_seconds",
+    "Research attempt latency, by path — retrieval and synthesis together",
+    ("path",),
+)
+
+
+def _research_metrics_sink(
+    *,
+    path: str,
+    provider: str,
+    model: str,
+    outcome: str,
+    duration_s: float,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    _research_requests.inc({"path": path, "outcome": outcome})
+    _research_duration.observe(duration_s, {"path": path})
+    # Only when something was billed. A `search_failed` attempt never reached a
+    # model and a `provider_failed` one was refused before it answered, and a
+    # zero written to a counter mints a series that then reads as a model
+    # costing nothing rather than as a model never asked.
+    if prompt_tokens:
+        _llm_tokens.inc({"provider": provider, "model": model, "kind": "prompt"}, prompt_tokens)
+    if completion_tokens:
+        _llm_tokens.inc(
+            {"provider": provider, "model": model, "kind": "completion"}, completion_tokens
+        )
+
+
+set_research_metrics_sink(_research_metrics_sink)
 
 # The three provider token ledgers, published where a scraper can see them.
 # A gauge rather than a counter: each ledger is already the source of truth

@@ -1279,6 +1279,70 @@ groups:
           summary: '{{ $labels.job }} could not parse a configured value and is running on the default ({{ $labels.event }})'
           runbook: 'journalctl -u n409-ai -u n409-engine-wrapper --since -1d | grep {{ $labels.event }} — `detail` carries the value as it was typed; the unit files are in infra/systemd'
 
+  - name: n409-research
+    rules:
+      # The path R444 stopped at the door of (R450, methodology M11).
+      #
+      # `research.py` reaches OpenRouter directly rather than through
+      # `llm_router`, deliberately — folding it into the router would make it
+      # reachable from `pipelines._ask`, which is the one thing its
+      # confidentiality gate exists to prevent. So R444's instrumentation
+      # covered every prompt call on the platform except the one that sends its
+      # input *outward*, and every degradation on it answers **200**: a lapsed
+      # Sonar key, an index that found nothing, a synthesis model that refused.
+      # `http_requests_total{route="/ai/v1/research"}` reads healthy through all
+      # three.
+      #
+      # One observation per attempt, so a query Sonar refuses and DuckDuckGo
+      # answers appears on both paths. That is the denominator these rules need:
+      # a `primary` failure count on its own cannot separate "Sonar is down"
+      # from "nobody has asked a research question today".
+      - alert: ResearchPrimaryFailing
+        expr: |
+          sum(rate(research_requests_total{path="primary",outcome="provider_failed"}[30m]))
+            / sum(rate(research_requests_total{path="primary"}[30m])) > 0.5
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'Sonar is refusing more than half of research questions; the keyless fallback is answering them'
+          runbook: "journalctl -u n409-ai --since -1h | grep research_fallback — a lapsed or rejected PERPLEXITY_API_KEY and an exhausted quota present identically here; llm_token_budget_used_total{provider=\"research_primary\"} separates them"
+
+      # The ending that keeps the sources and throws the answer away:
+      # `synthesized=False`, which is `grounded=False`, which is a research
+      # result an analyst can read and a report may not quote. On a free-tier
+      # OpenRouter account this is a daily event rather than an outage, which is
+      # why it is a proportion over half an hour and not a first-occurrence
+      # rule — and why it tickets rather than pages.
+      #
+      # `LlmQuotaExhausted` does not cover it: that reads
+      # `log_degraded_events_total{event="llm_quota_exhausted"}`, which is every
+      # configured model refusing on 429 inside one call. A synthesis step that
+      # is refused answers 200 here with the sources, and its own
+      # `research_unsynthesized` warning is not selected by any rule.
+      - alert: ResearchAnswersUnwritten
+        expr: |
+          sum(rate(research_requests_total{outcome="unsynthesized"}[30m]))
+            / sum(rate(research_requests_total[30m])) > 0.25
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'research is returning sources nobody wrote up; a quarter of answers cannot be quoted in a report'
+          runbook: 'journalctl -u n409-ai --since -1h | grep -E "research_(unsynthesized|suppressed|truncated)" — those three separate an exhausted allowance from a content filter from an answer cut off at the output cap'
+
+      # Retrieval itself failing, which is the one ending on this path that does
+      # *not* answer 200 — it raises and the route returns 503. It is here
+      # rather than left to `HighServerErrorRate` because that rule selects a
+      # route label and would say only that `/ai/v1/research` is erroring; this
+      # says the search backends are the reason, which is a different
+      # configuration file and a different remedy.
+      - alert: ResearchRetrievalFailing
+        expr: increase(research_requests_total{outcome="search_failed"}[30m]) > 5
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'every configured research backend is failing to retrieve sources'
+          runbook: 'journalctl -u n409-ai --since -1h | grep -E "search_(provider_failed|unknown_provider)" — RESEARCH_PROVIDER and RESEARCH_PROVIDER_CHAIN name the backends in force'
+
   - name: n409-inbound-webhooks
     rules:
       # A webhook's whole authority is a signature, and the secret behind it is

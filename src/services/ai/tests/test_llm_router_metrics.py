@@ -15,6 +15,7 @@ import json
 import pytest
 
 from app import bedrock, llm_router, openrouter
+from app import llm_router
 from app.llm_router import chat, set_llm_metrics_sink
 from app.openrouter import AuthenticationFailed, RateLimited, RequestRejected
 
@@ -46,6 +47,18 @@ class _Client:
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
+    # Whatever was installed before this file ran, put back afterwards.
+    #
+    # This used to end `set_llm_metrics_sink(None)`, and the sink is a *module
+    # global* that `app.main` fills in once, at import. Any test file importing
+    # the app after this one therefore ran against a service whose LLM
+    # instrumentation had been taken away — including
+    # `test_metrics_endpoint.py`'s assertion that a router call is actually
+    # counted on `/metrics`, which is R444's own contract and failed under a
+    # whole-suite run while passing on its own. The same hazard applies to
+    # every one of this tier's sinks (`set_degraded_event_sink`,
+    # `set_research_metrics_sink`); restore, never clear.
+    installed = llm_router._metrics_sink
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     monkeypatch.setattr(openrouter.time, "sleep", lambda _s: None)
     monkeypatch.setattr(openrouter, "configured_models", lambda preferred=None: ["solo/model"])
@@ -57,7 +70,7 @@ def _env(monkeypatch):
     openrouter._budget._used = 0
     yield
     openrouter._budget._used = 0
-    set_llm_metrics_sink(None)
+    set_llm_metrics_sink(installed)
 
 
 @pytest.fixture
