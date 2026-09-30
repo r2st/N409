@@ -1279,6 +1279,98 @@ groups:
           summary: '{{ $labels.job }} could not parse a configured value and is running on the default ({{ $labels.event }})'
           runbook: 'journalctl -u n409-ai -u n409-engine-wrapper --since -1d | grep {{ $labels.event }} — `detail` carries the value as it was typed; the unit files are in infra/systemd'
 
+  - name: n409-engine-degrades
+    rules:
+      # Four events on the engine tier that their own authors argued were
+      # alertable, and that no rule selected (R450, methodology M11).
+      #
+      # `log_degraded_events_total{event,level}` has counted every
+      # warning-or-worse line carrying an `event` on both Python units since
+      # R376, and the argument for keeping most of that vocabulary out of rules
+      # still holds — "an unreadable scanned PDF or a corpus cut to its budget
+      # is a Tuesday, and a rule per routine degrade is how a channel gets
+      # muted". These four are not that. Each one is a line whose own source
+      # comment says an operator wants its *rate*, and the rate was on the
+      # scrape endpoint with nothing reading it, which is indistinguishable from
+      # a healthy box. `pythonDegradedEventCensus` in
+      # `alertRulesCensus.test.ts` now forces the next one to be classified
+      # rather than merely counted.
+
+      # `engine/errors.py` states the tier's rule — "4xx stays unlogged … the
+      # caller was told, and their rate is set by whoever is making the
+      # mistakes" — and `EngineDegradedError` exists for the one case where that
+      # is false. The Monte Carlo allocation failing to conserve value is not
+      # about the request: the volatility was inside the band this engine
+      # publishes, the horizon is one nothing warns about, the path count is the
+      # default. The *estimator* failed, and the analyst was handed a 422 on a
+      # §409A run that a different allocation method would have completed.
+      #
+      # On the first occurrence, and a ticket: it is rare, it is a real refusal
+      # of work somebody asked for, and the remedy (OPM on that engagement, or a
+      # shorter horizon) is a conversation rather than a restart.
+      - alert: EngineEstimatorRefusingRuns
+        expr: increase(log_degraded_events_total{event="monte_carlo_conservation"}[1h]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} could not finish a Monte Carlo run on inputs it had accepted'
+          runbook: 'journalctl -u n409-engine-wrapper --since -1d --grep=monte_carlo_conservation — `relative_error` against `tolerance` says how far out the draw was and `paths` against how many; the dollar figures are deliberately not on the line'
+
+      # The refresh behind every comparables screen on the box. Its own
+      # `_report` docstring is the case: a refresh abandoned at the deadline
+      # never reaches `market_feed._fallback`, and the universe is resolved
+      # inside the engine process on the way to a screen, so it never crosses
+      # the wire `market_feed_answers_total` counts — `MarketFeedFallingBack`
+      # structurally cannot see it. What reached an operator was
+      # `universe.source` on one analyst's screen.
+      #
+      # Zero live figures means every comparable on the screen is a snapshot,
+      # which is the same diagnosis as `MarketFeedProviderMisbuilt` arrived at
+      # from a source that rule cannot see. An hour, because the resolution is
+      # memoised for `TTL_SECONDS` and a quiet box refreshes rarely.
+      - alert: MarketUniverseAllSnapshot
+        expr: increase(log_degraded_events_total{event="market_universe_degraded"}[1h]) > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the market universe refreshed with no live figures at all; every comparables screen is on snapshot data'
+          runbook: 'journalctl -u n409-engine-wrapper --since -1d --grep=market_universe_degraded — `detail` carries the first few per-ticker reasons, which separate a provider refusing from a provider absent'
+
+      # The other half of that docstring's pair, and deliberately a separate
+      # rule: "two incidents with two first moves". This one is the refresh's
+      # own budget against a source that is answering but slowly, and the remedy
+      # is MARKET_UNIVERSE_REFRESH_TIMEOUT_SECONDS rather than a credential.
+      # A threshold rather than the first occurrence — one slow ticker at the
+      # edge of the budget is a bad minute, a run of them is the number being
+      # wrong.
+      - alert: MarketUniverseRefreshTimingOut
+        expr: increase(log_degraded_events_total{event="market_universe_refresh_timeout"}[6h]) > 3
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the market universe refresh keeps running out of time before every ticker answers'
+          runbook: 'journalctl -u n409-engine-wrapper --since -1d --grep=market_universe_refresh_timeout — `count` is the tickers abandoned against `total`, and `limit` is MARKET_UNIVERSE_REFRESH_TIMEOUT_SECONDS'
+
+      # A 422 that is this platform's bug and not a caller's. The engine binds
+      # the request, every name is one the calculation has, and then a value
+      # cannot be used — `unsupported operand type(s) for *: 'str' and 'float'`.
+      # The only caller of these routes is the valuation service, which built
+      # that payload from a form and a database, so a string reaching a
+      # multiplication is a defect on our own wire that an analyst experiences
+      # as a calculation that will not run.
+      #
+      # Its source comment says it plainly: "Kept for whoever can: a 4xx is not
+      # otherwise logged here" — and whoever can was never told. A threshold
+      # over six hours: one is a bad afternoon somewhere, a run of them is a
+      # shape the engine-input builder has started sending.
+      - alert: EngineInputsUnusable
+        expr: increase(log_degraded_events_total{event="engine_input_type_error"}[6h]) > 3
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the valuation service is sending the engine values it binds but cannot use'
+          runbook: 'journalctl -u n409-engine-wrapper --since -1d --grep=engine_input_type_error — `endpoint` names the route and `detail` the operand, which together name the field the input builder got wrong'
+
   - name: n409-research
     rules:
       # The path R444 stopped at the door of (R450, methodology M11).

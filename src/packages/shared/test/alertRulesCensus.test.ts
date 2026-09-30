@@ -664,6 +664,144 @@ describe('alert rules', () => {
     }
   });
 
+  it('classifies every Python-tier degrade as alerted or routine', () => {
+    /*
+     * R450, methodology M11, and the seventh direction — the same absence as
+     * R341's and R345's, one more size up.
+     *
+     * `log_degraded_events_total{event,level}` counts every warning-or-worse
+     * line carrying an `event` on both Python units, and R376 built it as the
+     * channel for "a tier whose degrades are reported in the log and nowhere
+     * else". Its own header then argues, correctly, that most of that
+     * vocabulary must *not* have rules: "an unreadable scanned PDF or a corpus
+     * cut to its budget is a Tuesday, and a rule per routine degrade is how a
+     * channel gets muted".
+     *
+     * Which leaves nobody deciding which is which. Four events were counted and
+     * selected by nothing, and each one's own source comment had already made
+     * the argument for a rate: `monte_carlo_conservation` ("what an operator
+     * wants is a rate"), `market_universe_degraded` and
+     * `market_universe_refresh_timeout` ("alertable without a new instrument …
+     * that is the channel R376 built for exactly this"), `engine_input_type_error`
+     * ("kept for whoever can: a 4xx is not otherwise logged here"). Whoever can
+     * was never told. Counting a degrade and alerting on it look identical from
+     * the source and identical from a scrape of a healthy box.
+     *
+     * So the population is derived and the *verdict* is hand-kept: every slug
+     * this tier logs at warning or worse is either selected by a rule or listed
+     * below with the reason it is not. A new event fails this case until
+     * somebody writes one of the two down, which is the decision that was
+     * missing rather than a rule per event.
+     *
+     * Levels are read off the nearest enclosing log call, so an `info` line is
+     * out of scope — it is below the counter's own floor and reaches no rule by
+     * construction. `event=` passed to a constructor (`EngineDegradedError`)
+     * counts as in scope: `install_error_handlers` logs it at warning.
+     */
+    const ROUTINE: Record<string, string> = {
+      // Counted at the caller instead, on a series with a denominator.
+      market_feed_fallback: 'MarketFeedFallingBack, on market_feed_answers_total at the caller',
+      ratelimit_exceeded: 'upstream_requests_total{outcome="rejected"} at the caller',
+      // Alerted as a *state* rather than a rate, which is the right shape for
+      // it — MarketFeedProviderMisbuilt reads market_feed_provider{state="misbuilt"},
+      // so the condition is watched and this event is the line beside it. The
+      // first slug this case caught, and only once it stopped believing a
+      // runbook's `--grep=` counted as a rule.
+      market_feed_provider_unavailable: 'MarketFeedProviderMisbuilt reads the state gauge instead',
+      research_fallback: 'ResearchPrimaryFailing, on research_requests_total{path="primary"}',
+      research_unsynthesized: 'ResearchAnswersUnwritten, on research_requests_total',
+      research_suppressed: 'ResearchAnswersUnwritten — the same unsynthesized outcome',
+      research_truncated: 'ResearchAnswersUnwritten — the same unsynthesized outcome',
+      search_chain_failed: 'ResearchRetrievalFailing, on research_requests_total{outcome="search_failed"}',
+      // The RED trio already answers these, with a route label the event has not got.
+      request_failed: 'HighServerErrorRate — a 5xx is counted as a 5xx',
+      unhandled_error: 'HighServerErrorRate — a 5xx is counted as a 5xx',
+      http_access: 'the access log itself; every request is already in http_requests_total',
+      // Genuinely routine: a bad input, a bad page, a retry that then worked.
+      // A rule on any of these is a channel nobody reads within a fortnight.
+      corpus_truncated: 'a corpus cut to its budget is the budget working',
+      document_extract_failed: 'one unreadable upload; the analyst is told and re-uploads',
+      documents_dropped: 'one unreadable upload; the analyst is told and re-uploads',
+      documents_unreadable: 'one unreadable upload; the analyst is told and re-uploads',
+      xlsx_sheets_unreadable: 'one workbook a reader could not open',
+      xlsx_sheet_index_unreadable: 'one workbook a reader could not open',
+      llm_retry: 'a retry that then succeeded; the ending is what LlmQuotaExhausted reads',
+      pplx_retry: 'a retry that then succeeded',
+      search_retry: 'a retry that then succeeded',
+      search_chain_fallback: 'the chain doing its job; search_chain_failed is the ending',
+      search_cooldown: 'the chain doing its job; search_chain_failed is the ending',
+      llm_truncated: 'one answer over the output cap; the pipeline degrades around it',
+      llm_suppressed: 'one answer a content filter withheld; the pipeline degrades around it',
+      output_schema: 'one answer that did not match its schema; llm_prose_fallback is the pattern',
+      ready: 'the readiness verdict, which registerReadinessMetrics publishes as a gauge',
+      http_client_config: 'a boot-time default, and PythonTierMisconfigured is the pattern for those',
+    };
+
+    const files = pythonSourceFiles(path.join(REPO, 'src/services'));
+    /** slug → the levels its call sites log at. */
+    const events = new Map<string, Set<string>>();
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      const add = (slug: string, level: string) => {
+        const seen = events.get(slug) ?? new Set<string>();
+        seen.add(level);
+        events.set(slug, seen);
+      };
+      for (const m of src.matchAll(/"event":\s*"([a-z_]+)"/g)) {
+        // The nearest log call before the literal. `_log.log(level, …)` is a
+        // dynamic level and is treated as in scope, because it can be warning.
+        const head = src.slice(0, m.index!);
+        const calls = [...head.matchAll(/\b(?:_log|logger|log)\.(\w+)\(/g)];
+        add(m[1]!, calls.length > 0 ? calls[calls.length - 1]![1]! : 'dynamic');
+      }
+      // `EngineDegradedError(…, event="…")` — the one slug that reaches the
+      // formatter through a raise rather than a log call.
+      for (const m of src.matchAll(/\bevent="([a-z_]+)"/g)) add(m[1]!, 'warning');
+    }
+
+    // Non-vacuity in the direction that matters: a scan that found no files, or
+    // a regex that stopped matching the idiom, would pass by having nothing to
+    // classify. Both tiers must be represented.
+    expect(events.size, 'the event scan found nothing to classify').toBeGreaterThan(30);
+    expect([...events.keys()]).toContain('monte_carlo_conservation'); // engine tier
+    expect([...events.keys()]).toContain('openrouter_key'); // ai tier
+
+    const INFO_ONLY = new Set(['info', 'debug']);
+    const degrades = [...events.entries()]
+      .filter(([, levels]) => [...levels].some((l) => !INFO_ONLY.has(l)))
+      .map(([slug]) => slug)
+      .sort();
+
+    // Read off the `event` selectors in the rule expressions, not off the file
+    // as a whole. Every one of these events is also named in some rule's
+    // *runbook* — a `journalctl --grep=` line — so a substring search over
+    // `alerts.yml` reports a slug as alerted on the strength of the prose
+    // telling an operator how to grep for it. That is the same mistake this
+    // whole file exists against, one level up: a check that keeps passing while
+    // nothing selects anything. Verified by removing the selector and watching
+    // this case go red.
+    const selected = new Set(
+      [...RULES.matchAll(/\bevent=~?"([^"]*)"/g)].flatMap((m) => m[1]!.split('|')),
+    );
+    expect(selected.size, 'no rule selects an event label at all').toBeGreaterThan(5);
+
+    const unclassified = degrades.filter(
+      (slug) => !selected.has(slug) && !Object.hasOwn(ROUTINE, slug),
+    );
+    expect(
+      unclassified,
+      'Python-tier degrades that are counted by log_degraded_events_total and reach no rule and no routine verdict',
+    ).toEqual([]);
+
+    // And the other way: a routine verdict for a slug this tier no longer logs
+    // is a note about deleted code, and a slug that is both alerted and listed
+    // routine is two people disagreeing in two files.
+    const stale = Object.keys(ROUTINE).filter((slug) => !degrades.includes(slug));
+    expect(stale, 'routine verdicts for events nothing logs at warning or worse').toEqual([]);
+    const both = Object.keys(ROUTINE).filter((slug) => selected.has(slug));
+    expect(both, 'events a rule selects and the roster also calls routine').toEqual([]);
+  });
+
   it('pages only on the severities it declares', () => {
     const severities = new Set([...RULES.matchAll(/severity: (\w+)/g)].map((m) => m[1]!));
     // Deliberately two. A third level is where "info" alerts come from, and an

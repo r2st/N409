@@ -113,7 +113,22 @@ def test_every_event_a_rule_selects_is_one_this_tier_logs():
     for path in (root / "src/services").rglob("*.py"):
         if "mutants" in path.parts or ".venv" in path.parts:
             continue
-        logged.update(re.findall(r'"event": "([a-z_]+)"', path.read_text()))
+        text = path.read_text()
+        logged.update(re.findall(r'"event": "([a-z_]+)"', text))
+        # The second idiom, and the reason this census had a blind spot exactly
+        # where it mattered most (R450). `EngineDegradedError(..., event="...")`
+        # reaches the formatter through a *raise*: the type exists so that one
+        # refusal is logged at all, `install_error_handlers` reads `event` off
+        # `exc.__cause__` and writes the line, and no `"event": "..."` dict
+        # literal appears anywhere on the path. So the tier's only
+        # report-by-raising degrade read to this scan as an event nothing logs —
+        # and a rule naming it read as a rule watching nothing, which is the one
+        # conclusion this assertion exists to prevent somebody drawing wrongly.
+        logged.update(re.findall(r'\bevent="([a-z_]+)"', text))
     assert logged, "the event scan matched nothing — this assertion would pass vacuously"
+    # Non-vacuity for the second idiom specifically: it has exactly one call
+    # site today, so a regex that stops matching it takes the blind spot back
+    # without anything going red.
+    assert "monte_carlo_conservation" in logged
 
     assert selected <= logged, f"rules select events nothing logs: {sorted(selected - logged)}"
