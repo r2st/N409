@@ -1,4 +1,4 @@
-# The public edge — `n409.aiknol.com`
+# The public edge — `409.doaide.com`
 
 This is the only N409 surface on the internet. Everything behind it binds
 loopback: `ss -tlnp` on the host shows web and valuation on `127.0.0.1:3000` and
@@ -10,12 +10,12 @@ loopback: `ss -tlnp` on the host shows web and valuation on `127.0.0.1:3000` and
   (`/usr/lib/systemd/system/caddy.service`), config `/etc/caddy/Caddyfile`.
   There is **no Docker on this host at all**.
 - That one Caddyfile also serves two unrelated products from the same ports.
-  `n409.aiknol.com.caddy` in this directory is **the n409 site block only**, kept
+  `409.doaide.com.caddy` in this directory is **the n409 site block only**, kept
   here so the routing is reviewable without ssh. Do not install it as a whole
   Caddyfile — that would take the other two sites down. Edit the corresponding
   block in place, or `import` it.
 - **DNS is on Cloudflare and the record is proxied** (orange cloud):
-  `dig +short n409.aiknol.com` returns Cloudflare addresses, not
+  `dig +short 409.doaide.com` returns Cloudflare addresses, not
   204.168.241.124. See the section below — this has consequences.
 
 Everything above was measured on the host on 2026-08-21. What this file said
@@ -79,7 +79,7 @@ address is public, because the grey-clouded sibling publishes it in DNS.
 
 `infra/deploy.sh` section 4d runs `infra/check-caddy.mjs` on the box before it
 restarts anything, and **a difference fails the deploy**. So if you edit the
-`n409.aiknol.com` block in `/etc/caddy/Caddyfile` by hand, make the same edit
+`409.doaide.com` block in `/etc/caddy/Caddyfile` by hand, make the same edit
 here — otherwise the next deploy stops, with the previous release still serving.
 
 It cannot install the way `install-units.sh` does, because the host's Caddyfile
@@ -100,9 +100,9 @@ node infra/check-caddy.mjs --live /etc/caddy/Caddyfile   # 0 match, 1 drift, 2 u
 ## Verify
 
 ```sh
-curl -sSI https://n409.aiknol.com/ | head -n 3            # HTTP/2 200
+curl -sSI https://409.doaide.com/ | head -n 3            # HTTP/2 200
 curl -so /dev/null -w '%{http_code}\n' \
-  https://n409.aiknol.com/scim/v2/ServiceProviderConfig   # 200, not 404
+  https://409.doaide.com/scim/v2/ServiceProviderConfig   # 200, not 404
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy                               # zero-downtime
 journalctl -u caddy --since '5 min ago' | grep -i n409
@@ -112,7 +112,7 @@ To confirm the client IP is resolving correctly, make a request and read it back
 out of the service log — it should be your address, not a Cloudflare one:
 
 ```sh
-curl -s "https://n409.aiknol.com/?probe=$$" >/dev/null
+curl -s "https://409.doaide.com/?probe=$$" >/dev/null
 ssh root@204.168.241.124 \
   "journalctl -u n409-web --since '1 min ago' -o cat | grep -F 'probe=$$'"
 curl -s https://api.ipify.org; echo                        # compare
@@ -120,7 +120,7 @@ curl -s https://api.ipify.org; echo                        # compare
 
 ## DNS
 
-`aiknol.com` is on Cloudflare. The record for `n409` is an A to
+`doaide.com` is on Cloudflare. The record for `409` is an A to
 204.168.241.124, currently **proxied**. Caddy still holds a valid Let's Encrypt
 certificate for the origin, and Cloudflare presents its own at the edge.
 

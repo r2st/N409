@@ -1,7 +1,7 @@
 // Tests for infra/check-caddy.mjs.
 //
 // WHAT THE SCRIPT IS FOR, and therefore what these are really about: the repo
-// carries `infra/caddy/n409.aiknol.com.caddy` and Caddy reads
+// carries `infra/caddy/409.doaide.com.caddy` and Caddy reads
 // `/etc/caddy/Caddyfile`. Every deploy ships the first onto the host and
 // nothing has ever compared it to the second. That is the same shape R88 closed
 // for systemd, where the file the box booted was four weeks behind the file the
@@ -76,7 +76,7 @@ ustradingbot.aiknol.com {
     reverse_proxy localhost:8501
 }
 
-n409.aiknol.com {
+409.doaide.com {
     # SCIM 2.0 provisioning (/scim/v2/*) lives on the valuation service (3001)
     # and is OUTSIDE the web service's /api proxy, so forward it directly.
     handle /scim/v2/* {
@@ -198,10 +198,10 @@ describe('drift in the trusted-proxy list', () => {
 
 describe('drift in the routing', () => {
   it('reports a host that serves no such site at all', () => {
-    const live = LIVE_SHAPE.replace('n409.aiknol.com {', 'n409-staging.aiknol.com {');
+    const live = LIVE_SHAPE.replace('409.doaide.com {', '409-staging.doaide.com {');
     const problems = compareCaddy({ live, repo: REPO });
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('no "n409.aiknol.com" site block');
+    expect(problems[0]).toContain('no "409.doaide.com" site block');
   });
 
   it('reports a dropped /scim/v2 handle', () => {
@@ -225,9 +225,9 @@ describe('drift in the routing', () => {
   // is asserted separately from the deletion above.
   it('reports handles that have swapped order', () => {
     const live = LIVE_SHAPE.replace(
-      /n409\.aiknol\.com \{[\s\S]*?\n\}/,
+      /409\.doaide\.com \{[\s\S]*?\n\}/,
       [
-        'n409.aiknol.com {',
+        '409.doaide.com {',
         '    handle {',
         '        reverse_proxy localhost:3000',
         '    }',
@@ -250,14 +250,14 @@ describe('drift in the routing', () => {
   });
 
   it('reports a directive the host has added', () => {
-    const live = LIVE_SHAPE.replace('n409.aiknol.com {', 'n409.aiknol.com {\n    encode gzip');
+    const live = LIVE_SHAPE.replace('409.doaide.com {', '409.doaide.com {\n    encode gzip');
     expect(compareCaddy({ live, repo: REPO })[0]).toContain('encode gzip');
   });
 
   // Caddy lets one block answer for several names. Finding the site only when
   // it is alone on the line would report a false drift on a legitimate config.
   it('finds the site in a block that serves several names', () => {
-    const live = LIVE_SHAPE.replace('n409.aiknol.com {', 'www.n409.aiknol.com, n409.aiknol.com {');
+    const live = LIVE_SHAPE.replace('409.doaide.com {', 'www.409.doaide.com, 409.doaide.com {');
     expect(compareCaddy({ live, repo: REPO })).toEqual([]);
   });
 });
@@ -332,7 +332,7 @@ describe('finding this checkout’s file', () => {
   // what makes the no-argument invocation in deploy.sh check the file a
   // reviewer reads rather than one that happens to be lying around.
   it('resolves the real infra/caddy directory to the committed site block', () => {
-    expect(resolveRepoFile(CADDY_DIR)).toBe(path.join(CADDY_DIR, 'n409.aiknol.com.caddy'));
+    expect(resolveRepoFile(CADDY_DIR)).toBe(path.join(CADDY_DIR, '409.doaide.com.caddy'));
   });
 });
 
@@ -381,7 +381,7 @@ describe('the command deploy.sh runs', () => {
     const live = path.join(work, 'Caddyfile');
     const repo = path.join(work, 'site.caddy');
     writeFileSync(live, LIVE_SHAPE);
-    writeFileSync(repo, 'n409.aiknol.com {\n\treverse_proxy localhost:3000\n');
+    writeFileSync(repo, '409.doaide.com {\n\treverse_proxy localhost:3000\n');
     const r = run(['--live', live, '--repo', repo]);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('unclosed');
@@ -393,7 +393,7 @@ describe('the command deploy.sh runs', () => {
   it('defaults --repo to the committed site block', () => {
     const live = path.join(work, 'Caddyfile');
     writeFileSync(live, LIVE_SHAPE);
-    expect(run(['--live', live]).stderr).toContain('n409.aiknol.com.caddy');
+    expect(run(['--live', live]).stderr).toContain('409.doaide.com.caddy');
   });
 
   it('reports every difference at once rather than the first', () => {
@@ -420,7 +420,7 @@ describe('what the checked-in files themselves say', () => {
   // directly so the failure names the cause.
   it('the committed site block parses and names the deployed host', () => {
     const site = repoSite(REPO);
-    expect(site.name).toBe('n409.aiknol.com');
+    expect(site.name).toBe('409.doaide.com');
     expect(globalTrustedProxies(REPO)).not.toBeNull();
   });
 
@@ -452,8 +452,8 @@ describe('a host that is not this host', () => {
   // renaming the site moves the check with it instead of leaving it looking for
   // a block nobody serves any more.
   it('follows a renamed site rather than looking for the old name', () => {
-    const repo = REPO.replace('n409.aiknol.com {', 'valuations.example.com {');
-    const matching = LIVE_SHAPE.replace('n409.aiknol.com {', 'valuations.example.com {');
+    const repo = REPO.replace('409.doaide.com {', 'valuations.example.com {');
+    const matching = LIVE_SHAPE.replace('409.doaide.com {', 'valuations.example.com {');
     expect(compareCaddy({ live: matching, repo })).toEqual([]);
     expect(compareCaddy({ live: LIVE_SHAPE, repo })[0]).toContain('no "valuations.example.com" site block');
   });

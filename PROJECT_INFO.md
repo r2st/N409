@@ -24,8 +24,8 @@
 |---|---|
 | Host | Hetzner `204.168.241.124` — **a different box** from the `89.167.8.178` estate |
 | Code | `/opt/N409` — rsync-based deploy |
-| Public URL | https://n409.aiknol.com |
-| Reverse proxy | Caddy — `infra/caddy/n409.aiknol.com.caddy` (auto-TLS, gzip/zstd, `X-Real-IP`) |
+| Public URL | https://409.doaide.com |
+| Reverse proxy | Caddy — `infra/caddy/409.doaide.com.caddy` (auto-TLS, gzip/zstd, `X-Real-IP`) |
 | Ports | `3000` web · `3001` valuation API |
 | Process model | systemd units — see `infra/systemd` |
 
@@ -69,5 +69,5 @@ npm run lint && npm run typecheck
 ## Related projects
 
 - [`../USTradingBot`](../USTradingBot) — **same Hetzner box, same SSH key** (`hetzner_ustradingbot`); rotate as one unit
-- The rest of the `*.aiknol.com` estate lives on `89.167.8.178`; N409 is the exception
+- The rest of the `*.aiknol.com` estate lives on `89.167.8.178`; N409 (now `409.doaide.com`) is the exception
 - `~/projects/PROJECT-INDEX.md`, `~/projects/keys/KEYS_INDEX.md` — estate-wide index

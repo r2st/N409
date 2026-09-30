@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest';
 import { CLOUDFLARE_RANGES } from '../src/clientIp.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const CADDY = path.resolve(here, '../../../../infra/caddy/n409.aiknol.com.caddy');
+const CADDY = path.resolve(here, '../../../../infra/caddy/409.doaide.com.caddy');
 
 /** The `trusted_proxies static …` arguments, as Caddy would read them. */
 function caddyTrustedProxies(): string[] {

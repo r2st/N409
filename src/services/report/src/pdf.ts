@@ -2434,11 +2434,11 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
      */
     info: {
       Title: input.title,
-      Author: input.branding?.partner_name ?? 'N409',
+      Author: input.branding?.partner_name ?? 'DoAide N409',
       Subject: `${input.company_name} — ${input.title}`,
       Keywords: (input.keywords ?? [input.company_name, input.title, 'valuation']).join(', '),
-      Creator: 'N409',
-      Producer: 'N409 report service',
+      Creator: 'DoAide N409',
+      Producer: 'DoAide N409 report service',
       ...(input.generated_at ? { CreationDate: input.generated_at } : {}),
     },
     lang: 'en-US',

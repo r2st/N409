@@ -21,7 +21,7 @@ interface SetupResponse {
 /** A one-time-display list of backup codes, downloadable as a text file. */
 function BackupCodes({ codes }: { codes: string[] }) {
   const download = () => {
-    const blob = new Blob([`N409 two-factor backup codes\n\n${codes.join('\n')}\n`], {
+    const blob = new Blob([`DoAide N409 two-factor backup codes\n\n${codes.join('\n')}\n`], {
       type: 'text/plain',
     });
     const url = URL.createObjectURL(blob);

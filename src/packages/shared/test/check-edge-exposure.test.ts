@@ -49,7 +49,7 @@ const CADDYFILE = `{
 	file_server
 }
 
-n409.aiknol.com {
+409.doaide.com {
 	handle {
 		reverse_proxy localhost:3000
 	}
@@ -64,7 +64,7 @@ const RANGES = ['104.16.0.0/13', '172.64.0.0/13', '131.0.72.0/22'];
 
 describe('reading the host’s config', () => {
   it('names every site it serves', () => {
-    expect(sitesIn(CADDYFILE)).toEqual(['n409.aiknol.com', 'ustradingbot.aiknol.com']);
+    expect(sitesIn(CADDYFILE)).toEqual(['409.doaide.com', 'ustradingbot.aiknol.com']);
   });
 
   // `:80 { … }` is a port, not a hostname. Resolving it would produce a DNS
@@ -143,7 +143,7 @@ describe('the verdict', () => {
   it('is safe when every site is behind Cloudflare', () => {
     const result = assessEdge({
       sites: [
-        site('n409.aiknol.com', '104.21.13.34', '172.67.197.163'),
+        site('409.doaide.com', '104.21.13.34', '172.67.197.163'),
         site('talentping.aiknol.com', '104.21.13.34'),
       ],
       ranges: RANGES,
@@ -156,7 +156,7 @@ describe('the verdict', () => {
   // The real state of the box, and the finding this script exists for.
   it('is not safe while one site resolves to the origin', () => {
     const result = assessEdge({
-      sites: [site('n409.aiknol.com', '104.21.13.34'), site('ustradingbot.aiknol.com', '204.168.241.124')],
+      sites: [site('409.doaide.com', '104.21.13.34'), site('ustradingbot.aiknol.com', '204.168.241.124')],
       ranges: RANGES,
     });
     expect(result.safeToLock).toBe(false);
@@ -184,7 +184,7 @@ describe('the verdict', () => {
   it('refuses to call a site it could not resolve safe', () => {
     const result = assessEdge({
       sites: [
-        site('n409.aiknol.com', '104.21.13.34'),
+        site('409.doaide.com', '104.21.13.34'),
         { host: 'gone.example.com', addresses: [], error: 'ENOTFOUND' },
       ],
       ranges: RANGES,
@@ -203,7 +203,7 @@ describe('the verdict', () => {
   // Likewise from the other side: no ranges means nothing can match, so every
   // site lands in `direct` rather than quietly passing.
   it('calls everything direct when there are no ranges to match', () => {
-    const result = assessEdge({ sites: [site('n409.aiknol.com', '104.21.13.34')], ranges: [] });
+    const result = assessEdge({ sites: [site('409.doaide.com', '104.21.13.34')], ranges: [] });
     expect(result.safeToLock).toBe(false);
     expect(result.direct).toHaveLength(1);
   });
@@ -241,7 +241,7 @@ describe('probing the origin directly', () => {
 
   it('reports the status the origin answered with', async () => {
     const https = fakeHttps('ok');
-    await expect(servedDirectly('n409.aiknol.com', '203.0.113.1', https)).resolves.toBe(200);
+    await expect(servedDirectly('409.doaide.com', '203.0.113.1', https)).resolves.toBe(200);
   });
 
   // The two things `fetch` could not do, and the reason this uses node:https.
@@ -249,9 +249,9 @@ describe('probing the origin directly', () => {
   // answered by whichever site Caddy defaults to — a different question.
   it('names the site in both SNI and Host', async () => {
     const https = fakeHttps('ok');
-    await servedDirectly('n409.aiknol.com', '203.0.113.1', https);
-    expect(https.calls[0].servername).toBe('n409.aiknol.com');
-    expect((https.calls[0].headers as Record<string, string>).Host).toBe('n409.aiknol.com');
+    await servedDirectly('409.doaide.com', '203.0.113.1', https);
+    expect(https.calls[0].servername).toBe('409.doaide.com');
+    expect((https.calls[0].headers as Record<string, string>).Host).toBe('409.doaide.com');
     // Dialled by address, so the certificate is for a name we did not ask for.
     expect(https.calls[0].host).toBe('203.0.113.1');
     expect(https.calls[0].rejectUnauthorized).toBe(false);
@@ -261,11 +261,11 @@ describe('probing the origin directly', () => {
   // origin looks like — so it has to be distinguishable from a 200 rather than
   // throwing.
   it('reports null when the origin refuses', async () => {
-    await expect(servedDirectly('n409.aiknol.com', '203.0.113.1', fakeHttps('error'))).resolves.toBeNull();
+    await expect(servedDirectly('409.doaide.com', '203.0.113.1', fakeHttps('error'))).resolves.toBeNull();
   });
 
   it('reports null rather than hanging when the origin never answers', async () => {
-    await expect(servedDirectly('n409.aiknol.com', '203.0.113.1', fakeHttps('timeout'))).resolves.toBeNull();
+    await expect(servedDirectly('409.doaide.com', '203.0.113.1', fakeHttps('timeout'))).resolves.toBeNull();
   });
 });
 
@@ -306,7 +306,7 @@ describe('the command', () => {
   // depending on the network agreeing.
   it('exits 1 and names what would break', () => {
     const f = path.join(work, 'Caddyfile');
-    writeFileSync(f, CADDYFILE.replace(/n409\.aiknol\.com|ustradingbot\.aiknol\.com/g, 'nx.invalid'));
+    writeFileSync(f, CADDYFILE.replace(/409\.doaide\.com|ustradingbot\.aiknol\.com/g, 'nx.invalid'));
     const r = run(['--caddyfile', f]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('NOT safe');
@@ -328,7 +328,7 @@ describe('what the documentation says about it', () => {
   // a false premise in an infrastructure doc is worse than a missing one,
   // because it is the thing somebody acts on.
   it('no longer claims every site on the host is proxied', () => {
-    for (const f of ['infra/caddy/README.md', 'infra/caddy/n409.aiknol.com.caddy']) {
+    for (const f of ['infra/caddy/README.md', 'infra/caddy/409.doaide.com.caddy']) {
       const text = readFileSync(path.join(repoRoot, f), 'utf8');
       expect(text).not.toMatch(/Every site on this host is fronted by Cloudflare/i);
       expect(text).not.toMatch(/all three sites on this box are fronted by Cloudflare/i);

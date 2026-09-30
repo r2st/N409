@@ -306,7 +306,7 @@ describe('trustedProxies', () => {
 
 // The hop that was missing in production.
 //
-// n409.aiknol.com resolves to Cloudflare, not to the origin — the A record is
+// 409.doaide.com resolves to Cloudflare, not to the origin — the A record is
 // proxied, which infra/caddy/README.md says it must not be and which nothing
 // ever checked. So the real chain is `client → Cloudflare edge → Caddy → web`,
 // proxy-addr stopped at the Cloudflare address because no entry named it, and

@@ -147,8 +147,8 @@ key and restart; no code changes.
 
    | Endpoint | Events |
    |---|---|
-   | `https://n409.aiknol.com/api/v1/stripe/webhook` | `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` |
-   | `https://n409.aiknol.com/api/v1/billing/webhook` | `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.trial_will_end`, `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed` |
+   | `https://409.doaide.com/api/v1/stripe/webhook` | `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` |
+   | `https://409.doaide.com/api/v1/billing/webhook` | `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.trial_will_end`, `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed` |
 
    The two `async_payment_*` events are not optional. Any delayed-notification
    method — ACH direct debit, SEPA, Bacs, boleto, OXXO, Konbini — completes its
@@ -199,7 +199,7 @@ key and restart; no code changes.
 
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" \
-     https://n409.aiknol.com/api/v1/valuations/$VID/payments/quote
+     https://409.doaide.com/api/v1/valuations/$VID/payments/quote
    ```
 
 6. **Send a test event** from the Stripe dashboard to each endpoint and confirm a

@@ -23,7 +23,7 @@ const FULL: AnalyticsConfig = {
  * browser this code ever runs in, and a fixture that pretends otherwise would
  * be exercising the refusal path while claiming to test the loading one.
  */
-function fixtures(href = 'https://n409.ai/pricing'): {
+function fixtures(href = 'https://409.doaide.com/pricing'): {
   win: Window & Record<string, unknown>;
   doc: Document;
 } {

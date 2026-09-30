@@ -22,7 +22,7 @@ and should be treated as **unused** until a migration is actually planned.
 - Host: a Hetzner VPS (Ubuntu), code at `/opt/N409`, uploaded documents at
   `/opt/n409-data/documents` (outside the deploy tree). Native services — no
   Docker on the server. `docker-compose.yml` is for **local dev only**.
-- Caddy terminates TLS for `n409.aiknol.com` and reverse-proxies to `:3000`
+- Caddy terminates TLS for `409.doaide.com` and reverse-proxies to `:3000`
   (`infra/caddy/`). Only the web service faces the internet.
 - Request flow: browser → Caddy → `web` → `valuation`, and `valuation` →
   `ai` / `engine-wrapper` / `report`. The last of those three was aspirational
@@ -264,7 +264,7 @@ The single most important production control, and the reason this doc exists:
 
 ## Cloudflare sits in front of the origin
 
-`dig +short n409.aiknol.com` returns Cloudflare addresses, not 204.168.241.124:
+`dig +short 409.doaide.com` returns Cloudflare addresses, not 204.168.241.124:
 the DNS record is **proxied**. So the request chain is
 `client → Cloudflare edge → Caddy → web`, and the app has to be told that the
 edge is a hop, or it attributes every request on the internet to a Cloudflare
@@ -302,7 +302,7 @@ leave the confirming to a human; R89 ran it and the answer was no:
 
 ```
 $ node infra/check-edge-exposure.mjs --origin 204.168.241.124 --probe
-  proxied  n409.aiknol.com (104.21.13.34 172.67.197.163)
+  proxied  409.doaide.com (104.21.13.34 172.67.197.163)
   proxied  talentping.aiknol.com (172.67.197.163 104.21.13.34)
   DIRECT   ustradingbot.aiknol.com → 204.168.241.124
   NOT safe to restrict 80/443 to Cloudflare.
@@ -360,7 +360,7 @@ DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
 MFA_ENCRYPTION_KEY=<openssl rand -hex 32>       # TOTP seeds; falls back to the above
 # CONNECTION_ENCRYPTION_KEY=...                 # optional: separates integration
 #                                               # credentials from the two above
-PUBLIC_BASE_URL=https://n409.aiknol.com         # emailed links (reset, board sign)
+PUBLIC_BASE_URL=https://409.doaide.com           # emailed links (reset, board sign)
 BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the deploy
 # On the ai and engine-wrapper units (set in the unit files, not .env):
 #   APP_ENV=production
@@ -479,7 +479,7 @@ SMTP_HOST=smtp.sendgrid.net
 SMTP_PORT=587
 SMTP_USER=apikey                                # literal string, not the key
 SMTP_PASS=<SendGrid API key, SG.…>              # the key goes here
-SMTP_FROM=N409 Valuations <no-reply@n409.aiknol.com>
+SMTP_FROM=N409 Valuations <no-reply@409.doaide.com>
 ```
 
 Two failure modes that look like "email is broken" but are config, not code:

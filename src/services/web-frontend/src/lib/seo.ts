@@ -19,7 +19,7 @@ export const DEFAULT_OG_IMAGE = '/og-image.png';
 export const OG_IMAGE_WIDTH = 1200;
 export const OG_IMAGE_HEIGHT = 630;
 
-const FALLBACK_ORIGIN = 'https://www.n409.ai';
+const FALLBACK_ORIGIN = 'https://409.doaide.com';
 
 /**
  * Canonical origin with any trailing slash removed.
@@ -114,7 +114,7 @@ export interface Crumb {
 
 /**
  * BreadcrumbList schema. Google renders this in place of the raw URL in a
- * result, so a deep page shows `n409.ai › Compare › N409 vs Carta` rather than
+ * result, so a deep page reads `409.doaide.com › Compare › N409 vs Carta` rather than
  * the full path — and the trail must mirror real, crawlable ancestors, not an
  * invented hierarchy.
  */

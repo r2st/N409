@@ -15,7 +15,7 @@ import { PRODUCTS } from '../src/lib/marketing';
 describe('seo helpers (§24)', () => {
   it('resolves the origin from env with a fallback and no trailing slash', () => {
     expect(siteOrigin({ VITE_SITE_URL: 'https://x.io/' })).toBe('https://x.io');
-    expect(siteOrigin({})).toBe('https://www.n409.ai');
+    expect(siteOrigin({})).toBe('https://409.doaide.com');
   });
 
   it('builds absolute urls without doubling slashes', () => {

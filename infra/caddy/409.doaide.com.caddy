@@ -1,7 +1,7 @@
-# n409.aiknol.com — the public edge. This is the only N409 surface on the
+# 409.doaide.com — the public edge. This is the only N409 surface on the
 # internet; everything behind it binds loopback.
 #
-# WHAT THIS FILE IS. The block below is the `n409.aiknol.com` site block as it
+# WHAT THIS FILE IS. The block below is the `409.doaide.com` site block as it
 # is actually deployed, kept here so the routing is reviewable in the repository
 # rather than only readable over ssh. It is NOT a whole Caddyfile and must not
 # be installed as one: 204.168.241.124 runs a single native Caddy
@@ -64,7 +64,7 @@
 	}
 }
 
-n409.aiknol.com {
+409.doaide.com {
 	# SCIM 2.0 provisioning lives on the valuation service (3001) and is
 	# deliberately outside the web service's /api/v1 proxy: it is its own
 	# protocol with its own auth (bearer tokens issued by

@@ -559,7 +559,7 @@ export interface MetricsEndpointOptions {
  * Mounts the scrape endpoint, gated on a secret.
  *
  * Not public, and the gate is not optional in production. The web service is
- * served straight through Caddy at `n409.aiknol.com` — every path on port 3000
+ * served straight through Caddy at `409.doaide.com` — every path on port 3000
  * is on the open internet — and this body names every route the service has,
  * how often each is hit and how often each fails. That is a map of the estate
  * and a free traffic-analysis feed for anyone who asks.

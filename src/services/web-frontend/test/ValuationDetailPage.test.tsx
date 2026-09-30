@@ -58,7 +58,7 @@ function valuation(over: Partial<Valuation> = {}): Valuation {
   } as Valuation;
 }
 
-const opsUser = { id: 'op', email: 'ops@n409.ai', roles: ['admin'] } as unknown as User;
+const opsUser = { id: 'op', email: 'ops@doaide.com', roles: ['admin'] } as unknown as User;
 const clientUser = {
   id: '01N409USER00000000000000CL',
   email: 'c@acme.com',

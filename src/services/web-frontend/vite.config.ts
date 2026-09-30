@@ -163,7 +163,7 @@ function prerenderPlugin(baseUrl: string): Plugin {
   };
 }
 
-const siteUrl = (process.env.SITE_URL ?? process.env.VITE_SITE_URL ?? 'https://www.n409.ai').trim();
+const siteUrl = (process.env.SITE_URL ?? process.env.VITE_SITE_URL ?? 'https://409.doaide.com').trim();
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), seoFilesPlugin(siteUrl), prerenderPlugin(siteUrl)],

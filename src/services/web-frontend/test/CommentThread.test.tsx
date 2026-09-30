@@ -279,7 +279,7 @@ describe('CommentsSection', () => {
       kind: 'note',
       author_id: 'op',
       author_name: 'Rae Okafor',
-      author_email: 'rae@n409.ai',
+      author_email: 'rae@doaide.com',
       body: 'Client has not sent the 2025 audited accounts yet — chase before review.',
       pinned: false,
     };
@@ -294,7 +294,7 @@ describe('CommentsSection', () => {
         const u = String(url);
         if (u.endsWith('/auth/me'))
           return jsonResponse({
-            user: { id: 'op', email: 'rae@n409.ai', roles: ['admin'], verified: true },
+            user: { id: 'op', email: 'rae@doaide.com', roles: ['admin'], verified: true },
           });
         return handler(u, init as RequestInit | undefined);
       });
@@ -490,7 +490,7 @@ describe('CommentsSection — an author the row cannot name', () => {
     localStorage.setItem('n409.token', '1');
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
       String(url).endsWith('/auth/me')
-        ? jsonResponse({ user: { id: 'op', email: 'rae@n409.ai', roles: ['admin'], verified: true } })
+        ? jsonResponse({ user: { id: 'op', email: 'rae@doaide.com', roles: ['admin'], verified: true } })
         : jsonResponse({ comments: [anon] }),
     );
     renderSection();
@@ -514,7 +514,7 @@ describe('CommentsSection — an author the row cannot name', () => {
     };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
       String(url).endsWith('/auth/me')
-        ? jsonResponse({ user: { id: 'op', email: 'rae@n409.ai', roles: ['admin'], verified: true } })
+        ? jsonResponse({ user: { id: 'op', email: 'rae@doaide.com', roles: ['admin'], verified: true } })
         : jsonResponse({ comments: [note] }),
     );
     renderSection();

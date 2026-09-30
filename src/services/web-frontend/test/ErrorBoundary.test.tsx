@@ -80,8 +80,8 @@ describe('a chunk that would not load', () => {
     };
 
   it.each([
-    ['Chrome', 'Failed to fetch dynamically imported module: https://n409.ai/assets/Dashboard-a1b2c3.js'],
-    ['Firefox', 'error loading dynamically imported module: https://n409.ai/assets/Dashboard-a1b2c3.js'],
+    ['Chrome', 'Failed to fetch dynamically imported module: https://409.doaide.com/assets/Dashboard-a1b2c3.js'],
+    ['Firefox', 'error loading dynamically imported module: https://409.doaide.com/assets/Dashboard-a1b2c3.js'],
     ['Safari', 'Importing a module script failed.'],
   ])('names the real cause on %s instead of "something went wrong"', (_engine, message) => {
     const Thrower = chunkThrower(message);
@@ -131,8 +131,8 @@ describe('a chunk that would not load', () => {
 
 describe('isChunkLoadError', () => {
   it.each([
-    'Failed to fetch dynamically imported module: https://n409.ai/assets/a.js',
-    'error loading dynamically imported module: https://n409.ai/assets/a.js',
+    'Failed to fetch dynamically imported module: https://409.doaide.com/assets/a.js',
+    'error loading dynamically imported module: https://409.doaide.com/assets/a.js',
     'Importing a module script failed.',
     'Loading chunk 42 failed.',
   ])('recognises %s', (message) => expect(isChunkLoadError(new Error(message))).toBe(true));

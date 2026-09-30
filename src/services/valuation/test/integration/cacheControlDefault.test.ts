@@ -12,7 +12,7 @@ const dbUp = await isDbAvailable();
  * The API sent no `Cache-Control` at all, which is not the same thing as "do
  * not cache" to either party downstream of it. The browser writes an `inline`
  * PDF — a company's 409A — into its disk cache, where it stays on whatever
- * machine last opened it. And `n409.aiknol.com` is Cloudflare-proxied, where
+ * machine last opened it. And `409.doaide.com` is Cloudflare-proxied, where
  * what may be stored is decided partly from the file extension: `.pdf`, `.csv`
  * and `.xlsx` are all on Cloudflare's default list, and this service serves all
  * three under a bearer token.

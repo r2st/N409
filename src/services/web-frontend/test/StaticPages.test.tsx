@@ -88,11 +88,11 @@ describe('PrivacyPage', () => {
 
   /** A configured mailbox is the better route — but only once it exists. */
   it('offers the privacy mailbox directly once one is configured', () => {
-    configure({ privacyEmail: 'privacy@n409.ai' });
+    configure({ privacyEmail: 'privacy@doaide.com' });
     show(<PrivacyPage />);
 
-    const link = screen.getByRole('link', { name: 'privacy@n409.ai' });
-    expect(link).toHaveAttribute('href', 'mailto:privacy@n409.ai');
+    const link = screen.getByRole('link', { name: 'privacy@doaide.com' });
+    expect(link).toHaveAttribute('href', 'mailto:privacy@doaide.com');
     expect(screen.queryByRole('link', { name: 'contact form' })).not.toBeInTheDocument();
   });
 });
@@ -110,13 +110,13 @@ describe('ContactPage', () => {
   });
 
   it('adds the partnership mailbox once one is configured', () => {
-    configure({ partnersEmail: 'partners@n409.ai' });
+    configure({ partnersEmail: 'partners@doaide.com' });
     show(<ContactPage />);
 
     expect(screen.getByText(/For partnerships, reach us at/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'partners@n409.ai' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'partners@doaide.com' })).toHaveAttribute(
       'href',
-      'mailto:partners@n409.ai',
+      'mailto:partners@doaide.com',
     );
   });
 

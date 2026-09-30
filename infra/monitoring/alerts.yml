@@ -951,7 +951,7 @@ groups:
         labels: { severity: ticket }
         annotations:
           summary: 'the {{ $labels.source }} queue is {{ $labels.kind }}, per the job monitor'
-          runbook: 'https://n409.aiknol.com/admin/jobs'
+          runbook: 'https://409.doaide.com/admin/jobs'
 
       # The gauge above is the monitor's verdict; this is whether it reached one.
       # A queue with no enabled rule produces no findings, so before R329 it

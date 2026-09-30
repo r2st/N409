@@ -45,7 +45,7 @@ export const DEFAULT_TRUSTED_PROXIES = 'loopback, linklocal, uniquelocal';
 /**
  * Cloudflare's published edge ranges, as the named hop `cloudflare`.
  *
- * WHY THIS IS HERE. n409.aiknol.com resolves to Cloudflare, not to the origin:
+ * WHY THIS IS HERE. 409.doaide.com resolves to Cloudflare, not to the origin:
  * the A record is proxied (orange cloud), which the infra/caddy README says it
  * must not be and which nothing has ever checked. So the chain in production is
  * `client → Cloudflare edge → Caddy → web`, and the edge is a hop this list did

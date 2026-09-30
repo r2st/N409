@@ -38,7 +38,7 @@ import type { HeadInput } from './headTags';
  * Metadata for a single product landing page.
  *
  * Three nodes: Product (the offer), BreadcrumbList (so a result reads
- * `n409.ai › 409A Valuation` instead of a raw path) and WebSite (so the result
+ * `409.doaide.com › 409A Valuation` instead of a raw path) and WebSite (so the result
  * is attributed to the brand). There is no `/products` index page, so the trail
  * is Home → product — inventing an intermediate crumb would point crawlers at a
  * URL that 404s.
@@ -64,7 +64,7 @@ export function productPageMeta(slug: string): HeadInput | undefined {
  * Metadata for a funding-stage landing page.
  *
  * The parent crumb is the 409A product page, which links to every stage — the
- * trail a search result reads is `n409.ai › 409A Valuation › Series B`. The
+ * trail a search result reads is `409.doaide.com › 409A Valuation › Series B`. The
  * stage FAQ is marked up because those questions are the reason the page ranks;
  * the price in the description is derived so it cannot drift from checkout.
  */

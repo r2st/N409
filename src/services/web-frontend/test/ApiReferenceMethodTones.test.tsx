@@ -54,7 +54,7 @@ const VERBS = ['GET', 'POST', 'PUT', 'DELETE'] as const;
 const docs = {
   name: 'Partner API',
   version: 'v1',
-  base_url: 'https://n409.aiknol.com/api/partner/v1',
+  base_url: 'https://409.doaide.com/api/partner/v1',
   authentication: { scheme: 'Bearer', header: 'Authorization', note: 'Use your API key.' },
   rate_limit: { limit: 120, window_seconds: 60, headers: ['x-ratelimit-limit'] },
   endpoints: VERBS.map((method) => ({

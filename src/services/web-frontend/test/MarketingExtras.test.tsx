@@ -144,7 +144,7 @@ describe('firms & partners tier (gap #32)', () => {
   });
 
   it('uses a mailto CTA once a partner address is configured', () => {
-    configure({ partnersEmail: 'partners@n409.ai' });
+    configure({ partnersEmail: 'partners@doaide.com' });
     render(
       <MemoryRouter>
         <PricingPage />
@@ -153,8 +153,8 @@ describe('firms & partners tier (gap #32)', () => {
     const mailto = screen
       .getAllByRole('link', { name: 'Get in touch' })
       .find((el) => el.getAttribute('href')?.startsWith('mailto:'));
-    expect(mailto?.getAttribute('href')).toContain('partners@n409.ai');
-    expect(screen.getByText('partners@n409.ai')).toBeInTheDocument();
+    expect(mailto?.getAttribute('href')).toContain('partners@doaide.com');
+    expect(screen.getByText('partners@doaide.com')).toBeInTheDocument();
   });
 });
 

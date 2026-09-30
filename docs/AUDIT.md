@@ -126,7 +126,7 @@ self-host. (2) Add named-entity redaction (or tokenized placeholders with a loca
 
 ### 🟠 P1 — No security headers / CSP on the served app
 **Files:** `src/services/valuation/src/app.ts` (no `@fastify/helmet`), `src/services/web`
-BFF, `infra/caddy/n409.aiknol.com.caddy` (TLS only, no header hardening).
+BFF, `infra/caddy/409.doaide.com.caddy` (TLS only, no header hardening).
 No `Content-Security-Policy`, `X-Frame-Options`/`frame-ancestors`, `X-Content-Type-Options:
 nosniff`, `Referrer-Policy`, or HSTS max-age tuning. Combined with the JWT living in
 `localStorage` (see F-2), any reflected/stored XSS becomes full account takeover.
@@ -459,7 +459,7 @@ fine for local dev but must **not** carry to prod (ties into the P0). Keep inter
 on an internal docker network only.
 
 ### 🟢 P3 — Caddy sets no security response headers
-**File:** `infra/caddy/n409.aiknol.com.caddy`. Good: auto-TLS, gzip/zstd, `X-Real-IP`. Missing:
+**File:** `infra/caddy/409.doaide.com.caddy`. Good: auto-TLS, gzip/zstd, `X-Real-IP`. Missing:
 HSTS/CSP/`nosniff`/`frame-ancestors` (pairs with F-2/B-1). A `header` block here is the simplest
 place to add them platform-wide.
 

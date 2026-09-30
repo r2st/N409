@@ -379,7 +379,7 @@ export function MarketingFooter() {
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-5 text-xs text-chrome-faint sm:flex-row sm:justify-between">
           {/* Derived, not hardcoded — a stale copyright year is the classic
               "nobody maintains this site" tell for a prospect. */}
-          <span>© {new Date().getFullYear()} N409 Valuations. All rights reserved.</span>
+          <span>© {new Date().getFullYear()} DoAide · N409 Valuations. All rights reserved.</span>
           <div className="flex items-center gap-4">
             {/* Omitted entirely when no profile URLs are configured (siteConfig)
                 — an icon linking to a profile that doesn't exist is worse than

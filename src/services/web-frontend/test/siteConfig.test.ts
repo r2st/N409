@@ -40,8 +40,8 @@ describe('siteConfig — environment-driven marketing links', () => {
   });
 
   it('accepts well-formed addresses and rejects malformed ones', () => {
-    expect(siteConfig({ VITE_PARTNERS_EMAIL: 'partners@n409.ai' }).partnersEmail).toBe('partners@n409.ai');
-    for (const bad of ['partners', 'partners@', '@n409.ai', 'partners@localhost', 'a b@c.io']) {
+    expect(siteConfig({ VITE_PARTNERS_EMAIL: 'partners@doaide.com' }).partnersEmail).toBe('partners@doaide.com');
+    for (const bad of ['partners', 'partners@', '@doaide.com', 'partners@localhost', 'a b@c.io']) {
       expect(siteConfig({ VITE_PARTNERS_EMAIL: bad }).partnersEmail).toBeUndefined();
     }
   });

@@ -15,8 +15,8 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 const OPTIONS = {
   options: [
-    { id: 'r1', email: 'rae@n409.ai', first_name: 'Rae', last_name: 'Okafor' },
-    { id: 'r2', email: 'sam@n409.ai', first_name: null, last_name: null },
+    { id: 'r1', email: 'rae@doaide.com', first_name: 'Rae', last_name: 'Okafor' },
+    { id: 'r2', email: 'sam@doaide.com', first_name: null, last_name: null },
   ],
 };
 
@@ -181,7 +181,7 @@ describe('WorkflowActions', () => {
       render(<WorkflowActions valuation={valuation()} onChanged={vi.fn()} />);
 
       await screen.findByRole('option', { name: 'Rae Okafor' });
-      expect(screen.getByRole('option', { name: 'sam@n409.ai' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'sam@doaide.com' })).toBeInTheDocument();
     });
 
     it('will not post a reassignment that changes nothing', async () => {

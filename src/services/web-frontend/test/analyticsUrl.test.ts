@@ -54,17 +54,17 @@ describe('the browser copy of the sensitive query parameters', () => {
 
 describe('scrubAnalyticsUrl', () => {
   it('blanks a live credential without losing the fact that one was there', () => {
-    expect(scrubAnalyticsUrl('https://n409.ai/reset-password?token=abc123def456')).toBe(
-      'https://n409.ai/reset-password?token=REDACTED',
+    expect(scrubAnalyticsUrl('https://409.doaide.com/reset-password?token=abc123def456')).toBe(
+      'https://409.doaide.com/reset-password?token=REDACTED',
     );
-    expect(scrubAnalyticsUrl('https://n409.ai/auth/google/complete?code=4%2F0Ab&state=xyz')).toBe(
-      'https://n409.ai/auth/google/complete?code=REDACTED&state=REDACTED',
+    expect(scrubAnalyticsUrl('https://409.doaide.com/auth/google/complete?code=4%2F0Ab&state=xyz')).toBe(
+      'https://409.doaide.com/auth/google/complete?code=REDACTED&state=REDACTED',
     );
   });
 
   it('blanks an address handed over in a query string', () => {
-    expect(scrubAnalyticsUrl('https://n409.ai/accept-invite?email=ada%40example.com')).toBe(
-      'https://n409.ai/accept-invite?email=REDACTED',
+    expect(scrubAnalyticsUrl('https://409.doaide.com/accept-invite?email=ada%40example.com')).toBe(
+      'https://409.doaide.com/accept-invite?email=REDACTED',
     );
   });
 
@@ -73,19 +73,19 @@ describe('scrubAnalyticsUrl', () => {
     // Google hand-off links all put the token *after the hash* — deliberately,
     // because a fragment is not sent to the server and never reaches a request
     // log. It is sent to GA4 all the same, inside `page_location`.
-    expect(scrubAnalyticsUrl('https://n409.ai/accept-invite#token=abc123def456')).toBe(
-      'https://n409.ai/accept-invite#token=REDACTED',
+    expect(scrubAnalyticsUrl('https://409.doaide.com/accept-invite#token=abc123def456')).toBe(
+      'https://409.doaide.com/accept-invite#token=REDACTED',
     );
-    expect(scrubAnalyticsUrl('https://n409.ai/auth/google/complete#token=jwt.body.sig')).toBe(
-      'https://n409.ai/auth/google/complete#token=REDACTED',
+    expect(scrubAnalyticsUrl('https://409.doaide.com/auth/google/complete#token=jwt.body.sig')).toBe(
+      'https://409.doaide.com/auth/google/complete#token=REDACTED',
     );
-    expect(scrubAnalyticsUrl('https://n409.ai/verify-email?email=ada%40example.com#token=t')).toBe(
-      'https://n409.ai/verify-email?email=REDACTED#token=REDACTED',
+    expect(scrubAnalyticsUrl('https://409.doaide.com/verify-email?email=ada%40example.com#token=t')).toBe(
+      'https://409.doaide.com/verify-email?email=REDACTED#token=REDACTED',
     );
   });
 
   it('leaves a fragment that is not a parameter list alone', () => {
-    for (const href of ['https://n409.ai/pricing#faq', 'https://n409.ai/blog/x#how-it-works']) {
+    for (const href of ['https://409.doaide.com/pricing#faq', 'https://409.doaide.com/blog/x#how-it-works']) {
       expect(scrubAnalyticsUrl(href), href).toBe(href);
     }
   });
@@ -94,9 +94,9 @@ describe('scrubAnalyticsUrl', () => {
     // Returned unchanged rather than round-tripped through `URL`, so a campaign
     // URL is not silently re-encoded on its way into the report.
     for (const href of [
-      'https://n409.ai/pricing',
-      'https://n409.ai/blog/what-is-a-409a?utm_source=news&utm_medium=email',
-      'https://n409.ai/compare/carta',
+      'https://409.doaide.com/pricing',
+      'https://409.doaide.com/blog/what-is-a-409a?utm_source=news&utm_medium=email',
+      'https://409.doaide.com/compare/carta',
     ]) {
       expect(scrubAnalyticsUrl(href), href).toBe(href);
     }
@@ -114,7 +114,7 @@ describe('injectGa4', () => {
     const dataLayer: unknown[] = [];
     const win = {
       dataLayer,
-      location: { href: 'https://n409.ai/reset-password?token=live-secret' },
+      location: { href: 'https://409.doaide.com/reset-password?token=live-secret' },
     } as unknown as Window;
     const doc = document.implementation.createHTMLDocument('t');
     injectGa4(config, win as never, doc);
@@ -124,7 +124,7 @@ describe('injectGa4', () => {
     expect(configCall).toBeDefined();
     expect(JSON.stringify(configCall)).not.toContain('live-secret');
     expect((configCall as unknown[])[2]).toEqual({
-      page_location: 'https://n409.ai/reset-password?token=REDACTED',
+      page_location: 'https://409.doaide.com/reset-password?token=REDACTED',
     });
   });
 });
@@ -147,19 +147,19 @@ describe('urlCarriesCredential — the containers the scrub cannot reach', () =>
    * precisely where `<Analytics>` is allowed to inject.
    */
   it('sees a credential in the query', () => {
-    expect(urlCarriesCredential('https://n409.ai/reset-password?token=live-secret')).toBe(true);
+    expect(urlCarriesCredential('https://409.doaide.com/reset-password?token=live-secret')).toBe(true);
   });
 
   it('sees a credential in the fragment, which is where these links carry it', () => {
-    expect(urlCarriesCredential('https://n409.ai/intake#token=live-secret')).toBe(true);
-    expect(urlCarriesCredential('https://n409.ai/board/sign#/x?token=live-secret')).toBe(true);
+    expect(urlCarriesCredential('https://409.doaide.com/intake#token=live-secret')).toBe(true);
+    expect(urlCarriesCredential('https://409.doaide.com/board/sign#/x?token=live-secret')).toBe(true);
   });
 
   it('leaves an ordinary marketing URL alone', () => {
     for (const href of [
-      'https://n409.ai/pricing',
-      'https://n409.ai/blog/what-is-a-409a?utm_source=news&utm_medium=email',
-      'https://n409.ai/faq#pricing',
+      'https://409.doaide.com/pricing',
+      'https://409.doaide.com/blog/what-is-a-409a?utm_source=news&utm_medium=email',
+      'https://409.doaide.com/faq#pricing',
     ]) {
       expect(urlCarriesCredential(href), href).toBe(false);
     }
@@ -168,7 +168,7 @@ describe('urlCarriesCredential — the containers the scrub cannot reach', () =>
   it('does not treat an already-blanked parameter as a credential', () => {
     // `?token=` with no value is what a scrub leaves behind. Reading it as a
     // credential would switch analytics off for a URL that has been cleaned.
-    expect(urlCarriesCredential('https://n409.ai/reset-password?token=')).toBe(false);
+    expect(urlCarriesCredential('https://409.doaide.com/reset-password?token=')).toBe(false);
   });
 
   it('assumes the worst about a URL it cannot parse', () => {
@@ -192,7 +192,7 @@ describe('injectAnalytics on a credential-bearing page', () => {
   }
 
   it('loads no container at all while the token is in the address bar', () => {
-    const { win, doc } = fixtures('https://n409.ai/intake#token=live-secret');
+    const { win, doc } = fixtures('https://409.doaide.com/intake#token=live-secret');
     injectAnalytics(config, win, doc);
     expect(doc.querySelector('#n409-gtm')).toBeNull();
     expect(doc.querySelector('#n409-ga4')).toBeNull();
@@ -202,9 +202,9 @@ describe('injectAnalytics on a credential-bearing page', () => {
   it('is a deferral, not a decision: the next clean URL still gets them', () => {
     // No loaded flag is set by the refusal, so the same window can load later —
     // which is what `<Analytics>` re-running on navigation depends on.
-    const { win, doc } = fixtures('https://n409.ai/intake#token=live-secret');
+    const { win, doc } = fixtures('https://409.doaide.com/intake#token=live-secret');
     injectAnalytics(config, win, doc);
-    (win as unknown as { location: { href: string } }).location.href = 'https://n409.ai/pricing';
+    (win as unknown as { location: { href: string } }).location.href = 'https://409.doaide.com/pricing';
     injectAnalytics(config, win, doc);
     expect(doc.querySelector('#n409-gtm')).not.toBeNull();
     expect(doc.querySelector('#n409-ga4')).not.toBeNull();

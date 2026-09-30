@@ -33,7 +33,7 @@ const versions: PromptVersion[] = [
     version: 2,
     system_prompt: 'Extract only.\nJSON only.',
     model: 'openai/gpt-4o-mini',
-    created_by_email: 'ops@n409.ai',
+    created_by_email: 'ops@doaide.com',
     created_at: '2026-07-01T10:00:00Z',
   },
   {

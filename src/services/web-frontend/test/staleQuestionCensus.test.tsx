@@ -217,7 +217,7 @@ describe('a filter change must not leave the previous answer on screen', () => {
       revoked_at: null,
       partner_id: null,
       partner_name: null,
-      created_by_email: 'ops@n409.ai',
+      created_by_email: 'ops@doaide.com',
     };
     const { pending } = holdSecondRequest({ tokens: [token], truncated: false });
     render(
