@@ -135,34 +135,39 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
      * the spine, and the one that keeps the recent history an auditor is
      * asking about.
      */
-    const { rows: reviewTaskPage } = await deps.pool.query(
-      `SELECT * FROM review_tasks WHERE valuation_id = $1
-        ORDER BY created_at DESC LIMIT $2`,
-      [id, EVIDENCE_ROW_LIMIT + 1],
-    );
+    const [
+      { rows: reviewTaskPage },
+      { rows: adminEventPage },
+      { rows: promptVersions },
+      { versions, truncated: versionsTruncated },
+    ] = await Promise.all([
+      deps.pool.query(
+        `SELECT * FROM review_tasks WHERE valuation_id = $1
+          ORDER BY created_at DESC LIMIT $2`,
+        [id, EVIDENCE_ROW_LIMIT + 1],
+      ),
+      deps.pool.query(
+        `SELECT * FROM admin_events WHERE subject_id = $1
+          ORDER BY occurred_at DESC LIMIT $2`,
+        [id, EVIDENCE_ROW_LIMIT + 1],
+      ),
+      deps.pool.query(
+        `SELECT DISTINCT v.id, p.pipeline, v.version, v.system_prompt, v.model, v.created_at
+           FROM ai_prompt_versions v
+           JOIN ai_prompts p ON p.id = v.prompt_id
+           JOIN ai_jobs j ON j.pipeline = p.pipeline AND j.prompt_version = v.version
+           WHERE j.valuation_id = $1
+           ORDER BY p.pipeline, v.version`,
+        [id],
+      ),
+      report
+        ? listVersions(deps.pool, report.id)
+        : Promise.resolve({ versions: [] as Awaited<ReturnType<typeof listVersions>>['versions'], truncated: false }),
+    ]);
     const reviewTasksTruncated = reviewTaskPage.length > EVIDENCE_ROW_LIMIT;
     const reviewTasks = reviewTaskPage.slice(0, EVIDENCE_ROW_LIMIT).reverse();
-    const { rows: adminEventPage } = await deps.pool.query(
-      `SELECT * FROM admin_events WHERE subject_id = $1
-        ORDER BY occurred_at DESC LIMIT $2`,
-      [id, EVIDENCE_ROW_LIMIT + 1],
-    );
     const adminEventsTruncated = adminEventPage.length > EVIDENCE_ROW_LIMIT;
     const adminEvents = adminEventPage.slice(0, EVIDENCE_ROW_LIMIT).reverse();
-    // Provenance: the exact prompt versions the valuation's AI runs used.
-    const { rows: promptVersions } = await deps.pool.query(
-      `SELECT DISTINCT v.id, p.pipeline, v.version, v.system_prompt, v.model, v.created_at
-         FROM ai_prompt_versions v
-         JOIN ai_prompts p ON p.id = v.prompt_id
-         JOIN ai_jobs j ON j.pipeline = p.pipeline AND j.prompt_version = v.version
-         WHERE j.valuation_id = $1
-         ORDER BY p.pipeline, v.version`,
-      [id],
-    );
-
-    const { versions, truncated: versionsTruncated } = report
-      ? await listVersions(deps.pool, report.id)
-      : { versions: [], truncated: false };
     // The most recent rendered PDF is the deliverable an auditor wants.
     let renderedPdf: { name: string; data: Buffer } | null = null;
     const latestRendered = versions.find((v) => v.has_pdf);

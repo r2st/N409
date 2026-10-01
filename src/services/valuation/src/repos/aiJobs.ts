@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { PIPELINE_EVENT_TYPES, type AiPipeline } from '../domain/pipeline.js';
-import { recordEvents, type EventActor } from '../events/record.js';
+import { recordEvent, recordEvents, type EventActor } from '../events/record.js';
 
 export interface AiJobRow {
   id: string;

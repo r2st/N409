@@ -344,14 +344,17 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
   // The caller's current subscription, usage and invoices.
   app.get('/api/v1/me/subscription', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    const sub = await findActiveSubscription(deps.pool, principal.id);
+    const [sub, invoicePage, stripeCustomerId] = await Promise.all([
+      findActiveSubscription(deps.pool, principal.id),
+      listInvoicesForUser(deps.pool, principal.id),
+      findStripeCustomerId(deps.pool, principal.id),
+    ]);
     // The plan this subscription is *on*, not the one still on sale. A tier
     // retired from the catalogue leaves its subscribers where they are, and
     // looking theirs up through `findPlan` — which filters `active = true` —
     // returned null, which `usageView` reads as *unlimited*. See
     // findPlanForSubscription.
     const plan = sub ? await findPlanForSubscription(deps.pool, sub.plan_tier) : null;
-    const invoicePage = await listInvoicesForUser(deps.pool, principal.id);
     const usage = sub
       ? usageView({ valuation_limit: plan?.valuation_limit ?? null, valuations_used: sub.valuations_used })
       : null;
@@ -377,8 +380,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       invoice_page_limit: INVOICE_PAGE_LIMIT,
       // Drives the "Manage subscription" control: a customer record has to
       // exist before the portal has anything to open.
-      portal_available:
-        Boolean(deps.stripeSecretKey) && (await findStripeCustomerId(deps.pool, principal.id)) !== null,
+      portal_available: Boolean(deps.stripeSecretKey) && stripeCustomerId !== null,
     };
   });
 
