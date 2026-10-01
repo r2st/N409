@@ -377,13 +377,17 @@ export function MarketingFooter() {
       </div>
       <div className="border-t border-chrome-800">
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-5 text-xs text-chrome-faint sm:flex-row sm:justify-between">
-          {/* Derived, not hardcoded — a stale copyright year is the classic
-              "nobody maintains this site" tell for a prospect. */}
-          <span>© {new Date().getFullYear()} DoAide 409A Valuations. All rights reserved.</span>
+          <div className="flex flex-col items-center gap-3 sm:items-start">
+            <nav className="flex flex-wrap justify-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-[0.14em] sm:justify-start" aria-label="DoAide products">
+              <a href="https://desk.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">Desk</a>
+              <a href="https://herald.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">Herald</a>
+              <span className="text-brass-400">409A</span>
+              <a href="https://job.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">AutoApply</a>
+              <a href="https://homenex.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">Realty</a>
+            </nav>
+            <span>© {new Date().getFullYear()} <a href="https://doaide.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-chrome-fg">DoAide</a> · AI tools for small businesses</span>
+          </div>
           <div className="flex items-center gap-4">
-            {/* Omitted entirely when no profile URLs are configured (siteConfig)
-                — an icon linking to a profile that doesn't exist is worse than
-                no icon. */}
             {socialLinks.length > 0 && (
               <nav className="flex items-center gap-3" aria-label="Social media">
                 {socialLinks.map((s) => (
