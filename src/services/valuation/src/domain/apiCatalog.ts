@@ -730,7 +730,7 @@ export function buildClientOpenApiDocument(input: ClientOpenApiInput): Record<st
   return {
     openapi: '3.1.0',
     info: {
-      title: 'N409 Client API',
+      title: 'DoAide 409A Client API',
       version: input.version,
       description:
         'Every endpoint the web application and the firm workspace call. Generated from the route ' +

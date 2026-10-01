@@ -9,7 +9,7 @@ import type { HeadInput } from './headTags';
  * Graph tag is injected by React after the bundle executes. Search engines cope
  * with that; **social crawlers do not**. Slack, LinkedIn, X, Facebook, WhatsApp
  * and iMessage fetch the raw HTML and never run scripts — so before this, every
- * marketing link shared anywhere rendered as a bare "N409 · Valuations" with no
+ * marketing link shared anywhere rendered as a bare "DoAide 409A · Valuations" with no
  * description and no image. For a site whose primary distribution is founders
  * passing links to each other, that is a silent conversion leak.
  *

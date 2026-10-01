@@ -407,7 +407,7 @@ export function ValuationWorkspace() {
   const error = failure && failure.forId === id ? failure.message : null;
 
   /*
-   * "Cap Table · N409" is the same title on every valuation an analyst has
+   * "Cap Table · DoAide 409A" is the same title on every valuation an analyst has
    * open. The company name is the only thing that tells the tabs apart, and it
    * is not known until the aggregate lands — hence a detail registered from
    * here rather than a wider registry entry. Above the early returns because it

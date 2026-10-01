@@ -355,9 +355,9 @@ export interface TransactionalEmail {
 export function passwordResetEmail(link: string): TransactionalEmail {
   return {
     templateKey: 'password_reset',
-    subject: 'Reset your N409 password',
+    subject: 'Reset your DoAide 409A password',
     body:
-      `We received a request to reset the password for your N409 account.\n\n` +
+      `We received a request to reset the password for your DoAide 409A account.\n\n` +
       `Use this link within the next hour to choose a new password:\n\n${link}\n\n` +
       `If you didn't request this, you can safely ignore this email — your password is unchanged.`,
   };
@@ -366,20 +366,20 @@ export function passwordResetEmail(link: string): TransactionalEmail {
 export function emailVerificationEmail(link: string): TransactionalEmail {
   return {
     templateKey: 'email_verification',
-    subject: 'Verify your N409 email address',
+    subject: 'Verify your DoAide 409A email address',
     body:
-      `Welcome to N409. Please confirm this is your email address so we can secure your account.\n\n` +
+      `Welcome to DoAide 409A. Please confirm this is your email address so we can secure your account.\n\n` +
       `Use this link within the next 24 hours to verify:\n\n${link}\n\n` +
-      `If you didn't create an N409 account, you can safely ignore this email.`,
+      `If you didn't create a DoAide 409A account, you can safely ignore this email.`,
   };
 }
 
 export function invitationEmail(link: string, invitedByEmail: string): TransactionalEmail {
   return {
     templateKey: 'user_invite',
-    subject: "You've been invited to N409",
+    subject: "You've been invited to DoAide 409A",
     body:
-      `${invitedByEmail} invited you to the N409 valuations workspace.\n\n` +
+      `${invitedByEmail} invited you to the DoAide 409A valuations workspace.\n\n` +
       `Use this link within the next 7 days to set your password and sign in:\n\n${link}\n\n` +
       `If you weren't expecting this invitation, you can ignore this email.`,
   };

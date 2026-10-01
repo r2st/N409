@@ -102,7 +102,7 @@ export function partnerSegmentPageMeta(slug: string): HeadInput | undefined {
   const path = `/partners/${segment.slug}`;
   return {
     path,
-    title: `Partner with N409 — ${segment.name}`,
+    title: `Partner with DoAide 409A — ${segment.name}`,
     description: segment.searchBlurb,
     jsonLd: [
       faqJsonLd(segment.faq),
@@ -125,7 +125,7 @@ export function comparePageMeta(slug: string): HeadInput | undefined {
   const comparison = comparisonBySlug(slug);
   if (!comparison) return undefined;
   const path = `/compare/${comparison.slug}`;
-  const title = `N409 vs ${comparison.competitor}`;
+  const title = `DoAide 409A vs ${comparison.competitor}`;
   return {
     path,
     title,

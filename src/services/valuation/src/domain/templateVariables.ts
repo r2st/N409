@@ -58,7 +58,7 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
     // partner having its own email templates. Both send paths brand a partner
     // engagement as its partner, so that is what this now says.
     description: 'The sending brand — the partner firm on a partner engagement, the platform otherwise.',
-    sample: 'N409',
+    sample: 'DoAide 409A',
   },
   {
     name: 'support_email',

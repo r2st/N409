@@ -586,7 +586,7 @@ export function registerPartnerApiRoutes(
       response: '{ name, version, base_url, authentication, rate_limit, endpoints[] }',
     },
     async () => ({
-      name: 'N409 Partner API',
+      name: 'DoAide 409A Partner API',
       version: 'v1',
       base_url: PARTNER_API_PREFIX,
       authentication: {
@@ -633,7 +633,7 @@ export function registerPartnerApiRoutes(
       const document = buildOpenApiDocument({
         endpoints: PARTNER_API_ENDPOINTS,
         schemas: PARTNER_API_SCHEMAS,
-        title: 'N409 Partner API',
+        title: 'DoAide 409A Partner API',
         version: '1.0.0',
         serverUrl: PARTNER_API_PREFIX,
         rateLimit: {

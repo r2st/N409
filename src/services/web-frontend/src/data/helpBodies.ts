@@ -101,7 +101,7 @@ Click **New valuation** in the sidebar, or use the guided onboarding flow the fi
 
 ## What happens next
 
-The valuation is created in the **pending** state and appears on your dashboard. From there you upload documents, our analysts (and [AI agents](/help/ai-agents-overview)) extract the data, and the engagement moves through its [lifecycle](/help/engagement-overview). You'll get an email at every milestone.
+The valuation is created in the **pending** state and appears on your dashboard. From there you upload documents, our analysts (and [AI digital robots](/help/ai-agents-overview)) extract the data, and the engagement moves through its [lifecycle](/help/engagement-overview). You'll get an email at every milestone.
 
 Have your **cap table**, **latest financials**, **projections** and **articles of incorporation** ready — the more you provide up front, the faster the first draft.`,
 
@@ -224,11 +224,11 @@ Depending on your stage we apply a **revenue multiple** or an **EBITDA multiple*
 
 ## Choosing good comps
 
-Strong comps share your **industry, business model, growth rate and stage**. The [AI agents](/help/ai-agents-overview) suggest a peer set from your business overview, which analysts then refine. A tight, well-justified comp set is far more defensible than a broad one.`,
+Strong comps share your **industry, business model, growth rate and stage**. The [AI digital robots](/help/ai-agents-overview) suggest a peer set from your business overview, which analysts then refine. A tight, well-justified comp set is far more defensible than a broad one.`,
 
   'financial-data-overview': `# Financial data and the model
 
-The financial model turns your company's numbers into engine inputs. You can enter it by hand on the **Model** tab, or let the [AI agents](/help/ai-agents-overview) extract it from documents you upload.
+The financial model turns your company's numbers into engine inputs. You can enter it by hand on the **Model** tab, or let the [AI digital robots](/help/ai-agents-overview) extract it from documents you upload.
 
 ## Statements to provide
 

@@ -21,7 +21,7 @@ export function CompareHubPage() {
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-ink-600">
           Not all 409A providers work the same way. The market splits into five models, each with a different
-          trade-off between speed, transparency, and cost. Here’s how they compare — and where N409 fits.
+          trade-off between speed, transparency, and cost. Here’s how they compare — and where DoAide 409A fits.
         </p>
 
         {/* Categories */}
@@ -38,7 +38,7 @@ export function CompareHubPage() {
                         to={`/compare/${p.slug}`}
                         className="rounded-full border border-bond-200 bg-bond-50 px-3 py-1 text-xs font-semibold text-bond-700 hover:bg-bond-100"
                       >
-                        N409 vs {p.name} →
+                        DoAide 409A vs {p.name} →
                       </Link>
                     ) : (
                       <span
@@ -81,7 +81,7 @@ export function CompareHubPage() {
       {/* CTA */}
       <section className="ledger-grid border-t border-chrome-800 bg-chrome-900 text-chrome-fg">
         <div className="mx-auto max-w-4xl px-5 py-16 text-center">
-          <h2 className="font-display text-3xl font-semibold">See how N409 stacks up</h2>
+          <h2 className="font-display text-3xl font-semibold">See how DoAide 409A stacks up</h2>
           <p className="mx-auto mt-3 max-w-xl text-sm text-chrome-dim">
             AI-assisted intake, a transparent engine, credentialed analyst review, and per-report pricing
             across 13 report types.

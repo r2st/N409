@@ -136,7 +136,7 @@ function coverFormatWarning(url: string | null): string | null {
   if (!url) return null;
   const path = url.split(/[?#]/)[0]!.toLowerCase();
   if (!path.endsWith('.svg') && !path.endsWith('.svgz')) return null;
-  return 'Report covers can only draw a PNG or JPEG, so an SVG will appear in the app but not on your reports — those will fall back to the N409 mark. Point this at a PNG to brand both.';
+  return 'Report covers can only draw a PNG or JPEG, so an SVG will appear in the app but not on your reports — those will fall back to the DoAide 409A mark. Point this at a PNG to brand both.';
 }
 
 /** Read by the validator on the renders before the settings have loaded. */

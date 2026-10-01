@@ -94,7 +94,7 @@ export function MarketingHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-paper-300 bg-paper-50/95 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
-        <Link to="/" aria-label="N409 home">
+        <Link to="/" aria-label="DoAide 409A home">
           <Wordmark />
         </Link>
 
@@ -294,7 +294,7 @@ export function MarketingFooter() {
             </Link>
             {COMPARISONS.map((c) => (
               <Link key={c.slug} to={`/compare/${c.slug}`} className="hover:text-chrome-fg">
-                N409 vs {c.competitor}
+                DoAide 409A vs {c.competitor}
               </Link>
             ))}
           </div>
@@ -379,7 +379,7 @@ export function MarketingFooter() {
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-5 text-xs text-chrome-faint sm:flex-row sm:justify-between">
           {/* Derived, not hardcoded — a stale copyright year is the classic
               "nobody maintains this site" tell for a prospect. */}
-          <span>© {new Date().getFullYear()} DoAide · N409 Valuations. All rights reserved.</span>
+          <span>© {new Date().getFullYear()} DoAide 409A Valuations. All rights reserved.</span>
           <div className="flex items-center gap-4">
             {/* Omitted entirely when no profile URLs are configured (siteConfig)
                 — an icon linking to a profile that doesn't exist is worse than

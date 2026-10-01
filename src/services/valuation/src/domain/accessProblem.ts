@@ -60,7 +60,7 @@ interface AccessCopy {
  */
 const ACCESS: Readonly<Record<AccessKind, AccessCopy>> = {
   ops: {
-    because: 'it is restricted to N409 operations staff',
+    because: 'it is restricted to DoAide 409A operations staff',
     remedy: 'Your account holds no operations role — ask an administrator to grant one.',
   },
   'user-admin': {

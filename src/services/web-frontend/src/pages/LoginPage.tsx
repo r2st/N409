@@ -32,18 +32,18 @@ const SSO_ERROR_MESSAGES: Record<string, string> = {
   invalid_request:
     'That sign-in attempt did not arrive complete — it may have been left open too long. Start again from the sign-in button below.',
   assertion_rejected:
-    'Your identity provider’s response could not be verified. Start again below; if it keeps happening, your administrator will need to check the SSO certificate in N409.',
+    ‘Your identity provider’s response could not be verified. Start again below; if it keeps happening, your administrator will need to check the SSO certificate in DoAide 409A.’,
   assertion_reused:
     'That sign-in response has already been used. Start again below rather than reloading or going back.',
   no_email:
-    'Your identity provider did not send an email address, which N409 needs to identify your account. Ask your administrator to release the email attribute.',
+    'Your identity provider did not send an email address, which DoAide 409A needs to identify your account. Ask your administrator to release the email attribute.',
   email_unverified:
     'Google has not confirmed the email address on that account. Verify it with Google, then try again.',
   domain_not_allowed:
     'Single sign-on here is restricted to a different email domain. Sign in with the address your firm issued you, or ask your administrator which domain is allowed.',
-  account_deactivated: 'This account has been deactivated in N409. Your administrator can restore it.',
+  account_deactivated: 'This account has been deactivated in DoAide 409A. Your administrator can restore it.',
   registration_closed:
-    'There is no N409 account for that address, and this platform is invitation-only — signing in with Google does not create one. Ask an administrator to invite you.',
+    'There is no DoAide 409A account for that address, and this platform is invitation-only — signing in with Google does not create one. Ask an administrator to invite you.',
   provider_error:
     'We could not finish signing you in with that provider. Try again in a moment; if it keeps happening, contact support.',
 };
@@ -315,7 +315,7 @@ export function LoginPage() {
       )}
 
       <p className="mt-8 text-center text-sm text-ink-400">
-        New to N409?{' '}
+        New to DoAide 409A?{' '}
         <Link to="/register" className="font-semibold text-bond-600 hover:text-bond-700">
           Create an account
         </Link>

@@ -1,5 +1,5 @@
 /**
- * Central help content for the N409 valuation platform.
+ * Central help content for the DoAide 409A valuation platform.
  *
  * All user-facing documentation lives here as plain Markdown so copy can be
  * edited without touching components. The Help Center (`/help`), contextual

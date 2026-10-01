@@ -206,7 +206,7 @@ export function PartnerPortalPage() {
             </Link>
           </div>
           <p className="text-sm text-ink-400">
-            Integrate your systems with the N409 partner API. Send the token as{' '}
+            Integrate your systems with the DoAide 409A partner API. Send the token as{' '}
             <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
               Authorization: Bearer …
             </code>

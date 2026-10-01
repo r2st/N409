@@ -300,7 +300,7 @@ export function formatUsd(cents: number): string {
 export interface ComparisonRef {
   /** URL segment under `/compare/`. */
   slug: string;
-  /** Link text: "N409 vs Carta". */
+  /** Link text: "DoAide 409A vs Carta". */
   competitor: string;
 }
 
@@ -424,7 +424,7 @@ export const PROOF_POINTS: Array<{ title: string; body: string }> = [
   },
 ];
 
-export const DEMO_VIDEO_TITLE = 'N409 product demo';
+export const DEMO_VIDEO_TITLE = 'DoAide 409A product demo';
 
 // ── Pricing FAQ (409.ai §24 — FAQ structured data) ────────────────────────────
 // Source for the pricing page's FAQPage JSON-LD. Kept in the data module so the

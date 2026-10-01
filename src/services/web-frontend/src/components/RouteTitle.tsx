@@ -20,7 +20,7 @@ const DetailContext = createContext<(d: string | null) => void>(() => {});
  * Refine this route's title with something only the page knows.
  *
  * "Cap Table" is the right title for the tab and still not enough: an analyst
- * with four valuations open has four tabs reading `Cap Table · N409`, which is
+ * with four valuations open has four tabs reading `Cap Table · DoAide 409A`, which is
  * exactly the ambiguity the registry was written to remove, one level down. The
  * company name is what tells them apart, and only the workspace has it — it
  * arrives with the valuation, after the route has already rendered.

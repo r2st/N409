@@ -63,7 +63,7 @@ export function RouteAnnouncer() {
   );
 }
 
-/** `Cap Table · Acme, Inc. · N409` → `Cap Table · Acme, Inc.` */
+/** `Cap Table · Acme, Inc. · DoAide 409A` → `Cap Table · Acme, Inc.` */
 function withoutBrand(title: string): string {
   const suffix = ` · ${SITE_NAME}`;
   return title.endsWith(suffix) ? title.slice(0, -suffix.length) : title;

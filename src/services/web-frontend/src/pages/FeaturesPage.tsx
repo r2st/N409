@@ -109,7 +109,7 @@ export function FeaturesPage() {
       <div className="overline text-ink-400">Platform</div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Features</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-500">
-        Everything N409 does, from building a valuation to delivering an audit-ready report and running an
+        Everything DoAide 409A does, from building a valuation to delivering an audit-ready report and running an
         enterprise account. Follow any <span className="font-semibold">Learn more</span> link to the full
         guide in the{' '}
         <Link to="/help" className="font-semibold text-bond-600 hover:text-bond-700">

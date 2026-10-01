@@ -176,7 +176,7 @@ export function PricingPage() {
               <thead>
                 <tr className="border-b border-paper-300 bg-paper-50 text-left">
                   <th className="overline px-5 py-3 font-semibold text-ink-400">Feature</th>
-                  <th className="overline px-4 py-3 font-semibold text-bond-700">N409</th>
+                  <th className="overline px-4 py-3 font-semibold text-bond-700">DoAide 409A</th>
                   <th className="overline px-4 py-3 font-semibold text-ink-400">Accounting firm</th>
                   <th className="overline px-4 py-3 font-semibold text-ink-400">Cap table provider</th>
                 </tr>
@@ -235,7 +235,7 @@ export function PricingPage() {
               Leverage our AI-powered valuation technology
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-chrome-dim">
-              Accounting firms, fund administrators, and advisors run valuations at scale on N409 — with
+              Accounting firms, fund administrators, and advisors run valuations at scale on DoAide 409A — with
               white-label reports, a partner API, and volume pricing. Tell us about your book of business and
               we’ll put together a plan.
             </p>
@@ -257,7 +257,7 @@ export function PricingPage() {
             {partnersEmail ? (
               <>
                 <a
-                  href={`mailto:${partnersEmail}?subject=N409%20for%20firms`}
+                  href={`mailto:${partnersEmail}?subject=DoAide%20409A%20for%20firms`}
                   className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
                 >
                   Get in touch

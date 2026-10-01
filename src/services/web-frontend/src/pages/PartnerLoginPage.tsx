@@ -177,7 +177,7 @@ export function PartnerLoginPage() {
           </div>
         )}
         <p className="mt-6 text-center text-xs text-ink-400">
-          Powered by <span className="font-semibold text-ink-600">N409</span> valuations
+          Powered by <span className="font-semibold text-ink-600">DoAide 409A</span> valuations
         </p>
       </div>
     </div>

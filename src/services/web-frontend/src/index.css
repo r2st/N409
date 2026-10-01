@@ -6,10 +6,11 @@
    which delays the display-font headline that is our LCP element. */
 @import '@fontsource-variable/public-sans';
 @import '@fontsource-variable/fraunces';
+@import '@fontsource/instrument-serif';
 @import 'tailwindcss';
 
 /*
- * N409 — "institutional ledger" theme.
+ * DoAide 409A — "institutional ledger" theme.
  * Deep midnight-ink navigation, warm paper content, bond-green accent,
  * a single brass detail in the mark. Fraunces for display, Public Sans body.
  */

@@ -16,7 +16,7 @@ import { articleJsonLd, breadcrumbJsonLd, websiteJsonLd } from '../../lib/seo';
  *
  * Two pages over one table: an index at `/blog` and an article at
  * `/blog/:slug`. Both are public and both carry their own `<Seo>` — an article
- * whose link preview says "N409 · Valuations" is an article nobody clicks.
+ * whose link preview says "DoAide 409A · Valuations" is an article nobody clicks.
  *
  * Post bodies are HTML authored by ops and sanitised **server-side on write**
  * with the same policy as report content. `dangerouslySetInnerHTML` here is
@@ -48,7 +48,7 @@ interface Post extends PostSummary {
 }
 
 const BLOG_DESCRIPTION =
-  'Notes on 409A and fair-value practice from the N409 team — methodology, audit defensibility, and what actually changes when valuation work is automated.';
+  'Notes on 409A and fair-value practice from the DoAide 409A team — methodology, audit defensibility, and what actually changes when valuation work is automated.';
 
 function DraftTag() {
   return (

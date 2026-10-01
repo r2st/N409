@@ -246,7 +246,7 @@ export interface HtmlEmailOptions {
  * for a branded header is the brand name repeated after the sender name.
  */
 export function renderHtmlEmail(options: HtmlEmailOptions): string {
-  const brand = escapeHtml(options.brandName?.trim() || 'N409');
+  const brand = escapeHtml(options.brandName?.trim() || 'DoAide 409A');
   const preheader = escapeHtml(sliceChars(options.body.replace(/\s+/g, ' ').trim(), 140));
   const footer = options.footer ? `<p style="margin:0 0 8px">${escapeHtml(options.footer)}</p>` : '';
   const preferences = options.preferencesUrl

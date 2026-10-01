@@ -49,7 +49,7 @@ const STEPS: Step[] = [
   {
     id: 'financials',
     title: 'Provide financial data',
-    description: 'Upload statements and projections, or let the AI agents extract the model.',
+    description: 'Upload statements and projections, or let the AI digital robots extract the model.',
     learn: 'financial-data-overview',
   },
   {

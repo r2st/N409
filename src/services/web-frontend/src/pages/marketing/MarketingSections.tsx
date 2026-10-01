@@ -22,7 +22,7 @@ function PartnerBadge({ name, accent }: { name: string; accent: string }) {
 
 /**
  * Gap #21 — the accounting packages we connect to. Labelled as integrations,
- * not as customers: these vendors are not N409 users, and a "trusted-by" framing
+ * not as customers: these vendors are not DoAide 409A users, and a "trusted-by" framing
  * over their names claims an endorsement none of them has given.
  */
 export function PartnerLogos() {
@@ -257,7 +257,7 @@ export function BookACallSection() {
                 <button
                   type="button"
                   onClick={() => setVideoLoaded(true)}
-                  aria-label="Play the N409 product demo"
+                  aria-label="Play the DoAide 409A product demo"
                   className="ledger-grid group absolute inset-0 flex cursor-pointer items-center justify-center"
                 >
                   <span className="flex h-16 w-16 items-center justify-center rounded-full bg-chrome-fg text-chrome-900 shadow-lift transition-transform group-hover:scale-110">

@@ -59,7 +59,7 @@ export const COMPARISON_DETAILS: Comparison[] = [
     competitor: 'Carta',
     category: 'Cap table & valuation platform',
     summary:
-      'Carta bundles 409A valuations with its cap-table subscription. N409 is a dedicated valuation shop: transparent methodology, faster drafts, and no platform lock-in.',
+      'Carta bundles 409A valuations with its cap-table subscription. DoAide 409A is a dedicated valuation shop: transparent methodology, faster drafts, and no platform lock-in.',
     rows: STANDARD_ROWS({
       onboarding: 'Within their cap-table product; requires subscription',
       draft: 'Days to weeks',
@@ -72,7 +72,7 @@ export const COMPARISON_DETAILS: Comparison[] = [
     competitor: 'Pulley',
     category: 'Cap table platform',
     summary:
-      'Pulley offers 409A as an add-on to cap-table management. N409 focuses solely on defensible valuations across 13 product lines.',
+      'Pulley offers 409A as an add-on to cap-table management. DoAide 409A focuses solely on defensible valuations across 13 product lines.',
     rows: STANDARD_ROWS({
       onboarding: 'Within their cap-table product',
       draft: 'About a week',
@@ -85,7 +85,7 @@ export const COMPARISON_DETAILS: Comparison[] = [
     competitor: 'Eqvista',
     category: 'Valuation & cap table',
     summary:
-      'Eqvista pairs software with valuation services. N409 adds AI-assisted intake, an auditable calculation engine, and client-visible scenario analysis.',
+      'Eqvista pairs software with valuation services. DoAide 409A adds AI-assisted intake, an auditable calculation engine, and client-visible scenario analysis.',
     rows: STANDARD_ROWS({
       onboarding: 'Forms + document upload',
       draft: 'Several days',
@@ -98,7 +98,7 @@ export const COMPARISON_DETAILS: Comparison[] = [
     competitor: 'Kruze Consulting',
     category: 'Startup accounting firm',
     summary:
-      'Kruze delivers valuations as part of a broader accounting engagement. N409 is self-serve, faster, and priced per report rather than per relationship.',
+      'Kruze delivers valuations as part of a broader accounting engagement. DoAide 409A is self-serve, faster, and priced per report rather than per relationship.',
     rows: STANDARD_ROWS({
       onboarding: 'Email + document back-and-forth',
       draft: 'Weeks',
@@ -111,7 +111,7 @@ export const COMPARISON_DETAILS: Comparison[] = [
     competitor: 'Eton Venture Services',
     category: 'Valuation firm',
     summary:
-      'Eton is a traditional valuation practice. N409 delivers the same analyst rigor with a modern pipeline: AI extraction, live status, and 24-hour drafts.',
+      'Eton is a traditional valuation practice. DoAide 409A delivers the same analyst rigor with a modern pipeline: AI extraction, live status, and 24-hour drafts.',
     rows: STANDARD_ROWS({
       onboarding: 'Email + calls',
       draft: '1–2 weeks',
@@ -124,7 +124,7 @@ export const COMPARISON_DETAILS: Comparison[] = [
     competitor: 'Aranca',
     category: 'Valuation & research firm',
     summary:
-      'Aranca serves valuations through an offshore research model. N409 keeps everything in one platform with client-visible progress and audit-ready evidence bundles.',
+      'Aranca serves valuations through an offshore research model. DoAide 409A keeps everything in one platform with client-visible progress and audit-ready evidence bundles.',
     rows: STANDARD_ROWS({
       onboarding: 'Email + document requests',
       draft: '1–2 weeks',
@@ -137,7 +137,7 @@ export const COMPARISON_DETAILS: Comparison[] = [
     competitor: 'Scalar',
     category: 'Valuation platform',
     summary:
-      'Scalar productizes valuations for funds and startups. N409 matches the product experience and adds a transparent engine plus 13 report types under one roof.',
+      'Scalar productizes valuations for funds and startups. DoAide 409A matches the product experience and adds a transparent engine plus 13 report types under one roof.',
     rows: STANDARD_ROWS({
       onboarding: 'Online forms',
       draft: 'About a week',
@@ -483,7 +483,7 @@ export const PARTNER_SEGMENT_DETAILS: PartnerSegment[] = [
         a: 'Yes. Create the engagement, upload documents, poll status or subscribe to webhooks, and download the finished PDF — all from your own systems, with no user visit to us.',
       },
       {
-        q: 'Do our users see N409 at all?',
+        q: 'Do our users see DoAide 409A at all?',
         a: 'Only if you want them to. Under the API model we are invisible; under the co-branded model the intake and the report carry your brand on your subdomain.',
       },
       {
@@ -742,7 +742,7 @@ export const PROVIDER_CATEGORIES: ProviderCategory[] = [
     description:
       'Purpose-built valuation shops that use AI to extract your data and draft the report, then have credentialed analysts review and sign it. Fast, transparent, and priced per report.',
     tradeoff: 'Newest model — choose one that exposes its methodology and backs it with real analysts.',
-    providers: [{ name: 'N409' }],
+    providers: [{ name: 'DoAide 409A' }],
   },
   {
     title: 'Cap-table & equity platforms',
@@ -806,7 +806,7 @@ export const FOUNDER_QUESTIONS: FounderQuestion[] = [
   },
   {
     q: 'What does audit defence cost if my auditor has questions?',
-    why: `Rates range widely — N409 supports the valuation at $${AUDIT_DEFENCE_RATE_USD}/hr versus $300–$500+/hr at many firms.`,
+    why: `Rates range widely — DoAide 409A supports the valuation at $${AUDIT_DEFENCE_RATE_USD}/hr versus $300–$500+/hr at many firms.`,
   },
   {
     q: 'Is the valuation tied to a subscription or platform?',
@@ -984,7 +984,7 @@ export const PARTNER_MODELS: PartnerModel[] = [
       'A partner-scoped worklist showing the status of each one',
       'Published per-report pricing, with no subscription for the client',
     ],
-    brand: 'Ours. The client knows they were referred to N409.',
+    brand: 'Ours. The client knows they were referred to DoAide 409A.',
   },
   {
     key: 'co_branded',

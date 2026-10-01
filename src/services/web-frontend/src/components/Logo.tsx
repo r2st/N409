@@ -40,13 +40,23 @@ export function BrandMark({ size = 30, light = false }: { size?: number; light?:
 
 export function Wordmark({ light = false }: { light?: boolean }) {
   const branding = useBranding();
+  const isPlatform = !branding.white_label;
   return (
     <span className="flex items-center gap-2.5">
       <BrandMark size={30} light={light} />
       <span
         className={`font-display text-xl font-semibold tracking-tight ${light ? 'text-chrome-fg' : 'text-ink-900'}`}
       >
-        {branding.name}
+        {isPlatform ? (
+          <>
+            DoAide{' '}
+            <em className="not-italic" style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontStyle: 'italic', color: '#F0B429' }}>
+              409A
+            </em>
+          </>
+        ) : (
+          branding.name
+        )}
         {branding.tagline && (
           <span className="ml-2 align-middle text-[0.62rem] font-sans font-semibold tracking-[0.18em] text-brass-400 uppercase">
             {branding.tagline}

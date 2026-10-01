@@ -8,7 +8,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  */
 export const TOTP_DIGITS = 6;
 export const TOTP_PERIOD_SECONDS = 30;
-export const TOTP_ISSUER = 'N409';
+export const TOTP_ISSUER = 'DoAide 409A';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 

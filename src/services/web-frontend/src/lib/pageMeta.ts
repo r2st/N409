@@ -48,7 +48,7 @@ export function staticPages(): HeadInput[] {
   return [
     {
       path: '/',
-      title: 'N409',
+      title: 'DoAide 409A',
       description: `${SITE_TAGLINE} AI-assisted intake, a transparent valuation engine, and analyst-signed reports across ${PRODUCTS.length} report types — first draft in 24 hours, from ${formatUsd(MIN_PRODUCT_PRICE_CENTS)}.`,
       jsonLd: organizationJsonLd(),
     },
@@ -83,7 +83,7 @@ export function staticPages(): HeadInput[] {
     {
       path: '/how-much-does-a-409a-cost',
       title: 'How much does a 409A valuation cost?',
-      description: `What a 409A valuation costs and what drives the price — market bands from bundled cap-table platforms to advisory firms, N409 from ${formatUsd(NINE_A_PRICE_CENTS)}, and the audit-support rate that is not on the quote.`,
+      description: `What a 409A valuation costs and what drives the price — market bands from bundled cap-table platforms to advisory firms, DoAide 409A from ${formatUsd(NINE_A_PRICE_CENTS)}, and the audit-support rate that is not on the quote.`,
     },
     {
       path: '/tools/409a-valuation-calculator',
@@ -114,35 +114,35 @@ export function staticPages(): HeadInput[] {
       path: '/developers',
       title: 'Partner API for developers',
       description:
-        'The N409 partner API: bearer keys, idempotent submission, an OpenAPI 3.1 document you can generate a client from, and HMAC-signed webhooks on state changes and report-ready.',
+        'The DoAide 409A partner API: bearer keys, idempotent submission, an OpenAPI 3.1 document you can generate a client from, and HMAC-signed webhooks on state changes and report-ready.',
     },
     {
       path: '/blog',
       title: 'Blog',
       description:
-        'Notes on 409A and fair-value practice from the N409 team — methodology, audit defensibility, and what actually changes when valuation work is automated.',
+        'Notes on 409A and fair-value practice from the DoAide 409A team — methodology, audit defensibility, and what actually changes when valuation work is automated.',
     },
     {
       path: '/about',
-      title: 'About N409',
+      title: 'About DoAide 409A',
       description:
-        'N409 is an AI-assisted valuation platform producing independent, defensible 409A and business valuations — AI intake, a transparent engine, and credentialed analyst sign-off.',
+        'DoAide 409A is an AI-assisted valuation platform producing independent, defensible 409A and business valuations — AI intake, a transparent engine, and credentialed analyst sign-off.',
     },
     {
       path: '/contact',
       title: 'Contact us',
       description:
-        'Get in touch with the N409 team — questions about a valuation, pricing, partnerships, or support.',
+        'Get in touch with the DoAide 409A team — questions about a valuation, pricing, partnerships, or support.',
     },
     {
       path: '/terms-of-service',
       title: 'Terms of service',
-      description: 'The terms governing your use of the N409 valuation platform.',
+      description: 'The terms governing your use of the DoAide 409A valuation platform.',
     },
     {
       path: '/privacy-policy',
       title: 'Privacy policy',
-      description: 'How N409 collects, uses, and protects your data, including cookies and analytics.',
+      description: 'How DoAide 409A collects, uses, and protects your data, including cookies and analytics.',
     },
   ];
 }

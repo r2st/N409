@@ -167,7 +167,7 @@ const Env = z.object({
   SMTP_PORT: portParam('SMTP_PORT', 587, 'is not a relay to dial'),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().default('N409 Valuations <no-reply@n409.local>'),
+  SMTP_FROM: z.string().default('DoAide 409A <no-reply@n409.local>'),
   // SMS drip campaigns (§15.6) — 'log' records delivery in the service log
   // (a real provider adapter slots into buildEmailTransports); 'off' only
   // queues outbox rows.

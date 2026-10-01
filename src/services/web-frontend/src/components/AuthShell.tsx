@@ -59,7 +59,7 @@ export function AuthShell({
           <div className="mb-8 lg:hidden">
             <span className="flex items-center gap-2.5">
               <LogoMark size={34} />
-              <span className="font-display text-2xl font-semibold text-ink-900">N409</span>
+              <span className="text-2xl font-semibold text-ink-900">DoAide{' '}<em className="not-italic" style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontStyle: 'italic', color: '#F0B429' }}>409A</em></span>
             </span>
           </div>
           <h1 className="font-display text-2xl font-semibold text-ink-900">{title}</h1>

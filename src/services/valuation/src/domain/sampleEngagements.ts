@@ -720,11 +720,11 @@ const MERIDIAN: SampleEngagement = {
       ),
     qualifications:
       P(
-        'This valuation was prepared by the N409 valuation practice. The analyst responsible for ' +
+        'This valuation was prepared by the DoAide 409A valuation practice. The analyst responsible for ' +
           'the analyses and conclusions reported here is:',
       ) +
       UL([
-        '<strong>Jordan Avery Reyes, ASA, CFA</strong> — Director of Valuation, N409.',
+        '<strong>Jordan Avery Reyes, ASA, CFA</strong> — Director of Valuation, DoAide 409A.',
         'Accredited Senior Appraiser (Business Valuation) of the American Society of Appraisers; ' +
           'Chartered Financial Analyst.',
         'Fourteen years of experience in the valuation of privately held equity securities, ' +
@@ -1202,11 +1202,11 @@ const HELIX: SampleEngagement = {
       ),
     qualifications:
       P(
-        'This valuation was prepared by the N409 valuation practice. The analyst responsible for ' +
+        'This valuation was prepared by the DoAide 409A valuation practice. The analyst responsible for ' +
           'the analyses and conclusions reported here is:',
       ) +
       UL([
-        '<strong>Priya Nandakumar, ABV, CVA</strong> — Principal, Life Sciences Valuation, N409.',
+        '<strong>Priya Nandakumar, ABV, CVA</strong> — Principal, Life Sciences Valuation, DoAide 409A.',
         'Accredited in Business Valuation (AICPA); Certified Valuation Analyst (NACVA).',
         'Eleven years of experience valuing privately held life-sciences companies, including ' +
           'clinical-stage single-asset issuers under IRC §409A and ASC 820.',
@@ -1715,12 +1715,12 @@ const CASCADE: SampleEngagement = {
       ),
     qualifications:
       P(
-        'This valuation was prepared by the N409 valuation practice. The analyst responsible for ' +
+        'This valuation was prepared by the DoAide 409A valuation practice. The analyst responsible for ' +
           'the analyses and conclusions reported here is:',
       ) +
       UL([
         '<strong>Marcus Oyelaran, ASA, CPA/ABV</strong> — Managing Director, Industrials ' +
-          'Valuation, N409.',
+          'Valuation, DoAide 409A.',
         'Accredited Senior Appraiser (Business Valuation) of the American Society of Appraisers; ' +
           'Certified Public Accountant, Accredited in Business Valuation.',
         'Nineteen years of experience in the valuation of closely held industrial businesses, ' +

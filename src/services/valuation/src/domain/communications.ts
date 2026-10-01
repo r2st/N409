@@ -161,11 +161,11 @@ export type TemplateVars = Record<string, string | number | null | undefined>;
  * The platform's own name, and the fallback for `platform_name`.
  *
  * The same string `PLATFORM_BRANDING.name` carries and the built-in
- * transactional copy hard-codes ("Reset your N409 password"). Duplicated here
+ * transactional copy hard-codes ("Reset your DoAide 409A password"). Duplicated here
  * rather than imported so this module stays free of the branding domain, and
  * pinned by a test against `PLATFORM_BRANDING` so the two cannot drift.
  */
-export const PLATFORM_NAME = 'N409';
+export const PLATFORM_NAME = 'DoAide 409A';
 
 /**
  * The `always` scope of TEMPLATE_VARIABLES — the three names every template may

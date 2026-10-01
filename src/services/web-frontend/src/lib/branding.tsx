@@ -46,7 +46,7 @@ export interface BrandingResponse {
 /** Mirrors PLATFORM_BRANDING on the server — the pre-fetch and fallback brand. */
 export const PLATFORM_BRANDING: Branding = {
   tenant_id: null,
-  name: 'N409',
+  name: 'DoAide 409A',
   tagline: 'Valuations',
   accent: '#12936f',
   accent_dark: '#43cca0',

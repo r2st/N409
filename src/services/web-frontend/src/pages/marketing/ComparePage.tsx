@@ -14,16 +14,16 @@ export function ComparePage() {
       <Seo {...comparePageMeta(comparison.slug)!} />
       <div className="overline text-ink-400">{comparison.category}</div>
       <h1 className="mt-2 font-display text-4xl font-semibold text-ink-900">
-        N409 vs {comparison.competitor}
+        DoAide 409A vs {comparison.competitor}
       </h1>
       <p className="mt-4 max-w-2xl text-sm leading-relaxed text-ink-600">{comparison.summary}</p>
 
       <div className="mt-10 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 shadow-card">
-        <table className="w-full min-w-[640px] text-sm" aria-label={`N409 vs ${comparison.competitor}`}>
+        <table className="w-full min-w-[640px] text-sm" aria-label={`DoAide 409A vs ${comparison.competitor}`}>
           <thead>
             <tr className="border-b border-paper-300 bg-paper-50 text-left">
               <th className="overline px-5 py-3 font-semibold text-ink-400">Dimension</th>
-              <th className="overline px-4 py-3 font-semibold text-bond-700">N409</th>
+              <th className="overline px-4 py-3 font-semibold text-bond-700">DoAide 409A</th>
               <th className="overline px-4 py-3 font-semibold text-ink-400">{comparison.competitor}</th>
             </tr>
           </thead>

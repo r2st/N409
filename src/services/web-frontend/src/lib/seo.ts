@@ -6,7 +6,7 @@ import type { Product } from './marketing';
  * client as `import.meta.env.VITE_SITE_URL`); everything else derives from it.
  */
 
-export const SITE_NAME = 'N409';
+export const SITE_NAME = 'DoAide 409A';
 export const SITE_TAGLINE = 'Independent, defensible 409A and business valuations.';
 
 /**
@@ -43,7 +43,7 @@ export function absoluteUrl(pathOrUrl: string, origin: string = siteOrigin()): s
   return path === '/' ? `${origin}/` : `${origin}${path}`;
 }
 
-/** Compose a `<title>`: `Page · N409`, collapsing when the page IS the brand. */
+/** Compose a `<title>`: `Page · DoAide 409A`, collapsing when the page IS the brand. */
 export function pageTitle(title: string): string {
   const trimmed = title.trim();
   if (!trimmed || trimmed === SITE_NAME) return `${SITE_NAME} · Valuations`;
@@ -114,7 +114,7 @@ export interface Crumb {
 
 /**
  * BreadcrumbList schema. Google renders this in place of the raw URL in a
- * result, so a deep page reads `409.doaide.com › Compare › N409 vs Carta` rather than
+ * result, so a deep page reads `409.doaide.com › Compare › DoAide 409A vs Carta` rather than
  * the full path — and the trail must mirror real, crawlable ancestors, not an
  * invented hierarchy.
  */

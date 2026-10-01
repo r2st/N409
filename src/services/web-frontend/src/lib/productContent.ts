@@ -48,7 +48,7 @@ export interface ProductContent {
 }
 
 const DEFAULT_DISCLAIMER =
-  'N409 provides independent, third-party valuation services. Reports are prepared for the specific purpose stated in the engagement and are not legal, tax, or investment advice. Consult your own advisors for how a valuation applies to your situation.';
+  'DoAide 409A provides independent, third-party valuation services. Reports are prepared for the specific purpose stated in the engagement and are not legal, tax, or investment advice. Consult your own advisors for how a valuation applies to your situation.';
 
 const CTA_START = 'Start my valuation';
 
@@ -151,7 +151,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ],
     ctaHeadline: 'Get your 409A valuation started today',
     disclaimer:
-      'N409 provides independent, third-party 409A valuation services. A safe-harbor valuation shifts the burden of proof to the IRS but does not guarantee any particular tax outcome. This is not legal or tax advice.',
+      'DoAide 409A provides independent, third-party 409A valuation services. A safe-harbor valuation shifts the burden of proof to the IRS but does not guarantee any particular tax outcome. This is not legal or tax advice.',
   },
 
   'smb-valuation': {
@@ -485,7 +485,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ],
     ctaHeadline: 'Transfer shares with the IRS in mind',
     disclaimer:
-      'N409 provides independent, third-party valuation services. Our appraisals are prepared to meet IRS qualified-appraisal requirements but do not constitute legal or tax advice; consult your estate-planning counsel.',
+      'DoAide 409A provides independent, third-party valuation services. Our appraisals are prepared to meet IRS qualified-appraisal requirements but do not constitute legal or tax advice; consult your estate-planning counsel.',
   },
 
   'qsbs-attestation': {
@@ -552,7 +552,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ],
     ctaHeadline: 'Document your §1202 eligibility',
     disclaimer:
-      'N409 provides independent, third-party attestation services. A QSBS attestation documents eligibility but does not guarantee any tax outcome and is not legal or tax advice; consult your tax advisor.',
+      'DoAide 409A provides independent, third-party attestation services. A QSBS attestation documents eligibility but does not guarantee any tax outcome and is not legal or tax advice; consult your tax advisor.',
   },
 
   'csop-valuation': {

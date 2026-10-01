@@ -49,7 +49,7 @@ export interface Branding {
 export const PLATFORM_BRANDING: Branding = {
   tenant_id: null,
   subdomain: null,
-  name: 'N409',
+  name: 'DoAide 409A',
   tagline: 'Valuations',
   // bond-500 / bond-400: the accent ramp from the SPA theme. The dark variant
   // lifts off the near-black chrome, which #12936f does not.

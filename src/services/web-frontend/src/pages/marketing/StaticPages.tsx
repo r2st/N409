@@ -39,12 +39,12 @@ export function AboutPage() {
   return (
     <Prose
       overline="Company"
-      title="About N409"
+      title="About DoAide 409A"
       path="/about"
-      description="N409 is an AI-assisted valuation platform producing independent, defensible 409A and business valuations — AI intake, a transparent engine, and credentialed analyst sign-off."
+      description="DoAide 409A is an AI-assisted valuation platform producing independent, defensible 409A and business valuations — AI intake, a transparent engine, and credentialed analyst sign-off."
     >
       <p>
-        N409 is an AI-assisted valuation platform producing independent, defensible business valuations — IRC
+        DoAide 409A is an AI-assisted valuation platform producing independent, defensible business valuations — IRC
         §409A common-stock valuations for venture-backed companies, and a full family of adjacent fair-value
         opinions across the US, UK, Canada, Australia, and Singapore.
       </p>
@@ -200,7 +200,7 @@ export function ContactPage() {
       overline="Company"
       title="Contact us"
       path="/contact"
-      description="Get in touch with the N409 team — questions about a valuation, pricing, partnerships, or support."
+      description="Get in touch with the DoAide 409A team — questions about a valuation, pricing, partnerships, or support."
     >
       <p>Questions, concerns, requests — talk to us and we&apos;ll reply by email.</p>
       <ContactForm />
@@ -242,12 +242,12 @@ export function TermsPage() {
       overline="Legal"
       title="Terms of service"
       path="/terms-of-service"
-      description="The terms governing your use of the N409 valuation platform."
+      description="The terms governing your use of the DoAide 409A valuation platform."
     >
       <p className="text-xs text-ink-400">Last updated: July 2026</p>
       <h2 className="font-display text-xl font-semibold text-ink-900">1. Services</h2>
       <p>
-        N409 provides business valuation reports and related analysis (&ldquo;Reports&rdquo;). Reports are
+        DoAide 409A provides business valuation reports and related analysis (&ldquo;Reports&rdquo;). Reports are
         prepared for the purpose stated in the engagement and may not be used for any other purpose without
         our written consent.
       </p>
@@ -283,7 +283,7 @@ export function PrivacyPage() {
       overline="Legal"
       title="Privacy policy"
       path="/privacy-policy"
-      description="How N409 collects, uses, and protects your data, including cookies and analytics."
+      description="How DoAide 409A collects, uses, and protects your data, including cookies and analytics."
     >
       <p className="text-xs text-ink-400">Last updated: July 2026</p>
       <h2 className="font-display text-xl font-semibold text-ink-900">What we collect</h2>

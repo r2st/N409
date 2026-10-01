@@ -113,7 +113,7 @@ export function AcceptInvitePage() {
 
   return (
     <AuthShell
-      title="Join N409"
+      title="Join DoAide 409A"
       subtitle={
         <>
           You've been invited as <span className="font-semibold text-ink-700">{email}</span>. Set a password
