@@ -32,7 +32,7 @@ const SSO_ERROR_MESSAGES: Record<string, string> = {
   invalid_request:
     'That sign-in attempt did not arrive complete — it may have been left open too long. Start again from the sign-in button below.',
   assertion_rejected:
-    ‘Your identity provider’s response could not be verified. Start again below; if it keeps happening, your administrator will need to check the SSO certificate in DoAide 409A.’,
+    'Your identity provider’s response could not be verified. Start again below; if it keeps happening, your administrator will need to check the SSO certificate in DoAide 409A.',
   assertion_reused:
     'That sign-in response has already been used. Start again below rather than reloading or going back.',
   no_email:
