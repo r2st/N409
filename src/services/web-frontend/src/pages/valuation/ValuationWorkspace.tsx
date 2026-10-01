@@ -187,6 +187,18 @@ export function useWorkspace(): WorkspaceContext {
   return useOutletContext<WorkspaceContext>();
 }
 
+function TabDivider({ label }: { label: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex items-center gap-1.5 border-b-2 border-transparent px-1 pb-2.5 text-[0.6rem] font-bold tracking-widest text-ink-300 uppercase select-none whitespace-nowrap"
+    >
+      <span className="h-3 w-px bg-paper-300" />
+      {label}
+    </span>
+  );
+}
+
 function Tab({
   to,
   label,
@@ -461,23 +473,22 @@ export function ValuationWorkspace() {
       {retired && <RetiredBanner />}
 
       <ScrollableTabs label="Valuation workspace" activeKey={activeTab}>
+        {/* ── Intake ─────────────────────────────────────────── */}
         <Tab to={base} label="Overview" end />
         <Tab to={`${base}/progress`} label="Progress" />
         {(ops || owner) && <Tab to={`${base}/intake`} label="Intake" />}
         {(ops || owner) && <Tab to={`${base}/company`} label="Company" />}
         <Tab to={`${base}/documents`} label="Documents" />
+
+        {/* ── Model ──────────────────────────────────────────── */}
+        {(ops || owner) && <TabDivider label="Model" />}
         {(ops || owner) && <Tab to={`${base}/cap-table`} label="Cap Table" />}
         {ops && <Tab to={`${base}/model`} label="Financial Model" />}
         {(ops || owner) && <Tab to={`${base}/params`} label="Params" />}
         {ops && <Tab to={`${base}/workbook`} label="Workbook" />}
         {ops && <Tab to={`${base}/overwrites`} label="Overwrites" />}
         {ops && <Tab to={`${base}/ai`} label="AI" />}
-        {ops && <Tab to={`${base}/engagement`} label="Engagement" />}
-        {ops && <Tab to={`${base}/tasks`} label="Tasks" />}
         {ops && (
-          /* §7.3 — `n/m`: approaches computed over approaches the weighting
-             asks for. Amber while short, because a 2/4 that reads like a 4/4
-             is worse than no badge. */
           <Tab
             to={`${base}/calculations`}
             label="Calculations"
@@ -495,19 +506,20 @@ export function ValuationWorkspace() {
         {ops && SPECIALTY_TAB_KINDS.has(valuation.kind) && (
           <Tab to={`${base}/specialty`} label="Specialty Engine" />
         )}
-        {/* Research is readable by the owner too: the citations are the
-            provenance behind the report's market discussion, and "where did
-            this multiple come from" is a fair question. Running it is ops-only,
-            and the tab enforces that from the served `can_run`. */}
         {(ops || owner) && <Tab to={`${base}/research`} label="Market Research" />}
-        {/* Same reasoning as Research: the client whose report rests on the
-            median may read the set it was struck from. Editing it is ops-only,
-            and the tab enforces that from the served `can_edit`. */}
         {(ops || owner) && <Tab to={`${base}/comparables`} label="Comparables" />}
+
+        {/* ── Review ─────────────────────────────────────────── */}
+        {ops && <TabDivider label="Review" />}
+        {ops && <Tab to={`${base}/engagement`} label="Engagement" />}
+        {ops && <Tab to={`${base}/tasks`} label="Tasks" />}
         {ops && <Tab to={`${base}/qa`} label="QA" />}
         {ops && <Tab to={`${base}/health`} label="Health" />}
         <Tab to={`${base}/completeness`} label="Completeness" />
         {ops && <Tab to={`${base}/decisions`} label="Decisions" />}
+
+        {/* ── Output ─────────────────────────────────────────── */}
+        <TabDivider label="Output" />
         <Tab to={`${base}/scenarios`} label="What-If Scenarios" />
         {ops && <Tab to={`${base}/sensitivity`} label="Sensitivity" />}
         {ops && <Tab to={`${base}/bridge`} label="Value Bridge" />}
@@ -515,9 +527,11 @@ export function ValuationWorkspace() {
         {showReportTab && <Tab to={`${base}/report`} label="Report" />}
         {(ops || owner) && <Tab to={`${base}/grants`} label="Grants" />}
         {ops && <Tab to={`${base}/asc718`} label="ASC 718" />}
+
+        {/* ── Lifecycle ──────────────────────────────────────── */}
+        <TabDivider label="Lifecycle" />
         {ops && <Tab to={`${base}/monitoring`} label="Monitoring" />}
         {ops && <Tab to={`${base}/package`} label="Package" />}
-        {/* Ops-only: the payloads are the engine's raw working state. */}
         {ops && <Tab to={`${base}/network`} label="Network Log" />}
         <Tab to={`${base}/audit-trail`} label="Change History" />
       </ScrollableTabs>
