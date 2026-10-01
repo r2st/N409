@@ -705,5 +705,33 @@ describe.skipIf(!dbUp)('what an operation leaves behind when it dies halfway', (
       expect((await reapStaleAiJobs(ctx.pool)).map((r) => r.id)).toContain(job.id);
       expect((await statusOf(job.id)).status).toBe('failed');
     });
+
+    it('reaps multiple stale jobs in a single batch and writes one event per job', async () => {
+      const jobs = await Promise.all(
+        (['extract', 'comparables', 'tagging'] as const).map((pipeline) =>
+          createAiJob(ctx.pool, { valuationId, pipeline, input: {}, createdBy: ops.id }),
+        ),
+      );
+      await Promise.all(jobs.map((j) => age(j.id, AI_JOB_STALE_MS * 3)));
+
+      const reaped = await reapStaleAiJobs(ctx.pool);
+      const reapedIds = new Set(reaped.map((r) => r.id));
+      for (const job of jobs) {
+        expect(reapedIds.has(job.id), `job ${job.pipeline} should be reaped`).toBe(true);
+        expect((await statusOf(job.id)).status).toBe('failed');
+      }
+
+      const { rows: events } = await ctx.pool.query<{ payload: Record<string, unknown> }>(
+        `SELECT payload FROM valuation_events
+          WHERE valuation_id = $1 AND type = 'ai_job_completed'
+            AND payload->>'reaped' = 'true'
+            AND payload->>'job_id' = ANY($2::text[])`,
+        [valuationId, jobs.map((j) => j.id)],
+      );
+      expect(events).toHaveLength(3);
+      for (const e of events) {
+        expect(e.payload).toMatchObject({ status: 'failed', reaped: true, latency_ms: null });
+      }
+    });
   });
 });

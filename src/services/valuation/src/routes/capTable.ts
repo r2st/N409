@@ -503,9 +503,11 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
-    const table = await findCapTable(deps.pool, id);
+    const [table, { rounds, truncated }] = await Promise.all([
+      findCapTable(deps.pool, id),
+      listRounds(deps.pool, id),
+    ]);
     if (!table) throw problems.notFound('No cap table imported yet');
-    const { rounds, truncated } = await listRounds(deps.pool, id);
     return {
       graph: buildCapTableGraph({
         companyName: valuation.company_name,

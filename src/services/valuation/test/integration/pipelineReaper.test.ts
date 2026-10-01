@@ -153,6 +153,46 @@ describe.skipIf(!dbUp)('auto-pipeline reaper (B-3)', () => {
     expect(rows[0]!.payload).toMatchObject({ reaped: true, retry_scheduled: false });
   });
 
+  it('reaps multiple stale runs across valuations in one batch with per-row retry scheduling', async () => {
+    const [v1, v2, v3] = await Promise.all([
+      newValuation('BatchReap1'),
+      newValuation('BatchReap2'),
+      newValuation('BatchReap3'),
+    ]);
+    const runs = await Promise.all(
+      [v1, v2, v3].map((vid) =>
+        createPipelineRun(ctx.pool, { valuationId: vid, trigger: 'upload', triggeredBy: ops.id }, SYSTEM),
+      ),
+    );
+    await Promise.all(
+      runs.map((r) =>
+        ctx.pool.query(`UPDATE pipeline_runs SET updated_at = now() - interval '2 hours' WHERE id = $1`, [r.id]),
+      ),
+    );
+
+    const reaped = await reapStalePipelineRuns(ctx.pool, { olderThanMs: 60_000, actor: SYSTEM });
+    const reapedIds = new Set(reaped.map((r) => r.id));
+    for (const run of runs) {
+      expect(reapedIds.has(run.id), `run ${run.id} should be reaped`).toBe(true);
+    }
+
+    for (const run of reaped) {
+      expect(run.status).toBe('failed');
+      expect(run.failure_kind).toBe('transient');
+      expect(run.next_attempt_at).not.toBeNull();
+    }
+
+    const { rows: events } = await ctx.pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM valuation_events
+        WHERE type = 'auto_pipeline_failed' AND payload->>'run_id' = ANY($1::text[])`,
+      [runs.map((r) => r.id)],
+    );
+    expect(events).toHaveLength(3);
+    for (const e of events) {
+      expect(e.payload).toMatchObject({ reaped: true, retry_scheduled: true });
+    }
+  });
+
   it('is idempotent — a second sweep reaps nothing new', async () => {
     const valuationId = await newValuation('DoubleReapCo');
     const run = await createPipelineRun(
