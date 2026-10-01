@@ -150,35 +150,62 @@ export async function reconcileJobAlerts(
     const key = (source: string, kind: string) => `${source}:${kind}`;
     const found = new Set(findings.map((f) => key(f.source, f.kind)));
 
-    const opened: JobAlertRow[] = [];
-    const ongoing: JobAlertRow[] = [];
+    const toUpdate: Array<{ id: string; detail: string; observed: number }> = [];
+    const toInsert: JobAlertFinding[] = [];
     for (const finding of findings) {
       const existing = open.find((a) => a.source === finding.source && a.kind === finding.kind);
       if (existing) {
-        const { rows } = await tx.query(
-          `UPDATE job_alerts
-              SET last_seen_at = now(), detail = $2, observed = $3
-            WHERE id = $1 RETURNING *`,
-          [existing.id, finding.detail, finding.observed],
-        );
-        ongoing.push(hydrate(rows[0]!));
-        continue;
+        toUpdate.push({ id: existing.id, detail: finding.detail, observed: finding.observed });
+      } else {
+        toInsert.push(finding);
+      }
+    }
+
+    let ongoing: JobAlertRow[] = [];
+    if (toUpdate.length > 0) {
+      const params: unknown[] = [];
+      const tuples: string[] = [];
+      for (const u of toUpdate) {
+        const i = params.length;
+        params.push(u.id, u.detail, u.observed);
+        tuples.push(`($${i + 1}, $${i + 2}, $${i + 3}::numeric)`);
+      }
+      const { rows } = await tx.query(
+        `UPDATE job_alerts a
+            SET last_seen_at = now(), detail = v.detail, observed = v.observed
+           FROM (VALUES ${tuples.join(', ')}) AS v(id, detail, observed)
+          WHERE a.id = v.id RETURNING a.*`,
+        params,
+      );
+      ongoing = rows.map(hydrate);
+    }
+
+    let opened: JobAlertRow[] = [];
+    if (toInsert.length > 0) {
+      const params: unknown[] = [];
+      const tuples: string[] = [];
+      for (const f of toInsert) {
+        const i = params.length;
+        params.push(newUlid(), f.source, f.kind, f.detail, f.observed, f.threshold);
+        tuples.push(`($${i + 1}, $${i + 2}, $${i + 3}, $${i + 4}, $${i + 5}, $${i + 6})`);
       }
       const { rows } = await tx.query(
         `INSERT INTO job_alerts (id, source, kind, detail, observed, threshold)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [newUlid(), finding.source, finding.kind, finding.detail, finding.observed, finding.threshold],
+         VALUES ${tuples.join(', ')} RETURNING *`,
+        params,
       );
-      opened.push(hydrate(rows[0]!));
+      opened = rows.map(hydrate);
     }
 
     const stale = open.filter((a) => !found.has(key(a.source, a.kind)));
-    const resolved: JobAlertRow[] = [];
-    for (const alert of stale) {
-      const { rows } = await tx.query(`UPDATE job_alerts SET resolved_at = now() WHERE id = $1 RETURNING *`, [
-        alert.id,
-      ]);
-      resolved.push(hydrate(rows[0]!));
+    let resolved: JobAlertRow[] = [];
+    if (stale.length > 0) {
+      const { rows } = await tx.query(
+        `UPDATE job_alerts SET resolved_at = now()
+          WHERE id = ANY($1) RETURNING *`,
+        [stale.map((a) => a.id)],
+      );
+      resolved = rows.map(hydrate);
     }
 
     return { opened, resolved, ongoing };
