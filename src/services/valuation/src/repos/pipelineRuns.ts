@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { newUlid, type FailureClass } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
-import { recordEvent, type EventActor } from '../events/record.js';
+import { recordEvent, recordEvents, type EventActor } from '../events/record.js';
 import { invalidateValuationAfter } from './valuations.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { PIPELINE_MAX_ATTEMPTS, pipelineRetryDelayMinutes } from '../domain/pipelineRetry.js';
@@ -282,40 +282,40 @@ export async function reapStalePipelineRuns(
        FOR UPDATE SKIP LOCKED`,
       [String(seconds), opts.limit ?? 100, opts.holding ?? []],
     );
-    const reaped: PipelineRunRow[] = [];
-    for (const run of stale) {
-      // Read off the locked row, so the step is the one this attempt has earned.
-      const delayMinutes = pipelineRetryDelayMinutes(run.attempts);
-      const { rows } = await client.query<PipelineRunRow>(
-        `UPDATE pipeline_runs
-            SET status = 'failed',
-                error = $1,
-                failure_kind = 'transient',
-                next_attempt_at = CASE
-                  WHEN $3::numeric IS NOT NULL AND attempts < $4
-                    THEN now() + (($3::numeric * (0.5 + random() * 0.5)) || ' minutes')::interval
-                  ELSE NULL
-                END,
-                updated_at = now()
-          WHERE id = $2 RETURNING *`,
-        [reason, run.id, delayMinutes, PIPELINE_MAX_ATTEMPTS],
-      );
-      const settled = rows[0]!;
-      await recordEvent(client, {
+    if (stale.length === 0) return [];
+    const ids = stale.map((r) => r.id);
+    const delays = stale.map((r) => pipelineRetryDelayMinutes(r.attempts));
+    const { rows: reaped } = await client.query<PipelineRunRow>(
+      `UPDATE pipeline_runs r
+          SET status = 'failed',
+              error = $1,
+              failure_kind = 'transient',
+              next_attempt_at = CASE
+                WHEN d.delay IS NOT NULL AND r.attempts < $3
+                  THEN now() + ((d.delay * (0.5 + random() * 0.5)) || ' minutes')::interval
+                ELSE NULL
+              END,
+              updated_at = now()
+        FROM unnest($2::text[], $4::numeric[]) AS d(id, delay)
+       WHERE r.id = d.id
+       RETURNING r.*`,
+      [reason, ids, PIPELINE_MAX_ATTEMPTS, delays],
+    );
+    const settledById = new Map(reaped.map((r) => [r.id, r]));
+    await recordEvents(
+      client,
+      stale.map((run) => ({
         valuationId: run.valuation_id,
-        type: 'auto_pipeline_failed',
+        type: 'auto_pipeline_failed' as const,
         actor: opts.actor,
         payload: {
           run_id: run.id,
           error: reason,
           reaped: true,
-          // Whether anything is coming back for it, on the spine rather than
-          // only in a column: "reaped" alone reads as an ending either way.
-          retry_scheduled: settled.next_attempt_at !== null,
+          retry_scheduled: settledById.get(run.id)?.next_attempt_at !== null,
         },
-      });
-      reaped.push(settled);
-    }
+      })),
+    );
     return reaped;
   });
 }

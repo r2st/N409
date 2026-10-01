@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { PIPELINE_EVENT_TYPES, type AiPipeline } from '../domain/pipeline.js';
-import { recordEvent, type EventActor } from '../events/record.js';
+import { recordEvents, type EventActor } from '../events/record.js';
 
 export interface AiJobRow {
   id: string;
@@ -186,32 +186,30 @@ export async function reapStaleAiJobs(
         FOR UPDATE SKIP LOCKED`,
       [String(seconds), opts.limit ?? 100],
     );
-    const reaped: AiJobRow[] = [];
-    for (const job of stale) {
-      const { rows } = await client.query<AiJobRow>(
-        `UPDATE ai_jobs
-            SET status = 'failed', error = $1, completed_at = now()
-          WHERE id = $2 RETURNING *`,
-        [reason, job.id],
-      );
-      await recordEvent(client, {
+    if (stale.length === 0) return [];
+    const ids = stale.map((j) => j.id);
+    const { rows: reaped } = await client.query<AiJobRow>(
+      `UPDATE ai_jobs
+          SET status = 'failed', error = $1, completed_at = now()
+        WHERE id = ANY($2::text[]) RETURNING *`,
+      [reason, ids],
+    );
+    await recordEvents(
+      client,
+      stale.map((job) => ({
         valuationId: job.valuation_id,
         type: PIPELINE_EVENT_TYPES.aiJobCompleted,
         actor,
         payload: {
           job_id: job.id,
           pipeline: job.pipeline,
-          status: 'failed',
+          status: 'failed' as const,
           model: null,
-          // Null rather than a computed age: `latency_ms` means how long the
-          // run took, and nobody knows that. What is known is that it stopped
-          // being watched, which `reaped` says.
           latency_ms: null,
           reaped: true,
         },
-      });
-      reaped.push(rows[0]!);
-    }
+      })),
+    );
     return reaped;
   });
 }
