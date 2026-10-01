@@ -12,7 +12,7 @@ import {
   type Recipient,
   type ValuationSnapshot,
 } from '../domain/emailWorkflows.js';
-import { createNotification } from '../repos/notifications.js';
+import { createNotifications } from '../repos/notifications.js';
 import { findUsersByIds } from '../repos/users.js';
 import { channelsFor, preferenceOverrides } from '../repos/notificationPreferences.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../repos/emailOutbox.js';
@@ -353,18 +353,19 @@ async function deliverTransitionMessages(
         }),
       );
     }
-    for (const spec of notifySpecs) {
-      const user = recipients.get(spec.recipient);
-      if (!user) continue;
-      if (!channelsFor(prefs, user.id, spec.type).in_app) continue;
-      await createNotification(client, {
-        userId: user.id,
+    const notifyInputs = notifySpecs
+      .filter((spec) => {
+        const user = recipients.get(spec.recipient);
+        return user && channelsFor(prefs, user.id, spec.type).in_app;
+      })
+      .map((spec) => ({
+        userId: recipients.get(spec.recipient)!.id,
         valuationId: valuation.id,
         type: spec.type,
         title: spec.title,
         body: spec.body,
-      });
-    }
+      }));
+    await createNotifications(client, notifyInputs);
     return out;
   });
 
