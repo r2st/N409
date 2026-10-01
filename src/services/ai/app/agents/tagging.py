@@ -151,9 +151,9 @@ def _catalogue(raw: Any) -> tuple[list[dict], dict[str, str]]:
 
     if not index:
         raise PipelineInputError(
-            "The tagging agent requires a 'tag_catalogue' in the payload — the "
+            "The tagging digital robot requires a 'tag_catalogue' in the payload — the "
             "vocabulary is closed and is defined by the valuation service, not "
-            "by this agent"
+            "by this digital robot"
         )
     return groups, index
 

@@ -156,7 +156,7 @@ export function draftFromAgentResult(
     throw new AiCompanyProfileError(
       allHeld
         ? 'Every field this run produced is already set on the profile — pass overwrite to replace them'
-        : 'That company-profile run produced no usable field to apply — re-run the agent',
+        : 'That company-profile run produced no usable field to apply — re-run the digital robot',
     );
   }
   return { fields, skipped };

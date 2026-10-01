@@ -316,7 +316,7 @@ export function ReportTab() {
           ? `Drafted ${written} section${written === 1 ? '' : 's'} as version ${res.version}` +
               (kept > 0 ? ` · ${kept} you had already written were left alone.` : '.') +
               overlong
-          : 'Nothing to draft — every section the agent covers has already been written.' + overlong,
+          : 'Nothing to draft — every section the digital robot covers has already been written.' + overlong,
       );
       await load();
     });

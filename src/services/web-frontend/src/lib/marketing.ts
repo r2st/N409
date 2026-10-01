@@ -343,17 +343,17 @@ export const HOW_IT_WORKS = [
   {
     step: '01',
     title: 'Onboarding form',
-    body: 'Answer a quick set of questions, upload select documents, and connect your accounting software — about 15 minutes.',
+    body: 'Questions, documents, and accounting sync — about 15 minutes.',
   },
   {
     step: '02',
     title: 'Draft report',
-    body: 'Review a draft within 24 hours. Ask questions, request changes, and see exactly how the numbers were built.',
+    body: 'Draft in 24 hours. Ask questions, see how every number was built.',
   },
   {
     step: '03',
     title: 'Final delivery',
-    body: 'Analyst-reviewed, dual-signed, audit-defensible final report — standard in 7 business days, Express in 1.',
+    body: 'Dual-signed, audit-defensible report — 7 days standard, 1 day express.',
   },
 ];
 
@@ -412,15 +412,15 @@ export const PARTNER_LOGOS: PartnerLogo[] = [
 export const PROOF_POINTS: Array<{ title: string; body: string }> = [
   {
     title: 'Dual analyst sign-off',
-    body: 'Every report is prepared and independently reviewed by credentialed analysts, then signed by both. No report leaves the platform on a model alone.',
+    body: 'Two credentialed analysts prepare and sign every report. No model-only output.',
   },
   {
     title: 'Every number traces to a source',
-    body: 'The workbook ships with the report: each figure links back to the document, connected ledger, or model assumption it came from — the trail an auditor asks for.',
+    body: 'Every figure links to its source document, ledger, or assumption — the audit trail auditors ask for.',
   },
   {
     title: 'Methodology in the open',
-    body: 'Income, market, and asset approaches, the OPM backsolve, and the DLOM models are all documented in the appendix with their inputs. Nothing is a black box.',
+    body: 'Every approach and discount model documented with inputs. Nothing is a black box.',
   },
 ];
 
@@ -438,23 +438,23 @@ export interface FaqEntry {
 export const PRICING_FAQ: FaqEntry[] = [
   {
     q: 'How much does a 409A valuation cost?',
-    a: 'A standard 409A valuation starts at $1,190 with a 7-business-day turnaround. Express delivery (1 business day) is available as a $500 add-on. Other report types are priced per product on each product page.',
+    a: 'From $1,190 with 7-day delivery. Express (1 day) is a $500 add-on. Other types priced on each product page.',
   },
   {
     q: 'How is pricing structured across report types?',
-    a: 'Every report is a single flat price — no subscription, no per-seat fees, no platform lock-in. The price you configure in the calculator is exactly what checkout charges.',
+    a: 'One flat price per report — no subscriptions, no per-seat fees, no lock-in.',
   },
   {
     q: 'Do you offer express delivery?',
-    a: 'Yes. Express delivery returns your final report in 1 business day instead of the standard 7, for a $500 add-on. Your first draft still arrives within 24 hours either way.',
+    a: 'Yes — 1 business day instead of 7, for $500. First draft still arrives within 24 hours either way.',
   },
   {
     q: 'Do you offer bundles or discounts for multiple reports?',
-    a: 'Companies that need several reports — for example a 409A alongside an ASC 718 valuation — or firms placing volume through our partner programme can contact us for bundled pricing.',
+    a: 'Contact us for bundled pricing on multiple reports or partner-programme volume.',
   },
   {
     q: 'What is a 409A valuation?',
-    a: 'An independent appraisal of the fair market value of your common stock, used to set the strike price of employee stock options in compliance with Section 409A of the Internal Revenue Code.',
+    a: 'An independent fair market value appraisal of your common stock for setting option strike prices under IRC §409A.',
   },
   {
     q: 'How long does a valuation take?',
@@ -515,32 +515,32 @@ export interface ValuationTrigger {
 export const VALUATION_TRIGGERS: ValuationTrigger[] = [
   {
     title: 'Before you grant your first stock option',
-    body: 'The first grant is the first moment a strike price exists, and it needs support on the day it is set — not retroactively once someone asks. This is the single most common gap: an early team is granted options on a number chosen at a board meeting, and the valuation is commissioned a year later.',
+    body: 'A strike price needs support on the day it is set — not retroactively.',
     urgency: 'required',
   },
   {
     title: 'Every 12 months, without exception',
-    body: 'The safe harbor requires the appraisal be no more than 12 months old at the date of grant. A valuation that has aged past its window supports nothing, even if nothing about the business has changed.',
+    body: 'Safe harbor expires after 12 months — an aged valuation supports nothing.',
     urgency: 'required',
   },
   {
     title: 'After closing a priced round',
-    body: 'A priced round is the clearest material event there is — the market has just told you what your preferred stock is worth. Any valuation predating the close is invalid from the moment it closes, and grants made in the gap are the ones that surface in diligence.',
+    body: 'A priced round invalidates prior valuations immediately. Grants in the gap surface in diligence.',
     urgency: 'required',
   },
   {
     title: 'After any other material event',
-    body: 'An acquisition offer, a significant pivot, the loss or win of a business-defining customer, a secondary transaction in your own stock, or a substantial miss against the forecast the last valuation relied on. The test is whether the event would change what a buyer would pay.',
+    body: 'Acquisitions, pivots, major customer changes, or secondary transactions — anything that would change what a buyer would pay.',
     urgency: 'required',
   },
   {
     title: 'Before a fundraise or an exit process',
-    body: 'Not a statutory trigger, but a practical one. Diligence will examine your grant history, and a clean, unbroken run of valuations covering every grant date is far cheaper to produce now than to reconstruct under a deal timeline.',
+    body: 'A clean valuation history is far cheaper to produce now than to reconstruct under a deal timeline.',
     urgency: 'recommended',
   },
   {
     title: 'Before an audit or a QSBS claim',
-    body: 'Your auditor will test stock-based compensation expense against the valuation, and a Section 1202 QSBS position rests on facts a valuation is well placed to evidence. Both go more smoothly when the supporting work already exists.',
+    body: 'Auditors test SBC expense and QSBS claims against the valuation — smoother when the work already exists.',
     urgency: 'recommended',
   },
 ];

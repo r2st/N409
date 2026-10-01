@@ -58,7 +58,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ctaLabel: CTA_START,
     problem: {
       headline: 'Priced options wrong, and the tax falls on your team',
-      body: 'You need a defensible fair market value before you can grant stock options. Skip it — or lowball it — and the IRS can treat every grant as immediate taxable income under §409A, with penalties landing on your employees.',
+      body: 'Without a defensible FMV, the IRS can treat every grant as taxable income — penalties land on your employees.',
       bullets: [
         'A stale or missing 409A stalls option grants and new hires',
         'An indefensible strike price creates 409A penalties for optionees',
@@ -69,19 +69,19 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     solution: [
       {
         title: 'Safe-harbor qualified',
-        body: 'Prepared by credentialed analysts using a repeatable, documented methodology that qualifies for the §409A safe harbor.',
+        body: 'Credentialed analysts, documented methodology, §409A safe harbor.',
       },
       {
         title: 'OPM backsolve',
-        body: 'We backsolve your common value from your most recent priced round, then cross-check with income and market approaches.',
+        body: 'Common value from your latest round, cross-checked with income and market approaches.',
       },
       {
         title: 'DLOM support',
-        body: 'Marketability discounts backed by the Chaffee and Finnerty put-option models, fully shown in the report.',
+        body: 'Chaffee and Finnerty put-option models, fully documented.',
       },
       {
         title: 'Board-ready report',
-        body: 'A clean PDF with a complete methodology appendix your board can adopt and your auditor will accept.',
+        body: 'Clean PDF with full methodology appendix — board-adoptable, auditor-ready.',
       },
     ],
     included: [
@@ -159,7 +159,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ctaLabel: CTA_START,
     problem: {
       headline: 'You can’t make the deal without a number you can defend',
-      body: 'A bank, a buyer, or a departing partner wants to know what the business is worth. A rule-of-thumb multiple off the back of an envelope won’t survive their scrutiny — or yours.',
+      body: ‘Banks, buyers, and partners need a defensible number — not a back-of-envelope multiple.’,
       bullets: [
         'Lenders and buyers discount valuations they can’t trace',
         'Partner buy-ins and buy-outs turn contentious without an independent number',
@@ -170,19 +170,19 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     solution: [
       {
         title: 'Three approaches, weighted',
-        body: 'Income, market, and asset approaches weighted to your situation — not a single blunt multiple.',
+        body: 'Income, market, and asset approaches weighted to your situation.',
       },
       {
         title: 'Built from real financials',
-        body: 'Connect your accounting software or upload statements; we work from your actual numbers.',
+        body: 'Sync your accounting software or upload statements directly.',
       },
       {
         title: 'Plain-English report',
-        body: 'A clear write-up you can hand to a bank, a buyer, or a partner without a translator.',
+        body: 'Hand it to a bank, buyer, or partner — no translator needed.',
       },
       {
         title: 'Independent and fast',
-        body: 'A credentialed, third-party opinion delivered in days, so your deal keeps moving.',
+        body: 'Credentialed third-party opinion delivered in days.',
       },
     ],
     included: [
@@ -227,7 +227,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ctaLabel: CTA_START,
     problem: {
       headline: 'Stock-comp expense your auditor won’t sign off on',
-      body: 'Every option and RSU you grant hits your income statement under ASC 718. Get the grant-date fair value or its inputs wrong and your audit stalls on a restatement risk.',
+      body: 'Wrong grant-date fair value stalls your audit on a restatement risk.',
       bullets: [
         'Auditors reject volatility and expected-term assumptions without support',
         'Manual spreadsheets don’t document how the fair value was built',
@@ -238,19 +238,19 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     solution: [
       {
         title: 'Grant-date fair value',
-        body: 'Fair value for options, RSUs, and other awards, computed and documented per ASC 718.',
+        body: 'Options, RSUs, and awards — computed and documented per ASC 718.',
       },
       {
         title: 'Documented assumptions',
-        body: 'Volatility, expected term, and risk-free rate each supported and shown in the report.',
+        body: 'Volatility, expected term, and risk-free rate — each documented.',
       },
       {
         title: 'Big-4 ready',
-        body: 'Built to withstand review by any Big-4 audit team, with a full methodology appendix.',
+        body: 'Big-4 ready, with full methodology appendix.',
       },
       {
         title: 'Ties to your 409A',
-        body: 'Consistent with your 409A inputs so the two valuations tell one coherent story.',
+        body: 'Consistent with your 409A — one coherent story.',
       },
     ],
     included: [
@@ -295,7 +295,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ctaLabel: CTA_START,
     problem: {
       headline: 'Level 3 marks your auditor keeps pushing back on',
-      body: 'Funds and corporates carrying investments at fair value need defensible marks under ASC 820. Thinly-traded, Level 3 positions are exactly where auditors dig in.',
+      body: 'Defensible Level 3 marks under ASC 820 — exactly where auditors dig in.',
       bullets: [
         'Level 3 inputs draw the most audit scrutiny',
         'Portfolio marks without documentation invite restatement',
@@ -306,19 +306,19 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     solution: [
       {
         title: 'Level 3 valuations',
-        body: 'Fair value of hard-to-value assets with fully documented, defensible inputs.',
+        body: 'Hard-to-value assets with documented, defensible inputs.',
       },
       {
         title: 'Instrument-level support',
-        body: 'Portfolio-company and instrument-level analysis, not a single blended number.',
+        body: 'Per-company and per-instrument analysis.',
       },
       {
         title: 'Audit-ready schedules',
-        body: 'Schedules and methodology packaged the way your auditor expects to review them.',
+        body: 'Packaged the way your auditor expects.',
       },
       {
         title: 'Quarter-close speed',
-        body: 'Turnarounds that fit a reporting calendar, with Express when the close is tight.',
+        body: 'Fits your reporting calendar. Express when the close is tight.',
       },
     ],
     included: [
@@ -359,7 +359,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ctaLabel: CTA_START,
     problem: {
       headline: 'A portfolio marked one spreadsheet at a time',
-      body: 'ASC 820 asks for fair value position by position, but LPs and auditors read the fund: a NAV, a hierarchy split, and a distribution that ties. Assembling that from per-company workbooks each quarter is where the errors and the weeks go.',
+      body: 'LPs and auditors want NAV, hierarchy split, and a distribution that ties — not scattered per-company workbooks.',
       bullets: [
         'Level 3 holdings need calibration to a real financing, not a cost carry',
         'A quarter-on-quarter roll-forward has to explain what moved and why',

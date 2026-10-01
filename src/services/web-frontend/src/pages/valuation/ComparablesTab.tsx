@@ -422,7 +422,7 @@ export function ComparablesTab() {
           `Applied the AI peer set — ${selected} ${selected === 1 ? 'company' : 'companies'} included, ` +
             `${excluded} set aside` +
             (unusable > 0
-              ? `, ${unusable} of those chosen by the agent but carrying no market figures to strike a ` +
+              ? `, ${unusable} of those chosen by the digital robot but carrying no market figures to strike a ` +
                 `multiple on`
               : '') +
             (unverified > 0
@@ -434,7 +434,7 @@ export function ComparablesTab() {
       } finally {
         setAiPhase(null);
       }
-    }, 'Could not run the AI comparable agent.');
+    }, 'Could not run the AI comparable digital robot.');
   };
 
   const refresh = async () => {

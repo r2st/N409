@@ -280,7 +280,7 @@ function PreviewPanel({ kind }: { kind: ValuationKind }) {
       </div>
       {sections.length === 0 ? (
         <p className="text-sm text-ink-500">
-          Nothing resolves for this kind — the agent falls back to its built-in 409A sections.
+          Nothing resolves for this kind — the digital robot falls back to its built-in 409A sections.
         </p>
       ) : (
         <ol className="space-y-2">

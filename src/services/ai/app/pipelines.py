@@ -453,7 +453,7 @@ def run_missing_data(payload: dict) -> tuple[str, dict]:
 
     system, model = _prompt_overrides(
         payload,
-        "You are a 409A valuation analyst assistant. You review what a client has "
+        "You are a 409A valuation analyst digital robot. You review what a client has "
         "uploaded and identify what is still missing to complete a defensible "
         "valuation. Respond ONLY with JSON.",
     )
@@ -604,7 +604,7 @@ def run_summarize(payload: dict) -> tuple[str, dict]:
 
     system, model = _prompt_overrides(
         payload,
-        "You are a 409A valuation analyst assistant. Summarize each uploaded "
+        "You are a 409A valuation analyst digital robot. Summarize each uploaded "
         "attachment for the analyst working the engagement: what the document "
         "is, what it says, and the figures that matter for a valuation. "
         "Never invent numbers. Respond ONLY with JSON.",

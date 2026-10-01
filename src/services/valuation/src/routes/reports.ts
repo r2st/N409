@@ -1022,7 +1022,7 @@ export function registerReportRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
     refuseIfRetired(valuation, 'accepting report edits');
-    if (!deps.ai) throw problems.unprocessable('The narrative agent is not configured');
+    if (!deps.ai) throw problems.unprocessable('The narrative digital robot is not configured');
 
     const parsed = NarrativeBody.safeParse(req.body ?? {});
     if (!parsed.success) throw invalidBody('Invalid options', parsed.error);

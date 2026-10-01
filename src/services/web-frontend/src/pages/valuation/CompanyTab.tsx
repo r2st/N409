@@ -63,7 +63,7 @@ const AGENT_FIELD_LABELS: Record<AgentField, string> = {
 
 const SKIP_REASONS: Record<string, string> = {
   already_set: 'already filled in',
-  malformed: 'the agent returned an unusable value',
+  malformed: 'the digital robot returned an unusable value',
   empty: 'the documents did not say',
 };
 

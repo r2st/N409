@@ -57,8 +57,7 @@ export function LandingPage() {
             valuations.
           </h1>
           <p className="mt-7 max-w-xl text-lg leading-relaxed text-chrome-dim">
-            An independent, audit-defensible 409A valuation — first draft in 24 hours, signed by two
-            credentialed analysts, from {formatUsd(minPriceCents)} flat.
+            First draft in 24 hours. Dual-signed. From {formatUsd(minPriceCents)} flat.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-4">
             <Link
@@ -104,22 +103,19 @@ export function LandingPage() {
           <div>
             <h3 className="font-display text-lg font-semibold text-ink-900">Price options safely</h3>
             <p className="mt-2 text-sm leading-relaxed text-ink-600">
-              A qualified 409A valuation gives your option grants safe-harbor protection — the strike price
-              the IRS presumes reasonable.
+              Safe-harbor protection for every grant.
             </p>
           </div>
           <div>
             <h3 className="font-display text-lg font-semibold text-ink-900">Survive the audit</h3>
             <p className="mt-2 text-sm leading-relaxed text-ink-600">
-              Every report ships with the full methodology, inputs, and an evidence bundle your auditor can
-              trace end to end.
+              Full methodology, inputs, and evidence bundle — end to end.
             </p>
           </div>
           <div>
             <h3 className="font-display text-lg font-semibold text-ink-900">Protect the company</h3>
             <p className="mt-2 text-sm leading-relaxed text-ink-600">
-              Mispriced equity creates tax liability for employees and clean-up costs at diligence. An
-              independent opinion removes that risk.
+              Remove mispricing risk before diligence finds it.
             </p>
           </div>
         </div>
@@ -149,8 +145,7 @@ export function LandingPage() {
           Save hours of work with accounting integrations
         </h2>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-600">
-          Onboarding connects to the software your business already uses and pulls your financials directly —
-          no spreadsheet exports, no re-typing.
+          Pull financials directly — no spreadsheets, no re-typing.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           {ACCOUNTING_PROVIDERS.map((name) => (
@@ -210,8 +205,7 @@ export function LandingPage() {
           {/* "Start for free" would read as though the report itself is free.
               What is actually free is everything up to checkout. */}
           <p className="mx-auto mt-3 max-w-md text-sm text-chrome-dim">
-            Set up your valuation in about 15 minutes and see a draft within 24 hours. You only pay when
-            you&rsquo;re ready to proceed.
+            15 minutes to set up. Draft in 24 hours. Pay only when ready.
           </p>
           <div className="mt-7 flex flex-wrap items-center justify-center gap-4">
             <Link

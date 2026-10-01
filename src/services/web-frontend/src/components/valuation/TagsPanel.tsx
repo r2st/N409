@@ -189,7 +189,7 @@ export function TagsPanel({
 
       {suggested.length > 0 && (
         <div className="mt-4">
-          <h3 className="overline mb-2 text-ink-400">Suggested by the tagging agent</h3>
+          <h3 className="overline mb-2 text-ink-400">Suggested by the tagging digital robot</h3>
           <ul className="divide-y divide-paper-300">
             {suggested.map((tag) => (
               <li key={tag.slug} className="flex flex-wrap items-start gap-3 py-3">

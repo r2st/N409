@@ -327,10 +327,10 @@ export const HELP_ARTICLES: HelpArticleContent[] = [
   // ── AI Agents ────────────────────────────────────────────────────────────
   {
     id: 'ai-agents-overview',
-    title: 'AI agents',
+    title: 'AI digital robots',
     category: 'ai-agents',
-    summary: 'How automated agents extract data, run checks and draft content.',
-    keywords: ['ai', 'agents', 'extraction', 'missing data', 'automation', 'assistant'],
+    summary: 'How digital robots extract data, run checks and draft content.',
+    keywords: ['ai', 'digital robots', 'extraction', 'missing data', 'automation', 'digital robot'],
     related: ['financial-data-overview', 'comparables-overview', 'health-checks-overview'],
   },
 

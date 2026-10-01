@@ -305,20 +305,16 @@ Chaffee and Finnerty are computed by the engine from your volatility and time to
 
 Minority holders can't direct the company, so a **DLOC** (a fraction between 0 and 1) may be applied to reflect that lack of control. Set both on the **Params** tab under **Discounts**.`,
 
-  'ai-agents-overview': `# AI agents
+  'ai-agents-overview': `# AI digital robots
 
-AI agents do the heavy lifting of turning raw documents into structured, reviewable inputs — always with a human in the loop.
+Automated extraction, gap checks, peer-set proposals, and draft narratives — always human-reviewed.
 
-## What they do
+- **Data extraction** — cap tables, financials, and projections → model inputs.
+- **Missing-data checks** — flags gaps against the engagement's requirements.
+- **Comparable suggestions** — proposes a peer set from your business overview.
+- **Drafting help** — first-draft narrative sections for analysts to edit.
 
-- **Data extraction** — read uploaded cap tables, financial statements and projections and populate the model.
-- **Missing-data checks** — compare what you've provided against what the engagement needs and list the gaps.
-- **Comparable suggestions** — propose a peer set from your business overview.
-- **Drafting help** — assemble first-draft narrative sections for analysts to edit.
-
-## Review, always
-
-Nothing an agent produces is final. Every extraction is shown for analyst review before it feeds a calculation, and every drafted section is edited before it reaches a report. The AI tab (operations-only) shows each agent run, its inputs and its output so the reasoning is auditable.`,
+Nothing a digital robot produces is final. The AI tab shows every run, input, and output for auditability.`,
 
   'report-overview': `# Generating the report
 
