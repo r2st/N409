@@ -177,6 +177,7 @@ import { registerPartnerApiGuardMetrics } from './observability/partnerApiGuard.
 import { registerBackupMetrics, registerBackupVerifyMetrics } from './observability/backups.js';
 import { registerRealtimeStreamMetrics } from './observability/realtimeStreams.js';
 import { registerRequestThrottleMetrics } from './observability/requestThrottle.js';
+import { registerExportMetrics } from './observability/exportMetrics.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -1064,6 +1065,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // receiver burning nine of its ten seconds on every event was visible only
   // as the request that moved the engagement getting slow.
   registerPartnerWebhookDeliveryMetrics(metricsRegistry);
+  // And what the export path costs, which is an audit deliverable built from up
+  // to ten thousand rows: the CSV, PDF and XLSX formats share one route label
+  // and nothing said which one took four seconds or whether the row cap is being
+  // hit — the signal that clients are outgrowing the ceiling.
+  registerExportMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });

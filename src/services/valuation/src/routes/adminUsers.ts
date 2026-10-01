@@ -15,6 +15,7 @@ import { listValuations } from '../repos/valuations.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
 import { toCsv } from '../domain/csv.js';
 import { MAX_EXPORT_ROWS, sendExport, truncationOf } from './exports.js';
+import { recordExport } from '../observability/exportMetrics.js';
 import { hashPassword } from '../auth/password.js';
 import { verifyReauthPassword } from '../auth/reauth.js';
 import { PASSWORD_MIN_LENGTH, passwordPolicyError } from '../domain/passwordPolicy.js';
@@ -466,6 +467,7 @@ export function registerAdminUserRoutes(
      * WHERE and can disagree with the page under concurrent writes; the extra
      * row cannot.
      */
+    const userExportStartedAt = Date.now();
     const { items: fetched } = await listUsers(deps.pool, {
       q,
       role,
@@ -519,6 +521,7 @@ export function registerAdminUserRoutes(
       // being looked for.
       filters: { q: q ?? null, role: role ?? null, partner_id: partner_id ?? null, include_deleted },
     });
+    recordExport('csv', 'list', truncated, Date.now() - userExportStartedAt);
     return sendExport(reply, truncated)
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', 'attachment; filename="users.csv"')

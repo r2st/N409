@@ -20,6 +20,7 @@ import { invalidSort } from '../domain/sortRefusal.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { withTransaction } from '../db/pool.js';
+import { recordExport } from '../observability/exportMetrics.js';
 
 /**
  * CSV / PDF / XLSX export of the valuations list (M3 feature 16 + M4 P2), plus
@@ -303,6 +304,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     if (parsedSort.refusal !== null) throw invalidSort(parsedSort.refusal);
     const sort = parsedSort.specs;
 
+    const exportStartedAt = Date.now();
     const generatedAt = new Date();
     const stamp = generatedAt.toISOString().slice(0, 10);
     if (format === 'csv' || format === 'xlsx') {
@@ -317,6 +319,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       const { rows, truncated } = truncationOf(fetched);
       await recordListExport(principal, format, parsed.data, rows.length, truncated);
       if (format === 'csv') {
+        recordExport('csv', 'list', truncated, Date.now() - exportStartedAt);
         // CSV gets the headers but no in-band marker: there is no comment
         // syntax a spreadsheet honours, and a trailing note row would be
         // indistinguishable from data to anything parsing the file.
@@ -339,6 +342,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         ],
         { mtime: generatedAt },
       );
+      recordExport('xlsx', 'list', truncated, Date.now() - exportStartedAt);
       return sendExport(reply, truncated)
         .header('content-type', XLSX_CONTENT_TYPE)
         .header('content-disposition', `attachment; filename="valuations-${stamp}.xlsx"`)
@@ -377,6 +381,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       PDF_COLUMNS,
       items.map((v) => pdfRowValues(v).map((c) => (c === null || c === undefined ? '' : String(c)))),
     );
+    recordExport('pdf', 'list', truncated, Date.now() - exportStartedAt);
     return sendExport(reply, truncated)
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="valuations-${stamp}.pdf"`)
@@ -426,6 +431,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       throw problems.notFound();
     }
 
+    const workbookStartedAt = Date.now();
     const [workbook, capTable, grantPage, calculation, overwrites] = await Promise.all([
       listWorkbookCells(deps.pool, id),
       findCapTable(deps.pool, id),
@@ -492,6 +498,8 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         },
       }),
     );
+
+    recordExport('xlsx', 'workbook', false, Date.now() - workbookStartedAt);
 
     const stamp = generatedAt.toISOString().slice(0, 10);
     return reply
