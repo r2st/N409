@@ -208,7 +208,7 @@ export function HelpPage() {
         {article.route && (
           <Link
             to={article.route}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-bond-600 px-3 py-1.5 text-sm font-semibold text-paper-50 hover:bg-bond-700"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-bond-600 px-3 py-1.5 text-sm font-semibold text-bond-fg hover:bg-bond-700"
           >
             Go to the feature →
           </Link>

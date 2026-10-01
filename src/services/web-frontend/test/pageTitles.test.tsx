@@ -145,7 +145,7 @@ function renderAt(path: string, children?: React.ReactNode) {
 describe('RouteTitle', () => {
   it('sets the document title from the registry', async () => {
     renderAt('/admin/jobs');
-    await waitFor(() => expect(document.title).toBe('Background jobs · N409'));
+    await waitFor(() => expect(document.title).toBe('Background jobs · DoAide 409A'));
   });
 
   it('leaves the title to the page on a marketing route', async () => {
@@ -163,7 +163,7 @@ describe('RouteTitle', () => {
     }
     renderAt('/valuations/01ARZ3NDEKTSV4RRFFQ69G5FAV/cap-table', <Detailed />);
     expect(await screen.findByText('workspace')).toBeInTheDocument();
-    await waitFor(() => expect(document.title).toBe('Cap Table · Acme Robotics, Inc. · N409'));
+    await waitFor(() => expect(document.title).toBe('Cap Table · Acme Robotics, Inc. · DoAide 409A'));
   });
 
   it('clears the detail when the page that offered it goes away', async () => {
@@ -185,10 +185,10 @@ describe('RouteTitle', () => {
         </MemoryRouter>
       </HelmetProvider>,
     );
-    await waitFor(() => expect(document.title).toBe('Overview · Acme Robotics, Inc. · N409'));
+    await waitFor(() => expect(document.title).toBe('Overview · Acme Robotics, Inc. · DoAide 409A'));
 
     await userEvent.click(screen.getByRole('link', { name: 'Valuations' }));
     expect(await screen.findByText('dashboard')).toBeInTheDocument();
-    await waitFor(() => expect(document.title).toBe('Dashboard · N409'));
+    await waitFor(() => expect(document.title).toBe('Dashboard · DoAide 409A'));
   });
 });

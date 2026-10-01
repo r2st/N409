@@ -23,7 +23,7 @@ const read: AppNotification = {
   valuation_id: null,
   link: null,
   type: 'welcome',
-  title: 'Welcome to N409',
+  title: 'Welcome to DoAide 409A',
   body: null,
   read_at: '2026-07-01T10:00:00Z',
   created_at: '2026-06-30T09:00:00Z',

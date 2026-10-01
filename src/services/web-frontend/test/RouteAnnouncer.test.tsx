@@ -57,14 +57,14 @@ describe('RouteAnnouncer', () => {
     // region it was already tracking. And it must say nothing here: the browser
     // has just loaded a document and read its title.
     render(app('/dashboard'));
-    await waitFor(() => expect(document.title).toBe('Dashboard · N409'));
+    await waitFor(() => expect(document.title).toBe('Dashboard · DoAide 409A'));
     expect(region()).toHaveAttribute('aria-live', 'polite');
     expect(region()).toHaveTextContent('');
   });
 
   it('announces the page a navigation landed on', async () => {
     render(app('/dashboard'));
-    await waitFor(() => expect(document.title).toBe('Dashboard · N409'));
+    await waitFor(() => expect(document.title).toBe('Dashboard · DoAide 409A'));
 
     await userEvent.click(screen.getByRole('link', { name: 'Background jobs' }));
     expect(await screen.findByText('jobs')).toBeInTheDocument();
@@ -82,7 +82,7 @@ describe('RouteAnnouncer', () => {
     // The reason the text is read from `document.title` rather than from the
     // route-title registry: the registry deliberately has no title for these.
     render(app('/dashboard'));
-    await waitFor(() => expect(document.title).toBe('Dashboard · N409'));
+    await waitFor(() => expect(document.title).toBe('Dashboard · DoAide 409A'));
 
     await userEvent.click(screen.getByRole('link', { name: 'Pricing' }));
     expect(await screen.findByText('pricing')).toBeInTheDocument();
@@ -115,7 +115,7 @@ describe('RouteAnnouncer', () => {
         </MemoryRouter>
       </HelmetProvider>,
     );
-    await waitFor(() => expect(document.title).toBe('Dashboard · N409'));
+    await waitFor(() => expect(document.title).toBe('Dashboard · DoAide 409A'));
 
     await userEvent.click(screen.getByRole('link', { name: 'Somewhere' }));
     expect(await screen.findByText('jobs')).toBeInTheDocument();
@@ -160,7 +160,7 @@ describe('RouteAnnouncer', () => {
         </MemoryRouter>
       </HelmetProvider>,
     );
-    await waitFor(() => expect(document.title).toBe('Dashboard · N409'));
+    await waitFor(() => expect(document.title).toBe('Dashboard · DoAide 409A'));
 
     await userEvent.click(screen.getByRole('link', { name: 'Background jobs' }));
     expect(screen.getByRole('status').textContent).toBe('');

@@ -156,7 +156,7 @@ describe('ClientIntakePage', () => {
     // The firm's identity, not ours — this page is the firm's front door.
     expect(screen.getAllByText('Meridian Valuation').length).toBeGreaterThan(0);
     expect(screen.getByText('Independent valuations')).toBeInTheDocument();
-    expect(screen.queryByText('N409')).not.toBeInTheDocument();
+    expect(screen.queryByText('DoAide 409A')).not.toBeInTheDocument();
   });
 
   it('reopens on the section the client still owes an answer for', async () => {

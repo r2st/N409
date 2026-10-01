@@ -717,7 +717,7 @@ export function AppLayout() {
   const userCard = user && (
     <div className="border-t border-chrome-800 px-4 py-4">
       <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-bond-700 text-xs font-bold text-bond-fg">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-bond-500 text-xs font-bold text-bond-fg">
           {initials(user)}
         </div>
         <div className="min-w-0">

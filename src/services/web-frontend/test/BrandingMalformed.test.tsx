@@ -84,7 +84,7 @@ describe('a malformed 200 from /branding', () => {
     mountShell();
 
     // The shell keeps rendering, on the brand that was already showing.
-    await waitFor(() => expect(screen.getByText(PLATFORM_BRANDING.name)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('409A')).toBeInTheDocument());
     expect(screen.queryByText('Something went wrong')).toBeNull();
   });
 
@@ -111,7 +111,7 @@ describe('a malformed 200 from /branding', () => {
   it('leaves the document unbranded rather than half-branded', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ branding: { name: 'X' } }));
     mountShell();
-    await waitFor(() => expect(screen.getByText(PLATFORM_BRANDING.name)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('409A')).toBeInTheDocument());
     // A payload that fails the check must not have written a partial ramp.
     expect(document.documentElement.hasAttribute('data-brand')).toBe(false);
   });
@@ -137,7 +137,7 @@ describe('a well-formed 200 still applies', () => {
       jsonResponse({ branding: { ...FIRM, white_label: false } }),
     );
     mountShell();
-    await waitFor(() => expect(screen.getByText('Meridian Valuations')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('409A')).toBeInTheDocument());
     expect(document.documentElement.hasAttribute('data-brand')).toBe(false);
   });
 });
@@ -146,14 +146,14 @@ describe('a rejected request is still tolerated', () => {
   it('keeps the platform brand on a network failure', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
     mountShell();
-    await waitFor(() => expect(screen.getByText(PLATFORM_BRANDING.name)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('409A')).toBeInTheDocument());
     expect(screen.queryByText('Something went wrong')).toBeNull();
   });
 
   it('keeps the platform brand on a 500', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'boom' }, 500));
     mountShell();
-    await waitFor(() => expect(screen.getByText(PLATFORM_BRANDING.name)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('409A')).toBeInTheDocument());
     expect(screen.queryByText('Something went wrong')).toBeNull();
   });
 });

@@ -1,22 +1,18 @@
-/* Both families ship latin, latin-ext and vietnamese faces, each scoped by
-   unicode-range — so a browser only ever downloads the subset a page actually
-   uses (latin, here). The extra files cost build output, not bandwidth. The
-   latin faces are preloaded from the document head at build time (see
-   vite.config.ts) because CSS-referenced fonts are otherwise discovered late,
-   which delays the display-font headline that is our LCP element. */
-@import '@fontsource-variable/public-sans';
-@import '@fontsource-variable/fraunces';
+@import '@fontsource-variable/schibsted-grotesk';
+@import '@fontsource/ibm-plex-mono';
 @import '@fontsource/instrument-serif';
 @import 'tailwindcss';
 
 /*
- * DoAide 409A — "institutional ledger" theme.
- * Deep midnight-ink navigation, warm paper content, bond-green accent,
- * a single brass detail in the mark. Fraunces for display, Public Sans body.
+ * DoAide 409A — "editorial-technical" theme.
+ * Near-black canvas, hairline borders, amber signal accent, monospaced data.
+ * Schibsted Grotesk for UI, Instrument Serif for display, IBM Plex Mono for
+ * data. Matches the DoAide family design language (job.doaide.com).
  */
 @theme {
-  --font-sans: 'Public Sans Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Fraunces Variable', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Schibsted Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
 
   /* ink — the sidebar / brand darks */
   --color-ink-950: #070b14;
@@ -43,37 +39,25 @@
   --color-paper-300: #ddd9cc;
   --color-paper-400: #cdc7b6;
 
-  /* bond — accent green */
-  --color-bond-50: #edf7f2;
-  --color-bond-100: #d7eee2;
-  --color-bond-200: #aedcc6;
-  --color-bond-300: #7ac4a9;
-  /*
-   * Its text call sites sit on the dark marketing bands, not on paper, so it is
-   * tuned for chrome (5.8:1) rather than for white — where it is a hover border
-   * and a bullet dot, and never text.
-   */
-  --color-bond-400: #2ba184;
-  --color-bond-500: #12936f;
-  --color-bond-600: #0e7a5c;
-  --color-bond-700: #0a5f48;
-  --color-bond-800: #084a39;
-  --color-bond-900: #063a2c;
+  /* bond — accent amber/gold (the TalentPing "signal") */
+  --color-bond-50: #fef9eb;
+  --color-bond-100: #fdf0cc;
+  --color-bond-200: #fae099;
+  --color-bond-300: #f7d070;
+  --color-bond-400: #f0b429;
+  --color-bond-500: #d4a01f;
+  --color-bond-600: #a87c1c;
+  --color-bond-700: #7d5c15;
+  --color-bond-800: #533e0e;
+  --color-bond-900: #2a1f08;
 
-  /*
-   * Foreground for anything sitting on a filled bond swatch (primary buttons,
-   * step pips, "done" ticks). It cannot be a literal `text-white`, because the
-   * bond ramp moves *up* in dark mode so the accent lifts off a dark ground —
-   * white on #43cca0 is unreadable. This token inverts with it.
-   */
-  --color-bond-fg: #ffffff;
+  --color-bond-fg: #0a0a0b;
 
-  /* brass — sparing premium detail */
-  --color-brass-300: #dfc98c;
-  --color-brass-400: #c9a54a;
-  --color-brass-500: #b08d35;
-  /* The value CapTableGraph already names as its own fallback. */
-  --color-brass-600: #8a6224;
+  /* brass — sparing premium detail, harmonised with the signal accent */
+  --color-brass-300: #f7d070;
+  --color-brass-400: #f0b429;
+  --color-brass-500: #d4a01f;
+  --color-brass-600: #a87c1c;
 
   /*
    * chrome — the brand furniture that is dark in BOTH themes: the app sidebar,
@@ -86,15 +70,15 @@
    * second — the sidebar would turn white and its labels would vanish. Chrome
    * holds the second role and never inverts, so the two can move independently.
    */
-  --color-chrome-950: #070b14;
-  --color-chrome-900: #0b1220;
-  --color-chrome-800: #131c30;
-  --color-chrome-700: #1e2a45;
-  --color-chrome-600: #2c3b5e;
+  --color-chrome-950: #070709;
+  --color-chrome-900: #0a0a0b;
+  --color-chrome-800: #101012;
+  --color-chrome-700: #16161a;
+  --color-chrome-600: #1d1d22;
   /* Foreground pair for anything sitting on chrome. */
-  --color-chrome-fg: #faf9f6;
-  --color-chrome-dim: #8b97b3;
-  --color-chrome-faint: #5d6c8f;
+  --color-chrome-fg: #e8e8ea;
+  --color-chrome-dim: #888890;
+  --color-chrome-faint: #555560;
 
   /*
    * surface — the card plane. Was a literal `bg-white`, which cannot follow a
@@ -124,10 +108,10 @@
    * a dark stroke on a dark ground. They keep their light-mode values here and
    * lift to their -400-weight equivalents in the dark block below.
    *
-   * Ordering is the ledger palette: bond green, brass, then the muted tones.
+   * Ordering: amber first (the accent), then the muted tones.
    */
-  --color-chart-1: #2f7d5b;
-  --color-chart-2: #b98d4f;
+  --color-chart-1: #b98d4f;
+  --color-chart-2: #2f7d5b;
   --color-chart-3: #3b5b7d;
   --color-chart-4: #8d5a7d;
   --color-chart-5: #5b8d8a;
@@ -173,69 +157,59 @@
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  /* paper → the dark surface ramp, lightest last so "50 is subtlest" still holds */
-  --color-paper-50: #131a27;
-  --color-paper-100: #0a0e16;
-  --color-paper-200: #1a2231;
-  --color-paper-300: #29334a;
-  --color-paper-400: #384463;
+  /* paper → TalentPing's near-black canvas; "50 is subtlest" still holds */
+  --color-paper-50: #101012;
+  --color-paper-100: #0a0a0b;
+  --color-paper-200: #16161a;
+  --color-paper-300: #1d1d22;
+  --color-paper-400: #252528;
 
-  /* ink → light text; the ordering still reads "900 is strongest" */
+  /* ink → light text on the dark canvas */
   --color-ink-950: #ffffff;
-  --color-ink-900: #eef1f7;
-  --color-ink-800: #dfe4ee;
-  --color-ink-700: #c8cfdd;
-  --color-ink-600: #aab3c6;
-  --color-ink-500: #9aa4b9;
-  --color-ink-400: #8b95ad;
-  --color-ink-300: #6f7a93;
-  --color-ink-200: #55607a;
+  --color-ink-900: #e8e8ea;
+  --color-ink-800: #d0d0d4;
+  --color-ink-700: #b8b8be;
+  --color-ink-600: #9898a0;
+  --color-ink-500: #8a8a94;
+  --color-ink-400: #7c7c8a;
+  --color-ink-300: #484850;
+  --color-ink-200: #383840;
 
-  --color-surface: #111825;
+  --color-surface: #101012;
 
-  /* The accent has to lift off a dark ground, so it moves up the ramp. */
-  --color-bond-50: #0d251d;
-  --color-bond-100: #10382a;
-  --color-bond-200: #1a5741;
-  --color-bond-300: #21785a;
-  --color-bond-400: #289a75;
-  --color-bond-500: #2fbc90;
-  --color-bond-600: #43cca0;
-  --color-bond-700: #6bdcb6;
-  --color-bond-800: #99e9cd;
-  --color-bond-900: #c2f2e0;
-  --color-bond-fg: #04140e;
+  /* The accent lifts on a dark ground — bright amber. */
+  --color-bond-50: #1e1708;
+  --color-bond-100: #2a1f08;
+  --color-bond-200: #3f320f;
+  --color-bond-300: #5e4a14;
+  --color-bond-400: #a87c1c;
+  --color-bond-500: #f0b429;
+  --color-bond-600: #f7d070;
+  --color-bond-700: #f9dc8c;
+  --color-bond-800: #fae9b0;
+  --color-bond-900: #fcf2d4;
+  --color-bond-fg: #0a0a0b;
 
-  /* Brass does not otherwise invert, but -600 is its darkest step and would be
-     unreadable on a dark card; it moves up rather than down. */
-  --color-brass-600: #d3b264;
+  --color-brass-600: #f0b429;
 
   /*
-   * Status colours come from the Tailwind default palette and follow one
-   * pattern everywhere: a -50 tint for the panel, -200 for its border or ring,
-   * and -600/-900 for the text. Re-pointing those steps fixes every callsite at
-   * once — dark text on a dark tint is the failure mode that would otherwise
-   * make warning and error panels unreadable.
+   * Status colours re-pointed for the near-black canvas. -50 tint for panels,
+   * -200 for borders, -600/-900 for text.
    */
-  --color-red-50: #2a1215;
-  --color-red-100: #3a181c;
-  --color-red-200: #5e2429;
-  /* -300 and -400 come from Tailwind's light ramp, so a `border-red-400` panel
-     and a `decoration-red-300` strike-through kept their light-mode values on a
-     dark tint. They invert with the rest of the family. */
+  --color-red-50: #1e0e10;
+  --color-red-100: #2a1215;
+  --color-red-200: #4a1e22;
   --color-red-300: #ff6f78;
   --color-red-400: #f2555f;
   --color-red-500: #f2555f;
   --color-red-600: #ff8189;
   --color-red-700: #ff9ba1;
   --color-red-800: #ffb4b9;
-  /* `text-red-900` on `bg-red-50` is the error panel; unswapped it was
-     Tailwind's #7f1d1d on the dark tint above — 1.3:1, effectively invisible. */
   --color-red-900: #ffcbcf;
 
-  --color-amber-50: #2a2008;
-  --color-amber-100: #3a2c0b;
-  --color-amber-200: #5e4712;
+  --color-amber-50: #1e1808;
+  --color-amber-100: #2a200b;
+  --color-amber-200: #4a3812;
   --color-amber-300: #7a5d18;
   --color-amber-400: #d9a520;
   --color-amber-500: #e6b32e;
@@ -243,62 +217,54 @@
   --color-amber-800: #f7d98b;
   --color-amber-900: #fae7b4;
 
-  --color-emerald-50: #06241a;
-  --color-emerald-200: #14543c;
+  --color-emerald-50: #06180e;
+  --color-emerald-200: #104430;
   --color-emerald-500: #2fbc90;
   --color-emerald-700: #5ed7ac;
   --color-emerald-800: #8ee6c6;
 
-  --color-sky-50: #0a1f2e;
-  --color-sky-100: #0e2b3f;
-  --color-sky-200: #17496a;
+  --color-sky-50: #08161e;
+  --color-sky-100: #0c2030;
+  --color-sky-200: #133a55;
   --color-sky-700: #63c0ee;
   --color-sky-800: #8fd3f4;
   --color-sky-900: #b7e4f8;
 
-  --color-violet-50: #1d1533;
-  --color-violet-200: #3b2b66;
+  --color-violet-50: #150e22;
+  --color-violet-200: #302050;
   --color-violet-800: #c1abf5;
   --color-violet-900: #d6c8f9;
 
-  /*
-   * The accounting-partner wordmarks (marketing.ts PARTNER_LOGOS) are tinted to
-   * approximate each vendor's brand colour and are the only users of these
-   * steps. At -600 they sit at roughly 2:1 on a dark card, so they move to
-   * their -400 equivalents; the hue survives, the legibility comes back.
-   */
   --color-sky-600: #38bdf8;
   --color-emerald-600: #34d399;
   --color-indigo-600: #818cf8;
   --color-teal-600: #2dd4bf;
   --color-cyan-600: #22d3ee;
 
-  --color-slate-50: #131a27;
-  --color-slate-300: #29334a;
-  --color-slate-600: #aab3c6;
-  --color-slate-700: #c8cfdd;
-  --color-slate-900: #eef1f7;
+  --color-slate-50: #101012;
+  --color-slate-300: #1d1d22;
+  --color-slate-600: #9898a0;
+  --color-slate-700: #b8b8be;
+  --color-slate-900: #e8e8ea;
 
   /*
-   * Chart series lifted to their -400 weights. Every step now clears 3:1
-   * against `--color-surface` (#111825) — the WCAG floor for a graphical
-   * object, which is what a 2px stroke or a 7px donut arc is.
+   * Chart series lifted for the near-black surface. Every step clears 3:1
+   * against --color-surface (#101012).
    */
-  --color-chart-1: #43cca0;
-  --color-chart-2: #d9b46b;
+  --color-chart-1: #d9b46b;
+  --color-chart-2: #43cca0;
   --color-chart-3: #6f9fd0;
   --color-chart-4: #c98fb6;
   --color-chart-5: #7fc4c0;
   --color-chart-6: #c0ab6a;
   --color-chart-7: #e08b8b;
-  --color-chart-8: #9aa4b9;
+  --color-chart-8: #9898a0;
 
-  --color-skeleton: #1b2331;
-  --color-skeleton-sheen: #2b3549;
+  --color-skeleton: #16161a;
+  --color-skeleton-sheen: #252528;
 
-  /* A 5%-black shadow is invisible on a dark ground; depth needs real black. */
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
-  --shadow-lift: 0 4px 14px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.35);
+  --shadow-card: 0 1px 0 0 rgba(255, 255, 255, 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-lift: 0 1px 0 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px -12px rgb(0 0 0 / 0.9);
 }
 
 /*
@@ -332,6 +298,11 @@ html {
   background-color: var(--color-paper-100);
   color: var(--color-ink-900);
   -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-bond-400) 25%, transparent);
+  color: var(--color-ink-950);
 }
 
 /*

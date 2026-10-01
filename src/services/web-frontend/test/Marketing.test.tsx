@@ -183,8 +183,8 @@ describe('product + compare pages', () => {
 
   it('renders a comparison table', () => {
     renderAt('/compare/carta');
-    expect(screen.getByRole('heading', { level: 1, name: 'N409 vs Carta' })).toBeInTheDocument();
-    expect(screen.getByRole('table', { name: 'N409 vs Carta' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'DoAide 409A vs Carta' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'DoAide 409A vs Carta' })).toBeInTheDocument();
   });
 
   it('redirects unknown slugs to the landing page', () => {
@@ -222,7 +222,7 @@ describe('compare provider hub (gap #30)', () => {
     expect(screen.getByText('What founders should ask any 409A provider')).toBeInTheDocument();
     // Cross-links out to an individual comparison page (the footer also links
     // to Carta, so assert at least one hub link points at /compare/carta).
-    const cartaLinks = screen.getAllByRole('link', { name: /N409 vs Carta/ });
+    const cartaLinks = screen.getAllByRole('link', { name: /DoAide 409A vs Carta/ });
     expect(cartaLinks.some((el) => el.getAttribute('href') === '/compare/carta')).toBe(true);
   });
 });

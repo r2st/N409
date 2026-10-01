@@ -23,7 +23,7 @@ const SHELL = `<!doctype html>
     <meta charset="UTF-8" />
     <!-- A comment that mentions <title> and <meta name="description"> on purpose. -->
     ${HEAD_FALLBACK_START}
-    <title>N409 · Valuations</title>
+    <title>DoAide 409A · Valuations</title>
     <meta name="description" content="shell fallback" />
     ${HEAD_FALLBACK_END}
     <script type="module" crossorigin src="/assets/index-abc123.js"></script>
@@ -40,7 +40,7 @@ describe('renderRouteHtml', () => {
 
   it('replaces the fallback block with the route metadata', () => {
     const html = renderRouteHtml(SHELL, meta, ORIGIN);
-    expect(html).toContain('<title>Pricing · N409</title>');
+    expect(html).toContain('<title>Pricing · DoAide 409A</title>');
     expect(html).not.toContain('shell fallback');
     expect(html).not.toContain(HEAD_FALLBACK_START);
     expect(html).toContain('<link rel="canonical" href="https://x.io/pricing" />');

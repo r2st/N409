@@ -12,11 +12,11 @@ import {
 import { ThemeToggle, ThemeToggleButton } from '../src/components/ThemeToggle';
 
 /** jsdom has no real media query engine, so the OS preference is stubbed. */
-function stubPrefersDark(dark: boolean) {
+function stubPrefersLight(light: boolean) {
   vi.stubGlobal(
     'matchMedia',
     vi.fn((query: string) => ({
-      matches: dark && query.includes('dark'),
+      matches: light && query.includes('light'),
       media: query,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -31,7 +31,7 @@ function stubPrefersDark(dark: boolean) {
 beforeEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute('data-theme');
-  stubPrefersDark(false);
+  stubPrefersLight(false);
 });
 
 describe('theme preference', () => {
@@ -42,16 +42,16 @@ describe('theme preference', () => {
   });
 
   it('resolves system against prefers-color-scheme, and pins an explicit choice', () => {
-    stubPrefersDark(true);
-    expect(resolveTheme('system')).toBe('dark');
-    expect(resolveTheme('light')).toBe('light');
-    stubPrefersDark(false);
+    stubPrefersLight(true);
     expect(resolveTheme('system')).toBe('light');
     expect(resolveTheme('dark')).toBe('dark');
+    stubPrefersLight(false);
+    expect(resolveTheme('system')).toBe('dark');
+    expect(resolveTheme('light')).toBe('light');
   });
 
   it('writes the resolved theme — never the choice — to <html>', () => {
-    stubPrefersDark(true);
+    stubPrefersLight(false);
     expect(applyTheme('system')).toBe('dark');
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     applyTheme('light');
@@ -66,13 +66,11 @@ describe('theme preference', () => {
   });
 
   it('matches the inline pre-paint script in index.html', () => {
-    // The script duplicates the rule to avoid a white flash; if this drifts,
-    // dark-mode users get a flash of the light theme on every cold load.
-    stubPrefersDark(true);
+    stubPrefersLight(true);
     localStorage.setItem(THEME_STORAGE_KEY, 'system');
     let c = localStorage.getItem('n409.theme');
     if (c !== 'light' && c !== 'dark') {
-      c = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      c = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     }
     expect(c).toBe(resolveTheme(getThemeChoice()));
   });
@@ -130,11 +128,11 @@ describe('applyTheme and the browser chrome', () => {
     document.head.append(themeColor, colorScheme);
     try {
       applyTheme('dark');
-      expect(themeColor.getAttribute('content')).toBe('#0a0e16');
+      expect(themeColor.getAttribute('content')).toBe('#0a0a0b');
       expect(colorScheme.getAttribute('content')).toBe('dark');
 
       applyTheme('light');
-      expect(themeColor.getAttribute('content')).toBe('#0B1220');
+      expect(themeColor.getAttribute('content')).toBe('#0b1220');
       expect(colorScheme.getAttribute('content')).toBe('light');
     } finally {
       themeColor.remove();
@@ -147,12 +145,12 @@ describe('subscribeTheme', () => {
   /** A matchMedia stub whose `change` listeners can actually be fired. */
   function controllableMedia() {
     const handlers = new Set<() => void>();
-    let dark = false;
+    let light = false;
     vi.stubGlobal(
       'matchMedia',
       vi.fn((query: string) => ({
         get matches() {
-          return dark && query.includes('dark');
+          return light && query.includes('light');
         },
         media: query,
         addEventListener: (_: string, fn: () => void) => handlers.add(fn),
@@ -165,7 +163,7 @@ describe('subscribeTheme', () => {
     );
     return {
       flipTo(next: boolean) {
-        dark = next;
+        light = next;
         for (const fn of [...handlers]) fn();
       },
       get listenerCount() {
@@ -174,13 +172,13 @@ describe('subscribeTheme', () => {
     };
   }
 
-  it('follows the OS at sunset while the choice is system', () => {
+  it('follows the OS at sunrise while the choice is system', () => {
     const media = controllableMedia();
     const seen: string[] = [];
     const unsubscribe = subscribeTheme((c) => seen.push(c));
 
     media.flipTo(true);
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
     expect(seen).toEqual(['system']);
 
     unsubscribe();
@@ -189,13 +187,13 @@ describe('subscribeTheme', () => {
 
   it('ignores the OS once the analyst has pinned a theme', () => {
     const media = controllableMedia();
-    setThemeChoice('light');
+    setThemeChoice('dark');
     const seen: string[] = [];
     const unsubscribe = subscribeTheme((c) => seen.push(c));
 
     media.flipTo(true);
     expect(seen).toEqual([]);
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     unsubscribe();
   });
 
@@ -233,7 +231,7 @@ describe('subscribeTheme', () => {
   it('survives an environment with no matchMedia at all', () => {
     vi.stubGlobal('matchMedia', undefined);
     expect(() => subscribeTheme(() => {})()).not.toThrow();
-    expect(resolveTheme('system')).toBe('light');
+    expect(resolveTheme('system')).toBe('dark');
   });
 });
 

@@ -28,7 +28,7 @@ describe('websiteJsonLd', () => {
     expect(node['@context']).toBe('https://schema.org');
     expect(node['@type']).toBe('WebSite');
     expect(node.url).toBe('https://x.io/');
-    expect(node.name).toBe('N409');
+    expect(node.name).toBe('DoAide 409A');
     expect((node.publisher as Node)['@type']).toBe('Organization');
   });
 
@@ -98,7 +98,7 @@ describe('comparison pages', () => {
     expect(crumbs.map((c) => c.name)).toEqual([
       'Home',
       '409A valuation providers compared',
-      `N409 vs ${comparison.competitor}`,
+      `DoAide 409A vs ${comparison.competitor}`,
     ]);
   });
 

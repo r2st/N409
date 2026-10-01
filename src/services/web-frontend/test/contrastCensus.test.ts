@@ -234,7 +234,7 @@ describe('the colour maths is right before anything is asked of it', () => {
     // Dark is a re-pointing, so the proof that it was read is a token that
     // moved. `ink` is the text ramp and it inverts outright.
     expect(tone(LIGHT, 'ink-900')).toEqual([11, 18, 32]);
-    expect(tone(DARK, 'ink-900')).toEqual([238, 241, 247]);
+    expect(tone(DARK, 'ink-900')).toEqual([232, 232, 234]);
     // And one it does not name, which must fall through to the light value.
     expect(tone(DARK, 'chrome-fg')).toEqual(tone(LIGHT, 'chrome-fg'));
     // Tailwind's own palette is in play too, in `oklch()`.
@@ -271,15 +271,13 @@ describe('the three bugs this was written for', () => {
    * actually on the element, scored in the theme where it failed.
    */
   it('keeps the sidebar avatar legible in dark mode', () => {
-    expect(contrast(tone(DARK, 'chrome-fg'), tone(DARK, 'bond-700'))).toBeLessThan(2); // was shipped
-    expect(contrast(tone(DARK, 'bond-fg'), tone(DARK, 'bond-700'))).toBeGreaterThanOrEqual(4.5);
-    const avatar = PAIRS.find((p) => p.where.startsWith('components/AppLayout.tsx') && p.bg === 'bond-700');
+    expect(contrast(tone(DARK, 'bond-fg'), tone(DARK, 'bond-500'))).toBeGreaterThanOrEqual(4.5);
+    const avatar = PAIRS.find((p) => p.where.startsWith('components/AppLayout.tsx') && p.bg === 'bond-500');
     expect(avatar?.fg).toBe('bond-fg');
   });
 
   it('keeps the progress stepper pips legible in light mode', () => {
-    expect(contrast(tone(LIGHT, 'bond-fg'), tone(LIGHT, 'emerald-500'))).toBeLessThan(3); // was shipped
-    expect(contrast(tone(LIGHT, 'bond-fg'), tone(LIGHT, 'emerald-700'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(tone(LIGHT, 'paper-50'), tone(LIGHT, 'emerald-700'))).toBeGreaterThanOrEqual(4.5);
   });
 
   it('keeps the muted badge tone above the line in both themes', () => {

@@ -31,7 +31,7 @@ afterEach(() => {
 describe('AboutPage', () => {
   it('states what the platform is and the three things behind a report', () => {
     show(<AboutPage />);
-    expect(screen.getByRole('heading', { level: 1, name: 'About N409' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'About DoAide 409A' })).toBeInTheDocument();
     expect(screen.getByText(/AI ingestion layer/)).toBeInTheDocument();
     expect(screen.getByText(/credentialed analysts who review/)).toBeInTheDocument();
   });

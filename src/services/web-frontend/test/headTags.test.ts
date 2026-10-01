@@ -16,7 +16,7 @@ describe('buildHeadTags (§24)', () => {
 
   it('composes title, description and canonical from the origin', () => {
     const head = buildHeadTags(base, ORIGIN);
-    expect(head.title).toBe('Pricing · N409');
+    expect(head.title).toBe('Pricing · DoAide 409A');
     expect(tagValue(head.tags, 'name', 'description')).toBe('Flat per-report pricing.');
     expect(tagValue(head.tags, 'rel', 'canonical')).toBe('https://x.io/pricing');
   });
@@ -81,7 +81,7 @@ describe('escaping', () => {
     const html = renderHeadTags(
       buildHeadTags({ title: 'A & B', description: '"quoted" <tag>', path: '/x' }, ORIGIN),
     );
-    expect(html).toContain('<title>A &amp; B · N409</title>');
+    expect(html).toContain('<title>A &amp; B · DoAide 409A</title>');
     expect(html).toContain('&quot;quoted&quot; &lt;tag&gt;');
     expect(html).not.toContain('<tag>');
   });

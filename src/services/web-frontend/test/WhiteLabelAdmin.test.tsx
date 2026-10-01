@@ -6,6 +6,10 @@ import { PartnerDetailPage } from '../src/pages/PartnerDetailPage';
 
 /** Improvement 8 — branding preview + email template editor in partner admin. */
 
+vi.mock('../src/lib/auth', async () => ({
+  useAuth: () => ({ status: 'authenticated', user: { id: 'u1', roles: ['admin'] } }),
+}));
+
 const PARTNER_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 
 const partner = {
@@ -92,7 +96,7 @@ describe('PartnerDetailPage white-label admin', () => {
     renderPage();
 
     const preview = await screen.findByTestId('branding-preview');
-    expect(preview).toHaveTextContent('N409');
+    expect(preview).toHaveTextContent('DoAide 409A');
     expect(preview).not.toHaveTextContent('Bridge Valuation Advisors LLP');
     expect(preview.querySelector('img')).toBeNull();
     expect(screen.getByText(/White label is off/)).toBeInTheDocument();

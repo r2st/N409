@@ -25,9 +25,9 @@ describe('seo helpers (§24)', () => {
   });
 
   it('composes titles with the brand suffix', () => {
-    expect(pageTitle('Pricing')).toBe('Pricing · N409');
-    expect(pageTitle('N409')).toBe('N409 · Valuations');
-    expect(pageTitle('')).toBe('N409 · Valuations');
+    expect(pageTitle('Pricing')).toBe('Pricing · DoAide 409A');
+    expect(pageTitle('DoAide 409A')).toBe('DoAide 409A · Valuations');
+    expect(pageTitle('')).toBe('DoAide 409A · Valuations');
   });
 
   it('emits valid Organization JSON-LD', () => {
@@ -65,12 +65,12 @@ describe('<Seo>', () => {
       </HelmetProvider>,
     );
 
-    await waitFor(() => expect(document.title).toBe('Pricing · N409'));
+    await waitFor(() => expect(document.title).toBe('Pricing · DoAide 409A'));
     expect(document.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(
       'Flat per-report pricing.',
     );
     expect(document.querySelector('meta[property="og:title"]')?.getAttribute('content')).toBe(
-      'Pricing · N409',
+      'Pricing · DoAide 409A',
     );
     expect(document.querySelector('meta[name="twitter:card"]')?.getAttribute('content')).toBe(
       'summary_large_image',

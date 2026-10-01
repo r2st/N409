@@ -124,7 +124,7 @@ describe('book a call + demo video (gap #22)', () => {
     // No third-party frame or cookie is requested on page load.
     expect(document.querySelector('iframe')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Play the N409 product demo' }));
+    await user.click(screen.getByRole('button', { name: 'Play the DoAide 409A product demo' }));
     expect(document.querySelector('iframe')?.getAttribute('src')).toContain(
       'youtube-nocookie.com/embed/abc123',
     );
@@ -193,6 +193,6 @@ describe('footer social links (gap #29)', () => {
         <MarketingFooter />
       </MemoryRouter>,
     );
-    expect(screen.getByText(new RegExp(`©\\s*${new Date().getFullYear()}\\s+N409`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`©\\s*${new Date().getFullYear()}\\s+DoAide`))).toBeInTheDocument();
   });
 });

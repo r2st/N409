@@ -158,7 +158,7 @@ describe('BrandingProvider', () => {
       </BrandingProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId('brand')).toHaveTextContent('N409'));
+    await waitFor(() => expect(screen.getByTestId('brand')).toHaveTextContent('DoAide 409A'));
     expect(document.documentElement.hasAttribute('data-brand')).toBe(false);
   });
 });
@@ -166,7 +166,8 @@ describe('BrandingProvider', () => {
 describe('Wordmark', () => {
   it('shows the platform mark by default', () => {
     render(<Wordmark />);
-    expect(screen.getByText('N409')).toBeInTheDocument();
+    expect(screen.getByText('DoAide')).toBeInTheDocument();
+    expect(screen.getByText('409A')).toBeInTheDocument();
     expect(document.querySelector('img')).toBeNull();
   });
 
@@ -300,7 +301,7 @@ describe('BrandingPage', () => {
 
     await userEvent.type(screen.getByLabelText(/^Logo URL$/), 'https://cdn.example.com/mark.svg');
     const note = await screen.findByText(/only draw a PNG or JPEG/i);
-    expect(note).toHaveTextContent(/fall back to the N409 mark/i);
+    expect(note).toHaveTextContent(/fall back to the DoAide 409A mark/i);
 
     // A hint, not a rule: a firm that puts no mark on covers is entitled to
     // an SVG, and the save goes through.

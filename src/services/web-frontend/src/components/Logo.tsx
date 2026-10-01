@@ -50,7 +50,7 @@ export function Wordmark({ light = false }: { light?: boolean }) {
         {isPlatform ? (
           <>
             DoAide{' '}
-            <em className="not-italic" style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontStyle: 'italic', color: '#F0B429' }}>
+            <em className="font-display italic text-bond-500">
               409A
             </em>
           </>
