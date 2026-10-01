@@ -1,22 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="N409 — independent, defensible 409A and business valuations">
-  <rect width="1200" height="630" fill="#0B1220"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="DoAide 409A — independent, defensible 409A and business valuations">
+  <rect width="1200" height="630" fill="#0A0A0B"/>
   <g stroke="#1B2740" stroke-width="1">
     <path d="M0 158 H1200 M0 316 H1200 M0 474 H1200 M300 0 V630 M600 0 V630 M900 0 V630"/>
   </g>
   <g transform="translate(96 200)">
-    <rect x="0" y="-64" width="88" height="88" rx="18" fill="#111C2E"/>
-    <!-- N mark drawn as filled polygons rather than a stroked path: the
-         og-image.png raster is produced by ImageMagick's built-in SVG
-         renderer, which drops stroked sub-paths. Fills render everywhere. -->
-    <g fill="#C9A54A">
-      <rect x="18.75" y="-55.25" width="6.5" height="40.5" rx="3.25"/>
-      <rect x="54.75" y="-55.25" width="6.5" height="40.5" rx="3.25"/>
-      <polygon points="24.23,-54.36 60.23,-20.36 55.77,-15.64 19.77,-49.64"/>
+    <!-- DoAide robot mark — drawn as filled shapes so ImageMagick renders it -->
+    <g transform="scale(2.75) translate(0 -24)">
+      <line x1="16" y1="6" x2="16" y2="2" stroke="#F0B429" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="16" cy="1.5" r="1.5" fill="#F0B429"/>
+      <rect x="5" y="6" width="22" height="17" rx="5" fill="#F0B429"/>
+      <ellipse cx="11" cy="13" rx="2.5" ry="3" fill="#0A0A0B"/>
+      <ellipse cx="21" cy="13" rx="2.5" ry="3" fill="#0A0A0B"/>
+      <circle cx="11.5" cy="12.5" r="1" fill="#F7CC5F"/>
+      <circle cx="21.5" cy="12.5" r="1" fill="#F7CC5F"/>
+      <rect x="1" y="10" width="4" height="5" rx="2" fill="#D4A017"/>
+      <rect x="27" y="10" width="4" height="5" rx="2" fill="#D4A017"/>
     </g>
-    <circle cx="58" cy="-8" r="7" fill="#12936F"/>
-    <text x="116" y="4" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-weight="600" fill="#F7F5EF">N409</text>
+    <text x="116" y="4" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-weight="600" fill="#F7F5EF">DoAide <tspan fill="#F0B429" font-style="italic">409A</tspan></text>
   </g>
   <text x="96" y="360" font-family="Georgia, 'Times New Roman', serif" font-size="66" font-weight="600" fill="#F7F5EF">Independent, defensible</text>
-  <text x="96" y="436" font-family="Georgia, 'Times New Roman', serif" font-size="66" font-weight="600" fill="#C9A54A">409A &amp; business valuations</text>
+  <text x="96" y="436" font-family="Georgia, 'Times New Roman', serif" font-size="66" font-weight="600" fill="#F0B429">409A &amp; business valuations</text>
   <text x="96" y="516" font-family="Arial, Helvetica, sans-serif" font-size="30" fill="#9AA6BC">AI-assisted intake · transparent engine · analyst-signed reports</text>
 </svg>
