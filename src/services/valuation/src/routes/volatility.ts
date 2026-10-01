@@ -292,7 +292,10 @@ export function registerVolatilityRoutes(
       }
       const { method, window_days, manual_override } = parsed.data;
 
-      const { items: peers } = await listComparableItems(deps.pool, valuation.id);
+      const [{ items: peers }, paramsRow] = await Promise.all([
+        listComparableItems(deps.pool, valuation.id),
+        findParams(deps.pool, valuation.id),
+      ]);
       const tickers = peers.filter((p) => p.included && p.ticker !== null).map((p) => p.ticker!);
       if (tickers.length === 0 && (manual_override === null || manual_override === undefined)) {
         throw problems.unprocessable(
@@ -300,8 +303,6 @@ export function registerVolatilityRoutes(
             'Network Items tab first, or pin a volatility by hand',
         );
       }
-
-      const paramsRow = await findParams(deps.pool, valuation.id);
       const rawDate = (paramsRow?.engine_inputs as { valuation_date?: unknown } | null | undefined)
         ?.valuation_date;
       const valuationDate = typeof rawDate === 'string' && rawDate ? rawDate : null;

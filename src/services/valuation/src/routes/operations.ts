@@ -199,9 +199,17 @@ export function registerOperationsRoutes(
     const scope = valuationScope(principal);
     const dashboardFilters = { createdFrom: parsed.data.created_from, createdTo: parsed.data.created_to };
     const key = JSON.stringify({ scope, dashboardFilters });
-    const rows = await dashboardCache.getOrLoad(key, () =>
-      dashboardStats(deps.pool, scope, dashboardFilters),
-    );
+    // Design §3.1 — the three bands the landing dashboard was missing: the
+    // bucket strip, the SLA figures, the throughput series, and the activity
+    // feed behind them. Cached on the same key as the pivot: they are read
+    // together on one page load, and a reader comparing a bucket count against
+    // the pivot beneath it should not see two different instants.
+    const [rows, bands] = await Promise.all([
+      dashboardCache.getOrLoad(key, () => dashboardStats(deps.pool, scope, dashboardFilters)),
+      bandsCache.getOrLoad(JSON.stringify({ scope, side: readerSideFor(principal) }), () =>
+        loadBands(deps.pool, scope, readerSideFor(principal)),
+      ),
+    ]);
 
     const emptyGroups = () =>
       Object.fromEntries(STATE_GROUP_KEYS.map((g) => [g, 0])) as Record<StateGroup, number>;
@@ -223,15 +231,6 @@ export function registerOperationsRoutes(
       bySource[source] = (bySource[source] ?? 0) + row.count;
       total += row.count;
     }
-
-    // Design §3.1 — the three bands the landing dashboard was missing: the
-    // bucket strip, the SLA figures, the throughput series, and the activity
-    // feed behind them. Cached on the same key as the pivot: they are read
-    // together on one page load, and a reader comparing a bucket count against
-    // the pivot beneath it should not see two different instants.
-    const bands = await bandsCache.getOrLoad(JSON.stringify({ scope, side: readerSideFor(principal) }), () =>
-      loadBands(deps.pool, scope, readerSideFor(principal)),
-    );
 
     return {
       total,
