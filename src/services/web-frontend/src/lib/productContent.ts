@@ -159,7 +159,7 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     ctaLabel: CTA_START,
     problem: {
       headline: 'You can’t make the deal without a number you can defend',
-      body: ‘Banks, buyers, and partners need a defensible number — not a back-of-envelope multiple.’,
+      body: 'Banks, buyers, and partners need a defensible number — not a back-of-envelope multiple.',
       bullets: [
         'Lenders and buyers discount valuations they can’t trace',
         'Partner buy-ins and buy-outs turn contentious without an independent number',
