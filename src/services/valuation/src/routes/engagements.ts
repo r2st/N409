@@ -76,13 +76,10 @@ async function loadValuation(pool: pg.Pool, id: string): Promise<ValuationRow> {
 const ACTIVITY_FEED_LIMIT = 40;
 
 async function engagementView(pool: pg.Pool, engagement: EngagementRow, now: Date) {
-  const { history, truncated: historyTruncated } = await stageHistory(pool, engagement.id);
-  // The cap belongs in the query, not after it. `.slice(-40)` on an unbounded
-  // read selected every event the engagement had ever recorded — payload JSONB
-  // and all — and then discarded all but the newest forty, on a table nothing
-  // prunes. `listEvents` keeps the newest N in ascending order, which is what
-  // the slice was asking for.
-  const events = await listEvents(pool, engagement.valuation_id, { limit: ACTIVITY_FEED_LIMIT });
+  const [{ history, truncated: historyTruncated }, events] = await Promise.all([
+    stageHistory(pool, engagement.id),
+    listEvents(pool, engagement.valuation_id, { limit: ACTIVITY_FEED_LIMIT }),
+  ]);
   return {
     engagement,
     sla: slaStatus(engagement.current_stage, engagement.stage_entered_at, now),
