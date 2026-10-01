@@ -11,6 +11,7 @@ import {
   resumePipelineRun,
   type AutoPipelineDeps,
 } from '../pipeline/autoPipeline.js';
+import { recordPipelineRetryOutcome } from '../observability/pipelineRetryMetrics.js';
 
 /**
  * Re-runs auto-pipeline orchestrations that failed against a dependency which
@@ -130,6 +131,7 @@ export async function retryFailedPipelineRuns(deps: {
         // row is cascade-deleted with it, so there is nothing left to settle —
         // and nothing to log about either, since this is the ordinary outcome of
         // deleting a valuation that had a failed run.
+        recordPipelineRetryOutcome('skipped_deleted');
         continue;
       }
       if (valuation.archived_at !== null) {
@@ -152,6 +154,7 @@ export async function retryFailedPipelineRuns(deps: {
           actor,
           failure: { kind: 'permanent', reason: 'valuation.retired', retryable: false },
         });
+        recordPipelineRetryOutcome('skipped_retired');
         deps.autoPipeline.log.info(
           { runId: run.id, valuationId: valuation.id },
           'auto-pipeline retry skipped — the engagement has been retired since it failed',
@@ -175,6 +178,7 @@ export async function retryFailedPipelineRuns(deps: {
           actor,
           failure: { kind: 'permanent', reason: 'pipeline.opted-out', retryable: false },
         });
+        recordPipelineRetryOutcome('skipped_opted_out');
         deps.autoPipeline.log.info(
           { runId: run.id, valuationId: valuation.id },
           'auto-pipeline retry skipped — the valuation has opted out since it failed',
@@ -182,6 +186,7 @@ export async function retryFailedPipelineRuns(deps: {
         continue;
       }
       resumePipelineRun(deps.autoPipeline, run, valuation);
+      recordPipelineRetryOutcome('resumed');
       resumed += 1;
     } catch (err) {
       // The row stays `queued` — there is nothing here that could safely settle
@@ -189,6 +194,7 @@ export async function retryFailedPipelineRuns(deps: {
       // the settle — so the stale reaper is what eventually frees the
       // valuation's index. Said out loud, because until it comes round that
       // valuation takes no new trigger and nothing else records why.
+      recordPipelineRetryOutcome('stranded');
       logUnretried(
         deps.autoPipeline.log,
         err,

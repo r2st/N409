@@ -178,6 +178,7 @@ import { registerBackupMetrics, registerBackupVerifyMetrics } from './observabil
 import { registerRealtimeStreamMetrics } from './observability/realtimeStreams.js';
 import { registerRequestThrottleMetrics } from './observability/requestThrottle.js';
 import { registerExportMetrics } from './observability/exportMetrics.js';
+import { registerPipelineRetryMetrics } from './observability/pipelineRetryMetrics.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -1070,6 +1071,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // and nothing said which one took four seconds or whether the row cap is being
   // hit — the signal that clients are outgrowing the ceiling.
   registerExportMetrics(metricsRegistry);
+  // And the retry ladder's decisions, which the sweep tally cannot separate.
+  // A claimed run can be resumed, skipped (retired/opted-out/deleted) or
+  // stranded, and the last one blocks the valuation's one-active-run index
+  // until the stale reaper frees it. That was visible only in a warn line.
+  registerPipelineRetryMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });
