@@ -496,12 +496,14 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
     const fund = await loadFund(id);
-    const { positions, truncated } = await listPositions(deps.pool, id);
+    const [{ positions, truncated }, lpTerms] = await Promise.all([
+      listPositions(deps.pool, id),
+      findLpTerms(deps.pool, id),
+    ]);
     const marks = await latestMarks(
       deps.pool,
       positions.map((p) => p.id),
     );
-    const lpTerms = await findLpTerms(deps.pool, id);
     return {
       fund,
       lp_terms: lpTerms,

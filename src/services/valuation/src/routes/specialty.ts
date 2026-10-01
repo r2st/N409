@@ -278,20 +278,14 @@ export function registerSpecialtyRoutes(
     // one, and this handler then reported "No result yet" directly above a run
     // history listing the succeeded run it had just discarded. `history` below
     // has always filtered to specialty runs; this is the same question.
-    const latest = await latestSucceededSpecialtyCalculation(deps.pool, id);
+    const [latest, historyPage] = await Promise.all([
+      latestSucceededSpecialtyCalculation(deps.pool, id),
+      listCalculationSummaries(deps.pool, id),
+    ]);
     const specialty =
       latest?.results && typeof latest.results.specialty === 'object'
         ? (latest.results.specialty as Record<string, unknown>)
         : null;
-
-    // Failed runs belong in the history as much as successful ones: an analyst
-    // reading "why did nothing happen" is looking for the 422 the engine gave
-    // back, and a list of only the successes cannot show it.
-    // The narrow reader: this list is seven scalar columns and one key of
-    // `inputs`, and the full one carried both jsonb documents of all twenty-one
-    // runs to produce it. `input_endpoint` is that key, probed in SQL under the
-    // same `typeof === 'string'` rule this filter applies.
-    const historyPage = await listCalculationSummaries(deps.pool, id);
     const history = historyPage.calculations
       .filter((c) => c.input_endpoint?.startsWith('/engine/v1/') === true)
       .map((c) => ({
