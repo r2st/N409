@@ -24,6 +24,7 @@ import {
   headlineSummary,
   type CompareSide,
 } from '../../src/domain/valuationCompare.js';
+import { buildBridge } from '../../src/domain/valuationBridge.js';
 import { exerciseScenarios, vestingStatus, type VestingSchedule } from '../../src/domain/vesting.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -711,7 +712,105 @@ describe('waterfall sheet: preference cached value equals liquidationPreference'
   });
 });
 
-// ── 13. Cross-module ratchet consistency ─────────────────────────────────────
+// ── 13. Report discount derivation consistency ──────────────────────────────
+
+describe('discount derivation: base × (1 - dloc) × (1 - dlom) = fmv', () => {
+  it('marketable value reconstructed from fmv and discounts is self-consistent', () => {
+    const fmv = 2.5013;
+    const dloc = 0.08;
+    const dlom = 0.2448;
+    const factor = (1 - dloc) * (1 - dlom);
+    const base = fmv / factor;
+    const afterDloc = base * (1 - dloc);
+    const reconstructed = afterDloc * (1 - dlom);
+    expect(reconstructed).toBeCloseTo(fmv, 10);
+  });
+
+  it('combined discount rate is 1 - (1 - dloc)(1 - dlom)', () => {
+    const dloc = 0.08;
+    const dlom = 0.2448;
+    const combined = 1 - (1 - dloc) * (1 - dlom);
+    // 1 - 0.92 × 0.7552 = 1 - 0.694784 = 0.305216
+    expect(combined).toBeCloseTo(0.305216, 10);
+  });
+
+  it('deduction amounts sum to base minus fmv', () => {
+    const fmv = 2.5013;
+    const dloc = 0.08;
+    const dlom = 0.2448;
+    const factor = (1 - dloc) * (1 - dlom);
+    const base = fmv / factor;
+    const afterDloc = base * (1 - dloc);
+
+    const dlocDeduction = base - afterDloc;
+    const dlomDeduction = afterDloc - fmv;
+    const totalDeduction = dlocDeduction + dlomDeduction;
+    expect(totalDeduction).toBeCloseTo(base - fmv, 10);
+  });
+});
+
+// ── 14. Valuation bridge LMDI decomposition ─────────────────────────────────
+
+describe('bridge: LMDI contributions sum to delta', () => {
+  const results = (fmv: number, equity: number, dloc: number, dlom: number) => ({
+    fmv_per_share: fmv,
+    equity_value: equity,
+    allocation: { common_per_share: fmv / ((1 - dloc) * (1 - dlom)) },
+    discounts: { dloc, dlom },
+    fully_diluted_common: 10_000_000,
+  });
+
+  it('factor contributions sum to the stated delta', () => {
+    const bridge = buildBridge(
+      results(1.42, 10_000_000, 0.05, 0.25),
+      results(1.87, 13_000_000, 0.08, 0.22),
+    );
+    expect(bridge.decomposable).toBe(true);
+    const sumContributions = bridge.factors.reduce((s, f) => s + f.contribution, 0);
+    expect(sumContributions).toBeCloseTo(bridge.delta, 4);
+  });
+
+  it('pct_change agrees with comparison module pct_change', () => {
+    const from = results(1.42, 10_000_000, 0.05, 0.25);
+    const to = results(1.87, 13_000_000, 0.08, 0.22);
+    const bridge = buildBridge(from, to);
+
+    const side = (over: Partial<CompareSide>): CompareSide => ({
+      valuation_id: 'v1',
+      company_name: 'TestCo',
+      kind: '409a',
+      currency: 'USD',
+      state: 'concluded',
+      calculation_id: 'c1',
+      engine_version: '1.0.0',
+      calculated_at: '2024-01-01T00:00:00Z',
+      valuation_date: '2024-01-01',
+      results: {},
+      ...over,
+    });
+
+    const groups = compareValuations(
+      side({ valuation_id: 'a', results: from }),
+      side({ valuation_id: 'b', results: to }),
+    );
+    const fmvRow = groups.flatMap((g) => g.rows).find((r) => r.key === 'fmv_per_share')!;
+
+    // Both compute (to - from) / |from|, just at different rounding
+    expect(bridge.pct_change).toBeCloseTo(fmvRow.pct_change!, 4);
+  });
+
+  it('non-decomposable bridge still reports correct delta', () => {
+    // Zero equity_value makes the factorisation impossible
+    const bridge = buildBridge(
+      results(1.42, 0, 0.05, 0.25),
+      results(1.87, 13_000_000, 0.08, 0.22),
+    );
+    expect(bridge.decomposable).toBe(false);
+    expect(bridge.delta).toBeCloseTo(0.45, 4);
+  });
+});
+
+// ── 15. Cross-module ratchet consistency ─────────────────────────────────────
 
 describe('ratchet consistency: conversion_ratio > 1 across all consumers', () => {
   const table = [
