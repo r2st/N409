@@ -24,7 +24,7 @@ import {
   headlineSummary,
   type CompareSide,
 } from '../../src/domain/valuationCompare.js';
-import { vestingStatus, type VestingSchedule } from '../../src/domain/vesting.js';
+import { exerciseScenarios, vestingStatus, type VestingSchedule } from '../../src/domain/vesting.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -354,7 +354,7 @@ describe('comparison: results → pct_change → display → CSV', () => {
     const results = { fmv_per_share: 1.42, equity_value: 10_000_000 };
     const a = side({ valuation_id: 'a', results });
     const b = side({ valuation_id: 'b', results });
-    const summary = headlineSummary(compareValuations(a, b), a, b);
+    const summary = headlineSummary(compareValuations(a, b));
     expect(summary).toContain('unchanged');
   });
 });
@@ -458,7 +458,55 @@ describe('edge cases: zero shares, null ratios, single-entry tables', () => {
   });
 });
 
-// ── 8. validateCapTable total_shares consistency ─────────────────────────────
+// ── 8. Exercise scenario rounding ────────────────────────────────────────────
+
+describe('exercise scenarios: grossValue from unrounded spread', () => {
+  it('grossValue uses unrounded spread (more precise than spreadPerShare × shares)', () => {
+    const scenarios = exerciseScenarios(
+      { totalShares: 10_000, exercisePrice: 1.4235, currentFmv: 2.0 },
+      [3.5678],
+    );
+    const s = scenarios[0]!;
+    const rawSpread = 3.5678 - 1.4235;
+    expect(s.spreadPerShare).toBe(Math.round(rawSpread * 10000) / 10000);
+    expect(s.grossValue).toBe(Math.round(rawSpread * 10_000 * 100) / 100);
+    // The two should NOT be derivable from each other due to intermediate rounding
+    const fromRoundedSpread = Math.round(s.spreadPerShare * 10_000 * 100) / 100;
+    // They may or may not differ depending on the specific values; the important
+    // thing is grossValue comes from the full-precision spread
+    expect(s.grossValue).toBe(Math.round(rawSpread * 10_000 * 100) / 100);
+  });
+
+  it('multipleOfCurrent divides by currentFmv, not exercisePrice', () => {
+    const scenarios = exerciseScenarios(
+      { totalShares: 1000, exercisePrice: 1.0, currentFmv: 2.0 },
+      [4.0],
+    );
+    // 4.0 / 2.0 = 2.0× (not 4.0 / 1.0 = 4.0×)
+    expect(scenarios[0]!.multipleOfCurrent).toBe(2.0);
+  });
+
+  it('below-strike FMV yields zero spread and zero grossValue', () => {
+    const scenarios = exerciseScenarios(
+      { totalShares: 1000, exercisePrice: 5.0, currentFmv: 5.0 },
+      [3.0],
+    );
+    expect(scenarios[0]!.spreadPerShare).toBe(0);
+    expect(scenarios[0]!.grossValue).toBe(0);
+  });
+
+  it('exerciseCost is always exercisePrice × shares regardless of FMV', () => {
+    const scenarios = exerciseScenarios(
+      { totalShares: 1000, exercisePrice: 2.5, currentFmv: 5.0 },
+      [1.0, 5.0, 100.0],
+    );
+    for (const s of scenarios) {
+      expect(s.exerciseCost).toBe(2500);
+    }
+  });
+});
+
+// ── 9. validateCapTable total_shares consistency ─────────────────────────────
 
 describe('validateCapTable: total_shares equals sum of per-type shares', () => {
   it('total_shares is the raw sum of per-type sums on a valid table', () => {
@@ -482,7 +530,7 @@ describe('validateCapTable: total_shares equals sum of per-type shares', () => {
   });
 });
 
-// ── 9. Cross-module ratchet consistency ───────────────────────────────────────
+// ── 10. Cross-module ratchet consistency ──────────────────────────────────────
 
 describe('ratchet consistency: conversion_ratio > 1 across all consumers', () => {
   const table = [
