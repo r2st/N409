@@ -813,6 +813,7 @@ html {
 }
 
 .landing-subtitle {
+  display: none;
   font-family: 'IBM Plex Mono', var(--font-mono);
   font-size: 13px;
   line-height: 1.7;
@@ -1158,6 +1159,7 @@ html {
     max-width: 100%;
     padding: 0;
     gap: 0;
+    min-height: auto;
   }
 
   .landing-left {
@@ -1165,7 +1167,7 @@ html {
   }
 
   .landing-left-inner {
-    padding: 32px 24px 24px;
+    padding: 28px 16px 12px;
   }
 
   .landing-brand {
@@ -1174,35 +1176,31 @@ html {
 
   .landing-hero-area {
     text-align: center;
-    margin-bottom: 4px;
+    margin-bottom: 0;
   }
 
   .landing-hero-robot-wrap {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 20px;
+    display: none;
+  }
+
+  .landing-pipeline {
+    display: none;
   }
 
   .landing-title {
-    font-size: clamp(28px, 7vw, 40px);
+    font-size: 26px;
+    margin-bottom: 6px;
   }
 
   .landing-subtitle {
+    display: block;
     margin: 0 auto;
-    font-size: 12px;
+    font-size: 11px;
+    line-height: 1.5;
   }
 
   .landing-value-cycle {
-    text-align: center;
-    padding: 20px 0 16px;
-  }
-
-  .landing-value-text {
-    font-size: 16px;
-  }
-
-  .landing-value-dots {
-    justify-content: center;
+    display: none;
   }
 
   .landing-particles {
@@ -1214,13 +1212,14 @@ html {
   }
 
   .landing-right {
-    flex: none;
+    flex: 1;
     width: 100%;
-    padding: 8px 24px 40px;
+    padding: 4px 16px 24px;
+    align-items: flex-start;
   }
 
   .landing-right.landing-visible {
-    animation: landing-fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s forwards;
+    animation: landing-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.1s forwards;
   }
 
   .landing-mobile-brand {
@@ -1229,22 +1228,8 @@ html {
 
   .landing-auth-card {
     max-width: 100%;
-    border-radius: 20px;
-    padding: 28px 24px;
-  }
-}
-
-@media (max-width: 380px) {
-  .landing-left-inner {
-    padding: 24px 16px 16px;
-  }
-
-  .landing-right {
-    padding: 4px 16px 32px;
-  }
-
-  .landing-auth-card {
-    padding: 24px 20px;
+    border-radius: 16px;
+    padding: 24px 16px;
   }
 }
 

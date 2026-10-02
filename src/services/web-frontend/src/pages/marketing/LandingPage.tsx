@@ -689,6 +689,9 @@ export function LandingPage() {
               <h1 className="landing-title">
                 <span className="landing-title-gold">409A</span> valuations,<br />simplified.
               </h1>
+              <p className="landing-subtitle">
+                AI-assisted intake, engine-computed, analyst-reviewed.
+              </p>
               <PipelineGraphic />
             </div>
 
