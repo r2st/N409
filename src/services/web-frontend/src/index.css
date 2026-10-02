@@ -821,6 +821,35 @@ html {
   letter-spacing: 0.02em;
 }
 
+/* ── Pipeline visualization ── */
+
+.landing-pipeline {
+  margin: 20px 0 8px;
+  max-width: 440px;
+}
+
+.landing-pipeline-svg {
+  width: 100%;
+  height: auto;
+}
+
+.landing-pipeline-stage-glow {
+  stroke: rgba(240, 180, 41, 0.15);
+  stroke-width: 6;
+  filter: blur(4px);
+  animation: landing-pipeline-glow 3s ease-in-out infinite;
+}
+
+.landing-pipeline-stage:nth-child(5) .landing-pipeline-stage-glow { animation-delay: 0s; }
+.landing-pipeline-stage:nth-child(6) .landing-pipeline-stage-glow { animation-delay: 0.75s; }
+.landing-pipeline-stage:nth-child(7) .landing-pipeline-stage-glow { animation-delay: 1.5s; }
+.landing-pipeline-stage:nth-child(8) .landing-pipeline-stage-glow { animation-delay: 2.25s; }
+
+@keyframes landing-pipeline-glow {
+  0%, 100% { stroke-opacity: 0.2; }
+  50% { stroke-opacity: 0.6; }
+}
+
 /* ── Staggered entrance animations ── */
 
 .landing-left .landing-brand,

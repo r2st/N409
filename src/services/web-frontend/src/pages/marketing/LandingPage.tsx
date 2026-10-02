@@ -80,6 +80,115 @@ function HeroRobot() {
   );
 }
 
+function PipelineGraphic() {
+  return (
+    <div className="landing-pipeline" aria-hidden="true">
+      <svg viewBox="0 0 440 80" xmlns="http://www.w3.org/2000/svg" className="landing-pipeline-svg">
+        <defs>
+          <filter id="pipe-glow">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <linearGradient id="pipe-line-grad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={GOLD} stopOpacity="0.3" />
+            <stop offset="50%" stopColor={GOLD} stopOpacity="0.6" />
+            <stop offset="100%" stopColor={GOLD} stopOpacity="0.3" />
+          </linearGradient>
+        </defs>
+
+        {/* Connecting lines */}
+        <line x1="100" y1="40" x2="150" y2="40" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
+        <line x1="210" y1="40" x2="260" y2="40" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
+        <line x1="320" y1="40" x2="370" y2="40" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
+
+        {/* Flowing dots — 3 sets staggered */}
+        {[0, 1, 2].map((set) => (
+          <g key={set}>
+            <circle r="2.5" fill={GOLD} filter="url(#pipe-glow)">
+              <animateMotion dur="4s" begin={`${set * 1.33}s`} repeatCount="indefinite">
+                <mpath href="#pipe-path-1" />
+              </animateMotion>
+            </circle>
+            <circle r="2.5" fill={GOLD} filter="url(#pipe-glow)">
+              <animateMotion dur="4s" begin={`${set * 1.33}s`} repeatCount="indefinite">
+                <mpath href="#pipe-path-2" />
+              </animateMotion>
+            </circle>
+            <circle r="2.5" fill={GOLD} filter="url(#pipe-glow)">
+              <animateMotion dur="4s" begin={`${set * 1.33}s`} repeatCount="indefinite">
+                <mpath href="#pipe-path-3" />
+              </animateMotion>
+            </circle>
+          </g>
+        ))}
+
+        {/* Hidden motion paths */}
+        <path id="pipe-path-1" d="M100,40 L150,40" fill="none" stroke="none" />
+        <path id="pipe-path-2" d="M210,40 L260,40" fill="none" stroke="none" />
+        <path id="pipe-path-3" d="M320,40 L370,40" fill="none" stroke="none" />
+
+        {/* Stage 1: Intake */}
+        <g className="landing-pipeline-stage">
+          <rect x="20" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="20" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          {/* Document icon */}
+          <rect x="48" y="22" width="14" height="18" rx="2" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
+          <path d="M56,22 L56,27 L62,27" fill="none" stroke={GOLD_LIGHT} strokeWidth="1" />
+          <line x1="51" y1="31" x2="59" y2="31" stroke={GOLD_LIGHT} strokeWidth="0.8" opacity="0.6" />
+          <line x1="51" y1="34" x2="57" y2="34" stroke={GOLD_LIGHT} strokeWidth="0.8" opacity="0.6" />
+          <text x="60" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Intake</text>
+        </g>
+
+        {/* Stage 2: Compute */}
+        <g className="landing-pipeline-stage">
+          <rect x="130" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="130" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          {/* AI/Gear icon */}
+          <circle cx="170" cy="30" r="8" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
+          <circle cx="170" cy="30" r="3" fill="none" stroke={GOLD_LIGHT} strokeWidth="0.8" />
+          {/* Gear teeth */}
+          {[0, 60, 120, 180, 240, 300].map((deg) => (
+            <line
+              key={deg}
+              x1={170 + 7 * Math.cos((deg * Math.PI) / 180)}
+              y1={30 + 7 * Math.sin((deg * Math.PI) / 180)}
+              x2={170 + 10 * Math.cos((deg * Math.PI) / 180)}
+              y2={30 + 10 * Math.sin((deg * Math.PI) / 180)}
+              stroke={GOLD_LIGHT}
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          ))}
+          <text x="170" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Compute</text>
+        </g>
+
+        {/* Stage 3: Review */}
+        <g className="landing-pipeline-stage">
+          <rect x="240" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="240" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          {/* Checkmark icon */}
+          <circle cx="280" cy="30" r="8" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
+          <path d="M274,30 L278,34 L286,26" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <text x="280" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Review</text>
+        </g>
+
+        {/* Stage 4: Report */}
+        <g className="landing-pipeline-stage">
+          <rect x="350" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="350" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          {/* Chart/report icon */}
+          <rect x="378" y="22" width="14" height="18" rx="2" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
+          <polyline points="381,36 384,32 387,34 389,28" fill="none" stroke={GOLD_LIGHT} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+          <text x="390" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Report</text>
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 function ValueCycle() {
   const [index, setIndex] = useState(0);
   const [displayText, setDisplayText] = useState('');
@@ -577,17 +686,10 @@ export function LandingPage() {
 
             {/* Hero */}
             <div className="landing-hero-area">
-              <div className="landing-hero-robot-wrap">
-                <div className="landing-hero-glow" />
-                <HeroRobot />
-              </div>
               <h1 className="landing-title">
                 <span className="landing-title-gold">409A</span> valuations,<br />simplified.
               </h1>
-              <p className="landing-subtitle">
-                Independent, defensible valuations — AI-assisted intake,
-                engine-computed, analyst-reviewed.
-              </p>
+              <PipelineGraphic />
             </div>
 
             {/* Animated value props */}
