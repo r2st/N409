@@ -609,7 +609,109 @@ describe('validateCapTable: total_shares equals sum of per-type shares', () => {
   });
 });
 
-// ── 11. Cross-module ratchet consistency ─────────────────────────────────────
+// ── 11. Graph seniority vs waterfall seniority agreement ─────────────────────
+
+describe('graph seniority edges agree with toWaterfallInputs', () => {
+  const table = [
+    entry({ security_class: 'Common', class_type: 'common', shares: 5_000_000 }),
+    entry({
+      security_class: 'Seed',
+      class_type: 'preferred',
+      shares: 1_000_000,
+      seniority: 1,
+      invested_amount: 1_000_000,
+    }),
+    entry({
+      security_class: 'Series A',
+      class_type: 'preferred',
+      shares: 2_000_000,
+      seniority: 2,
+      invested_amount: 5_000_000,
+    }),
+    entry({
+      security_class: 'Unseniored',
+      class_type: 'preferred',
+      shares: 500_000,
+      seniority: null,
+      invested_amount: 500_000,
+    }),
+  ];
+
+  it('unstated seniority ranks behind all stated ranks in both graph and waterfall', () => {
+    const graph = graphFromEntries(table);
+    const inputs = toWaterfallInputs(table);
+
+    const seedNode = graph.nodes.find((n) => n.label === 'Seed')!;
+    const aNode = graph.nodes.find((n) => n.label === 'Series A')!;
+    const unsenioredNode = graph.nodes.find((n) => n.label === 'Unseniored')!;
+
+    // Graph ranks should be: Seed at column 1, Series A at column 2, Unseniored at column 3
+    expect(seedNode.rank).toBeLessThan(aNode.rank);
+    expect(aNode.rank).toBeLessThan(unsenioredNode.rank);
+
+    // Waterfall inputs should have seniority: Seed=1, Series A=2, Unseniored=3
+    const seedInput = inputs.preferred.find((p) => p.security_class === 'Seed')!;
+    const aInput = inputs.preferred.find((p) => p.security_class === 'Series A')!;
+    const unsenioredInput = inputs.preferred.find((p) => p.security_class === 'Unseniored')!;
+
+    expect(seedInput.seniority).toBe(1);
+    expect(aInput.seniority).toBe(2);
+    expect(unsenioredInput.seniority).toBe(3);
+  });
+
+  it('graph draws senior_to edges only between adjacent ranks', () => {
+    const graph = graphFromEntries(table);
+    const seniorEdges = graph.edges.filter((e) => e.kind === 'senior_to');
+    // With 3 distinct ranks: Seed→A, Seed→Unseniored? No — only adjacent.
+    // Edges: Seed→A (rank 1→2), A→Unseniored (rank 2→3)
+    expect(seniorEdges.length).toBe(2);
+
+    const seedId = graph.nodes.find((n) => n.label === 'Seed')!.id;
+    const aId = graph.nodes.find((n) => n.label === 'Series A')!.id;
+    const unsenioredId = graph.nodes.find((n) => n.label === 'Unseniored')!.id;
+
+    expect(seniorEdges).toContainEqual(
+      expect.objectContaining({ from: seedId, to: aId, kind: 'senior_to' }),
+    );
+    expect(seniorEdges).toContainEqual(
+      expect.objectContaining({ from: aId, to: unsenioredId, kind: 'senior_to' }),
+    );
+  });
+});
+
+// ── 12. Waterfall sheet preference = liquidationPreference ───────────────────
+
+describe('waterfall sheet: preference cached value equals liquidationPreference', () => {
+  it('each preferred row agrees with liquidationPreference from capTable.ts', () => {
+    const inputs = toWaterfallInputs(ALL_ENTRIES);
+    for (const p of inputs.preferred) {
+      const src = ALL_ENTRIES.find((e) => e.security_class === p.security_class)!;
+      const sheetPreference = p.invested_amount * p.liquidation_multiple;
+      expect(sheetPreference).toBe(liquidationPreference(src));
+    }
+  });
+
+  it('total preference stack matches validateCapTable total_preference_stack', () => {
+    const inputs = toWaterfallInputs(ALL_ENTRIES);
+    const sheetTotal = inputs.preferred.reduce(
+      (s, p) => s + p.invested_amount * p.liquidation_multiple,
+      0,
+    );
+    const { summary } = validateCapTable(ALL_ENTRIES);
+    expect(sheetTotal).toBe(summary.total_preference_stack);
+  });
+
+  it('as-converted column (shares × conversion_ratio) matches asConvertedShares', () => {
+    const inputs = toWaterfallInputs(ALL_ENTRIES);
+    for (const p of inputs.preferred) {
+      const src = ALL_ENTRIES.find((e) => e.security_class === p.security_class)!;
+      const sheetConverted = p.shares * p.conversion_ratio;
+      expect(sheetConverted).toBe(asConvertedShares(src));
+    }
+  });
+});
+
+// ── 13. Cross-module ratchet consistency ─────────────────────────────────────
 
 describe('ratchet consistency: conversion_ratio > 1 across all consumers', () => {
   const table = [
