@@ -26,6 +26,8 @@ import {
 } from '../../src/domain/valuationCompare.js';
 import { buildBridge } from '../../src/domain/valuationBridge.js';
 import { exerciseScenarios, vestingStatus, type VestingSchedule } from '../../src/domain/vesting.js';
+import { num } from '../../src/domain/reportSummary.js';
+import { scoreCompleteness } from '../../src/domain/dataCompleteness.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -810,7 +812,36 @@ describe('bridge: LMDI contributions sum to delta', () => {
   });
 });
 
-// ── 15. Cross-module ratchet consistency ─────────────────────────────────────
+// ── 15. Dual representation: pg numeric string vs JSONB number ──────────────
+
+describe('dual representation: numeric column (string) vs JSONB (number)', () => {
+  it('Number(pg_string) equals the JSONB value for typical FMV', () => {
+    const pgString = '2.5013';
+    const jsonbValue = 2.5013;
+    expect(Number(pgString)).toBe(jsonbValue);
+  });
+
+  it('Number(pg_string) equals the JSONB value for equity value', () => {
+    const pgString = '42664609.74';
+    const jsonbValue = 42664609.74;
+    expect(Number(pgString)).toBe(jsonbValue);
+  });
+
+  it('null numeric column converts correctly', () => {
+    const pgString: string | null = null;
+    expect(pgString === null ? null : Number(pgString)).toBeNull();
+  });
+
+  it('num() handles both representations identically', () => {
+    expect(num('2.5013')).toBe(2.5013);
+    expect(num(2.5013)).toBe(2.5013);
+    expect(num(null)).toBeNull();
+    expect(num(undefined)).toBeNull();
+    expect(num('')).toBeNull();
+  });
+});
+
+// ── 16. Cross-module ratchet consistency ─────────────────────────────────────
 
 describe('ratchet consistency: conversion_ratio > 1 across all consumers', () => {
   const table = [
@@ -856,5 +887,88 @@ describe('ratchet consistency: conversion_ratio > 1 across all consumers', () =>
     const a = inputs.preferred.find((p) => p.security_class === 'Series A (2× ratchet)')!;
     expect(a.conversion_ratio).toBe(2);
     expect(a.shares).toBe(1_000_000);
+  });
+});
+
+// ── completeness: DLOM blend volatility check ──────────────────────────────
+
+describe('completeness scoring — DLOM blend volatility', () => {
+  const baseSubject = {
+    kind: '409a' as const,
+    answers: {},
+    documents: [],
+    shareClasses: [{ class_type: 'common' }],
+    engineInputs: {} as Record<string, unknown>,
+  };
+
+  it('flags missing volatility when dlom_methods blend includes a model method', () => {
+    const subject = {
+      ...baseSubject,
+      params: {
+        allocation_method: 'cvm',
+        dlom_method: 'restricted_stock',
+        dlom_methods: [
+          { method: 'chaffee', weight: 0.5 },
+          { method: 'restricted_stock', weight: 0.5 },
+        ],
+      },
+    };
+    const report = scoreCompleteness(subject);
+    const volGap = report.gaps.find((g) => g.key === 'financials.volatility');
+    expect(volGap).toBeDefined();
+    expect(volGap!.severity).toBe('blocking');
+    expect(volGap!.detail).toContain('chaffee');
+  });
+
+  it('does not flag volatility when blend has no model method', () => {
+    const subject = {
+      ...baseSubject,
+      params: {
+        allocation_method: 'cvm',
+        dlom_method: 'restricted_stock',
+        dlom_methods: [
+          { method: 'restricted_stock', weight: 0.5 },
+          { method: 'asian_put', weight: 0.5 },
+        ],
+      },
+    };
+    const report = scoreCompleteness(subject);
+    const volGap = report.gaps.find((g) => g.key === 'financials.volatility');
+    expect(volGap).toBeUndefined();
+  });
+
+  it('names all model methods in detail when blend has multiple', () => {
+    const subject = {
+      ...baseSubject,
+      params: {
+        allocation_method: 'cvm',
+        dlom_methods: [
+          { method: 'chaffee', weight: 0.3 },
+          { method: 'finnerty', weight: 0.3 },
+          { method: 'restricted_stock', weight: 0.4 },
+        ],
+      },
+    };
+    const report = scoreCompleteness(subject);
+    const volGap = report.gaps.find((g) => g.key === 'financials.volatility');
+    expect(volGap).toBeDefined();
+    expect(volGap!.detail).toContain('chaffee');
+    expect(volGap!.detail).toContain('finnerty');
+    expect(volGap!.detail).toMatch(/are derived from volatility/);
+  });
+
+  it('singular dlom_method still works as before', () => {
+    const subject = {
+      ...baseSubject,
+      params: {
+        allocation_method: 'cvm',
+        dlom_method: 'ghaidarov',
+      },
+    };
+    const report = scoreCompleteness(subject);
+    const volGap = report.gaps.find((g) => g.key === 'financials.volatility');
+    expect(volGap).toBeDefined();
+    expect(volGap!.detail).toContain('ghaidarov');
+    expect(volGap!.detail).toMatch(/is derived from volatility/);
   });
 });

@@ -31,6 +31,7 @@
 import { computeCompletion, isAnswered, type IntakeCompletion } from './intake.js';
 import { intakeSectionsFor } from './intakeKinds.js';
 import { DOCUMENT_CATEGORY_DEFS, type DocumentCategory } from './documentCategories.js';
+import { selectsModelDlom, modelDlomMethodsIn } from './dlom.js';
 import type { ValuationKind } from './valuation.js';
 
 /**
@@ -101,6 +102,7 @@ export interface CompletenessParams {
   market_horizon?: unknown;
   allocation_method?: unknown;
   dlom_method?: unknown;
+  dlom_methods?: unknown;
   exit_timeline?: unknown;
   [key: string]: unknown;
 }
@@ -333,18 +335,17 @@ function financialGaps(subject: CompletenessSubject): CompletenessGap[] {
 
   // Volatility: needed by the OPM allocation and by every model DLOM.
   const allocation = typeof params.allocation_method === 'string' ? params.allocation_method : 'opm';
-  const modelDlom = ['chaffee', 'finnerty', 'ghaidarov', 'longstaff'].includes(
-    String(params.dlom_method ?? ''),
-  );
+  const modelDlom = selectsModelDlom(params);
   const needsVolatility = allocation === 'opm' || allocation === 'hybrid' || modelDlom;
   if (needsVolatility && num(inputs.volatility) === null) {
+    const modelMethods = modelDlomMethodsIn(params);
     gaps.push({
       key: 'financials.volatility',
       category: 'financials',
       severity: 'blocking',
       label: 'No volatility',
       detail: modelDlom
-        ? `The ${String(params.dlom_method)} DLOM is derived from volatility and time to exit.`
+        ? `The ${modelMethods.join(', ')} DLOM ${modelMethods.length === 1 ? 'is' : 'are'} derived from volatility and time to exit.`
         : `The ${allocation.toUpperCase()} allocation prices a Black-Scholes call on equity value.`,
       remedy: 'Run the volatility estimator against the guideline companies, or enter it directly.',
     });
