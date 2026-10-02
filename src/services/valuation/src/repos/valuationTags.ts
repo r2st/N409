@@ -318,9 +318,56 @@ export async function upsertValuationTags(
 ): Promise<ValuationTagRow[]> {
   if (tags.length === 0) return [];
   return withTransaction(pool, async (client) => {
-    const out: ValuationTagRow[] = [];
-    for (const tag of tags) out.push(await upsertValuationTag(client, valuationId, tag, actorId));
-    return out;
+    const decidedIds = tags.map((t) => (t.status === 'suggested' ? null : actorId));
+    const { rows } = await client.query<RawValuationTagRow>(
+      `INSERT INTO valuation_tags
+         (id, valuation_id, slug, source, status, confidence, rationale, evidence,
+          created_by, decided_by, decided_at)
+       SELECT v.id, v.valuation_id, v.slug, v.source, v.status,
+              v.confidence, v.rationale, v.evidence,
+              v.created_by, v.decided_by,
+              CASE WHEN v.decided_by IS NULL THEN NULL ELSE now() END
+       FROM unnest(
+         $1::ulid[], $2::ulid[], $3::text[],
+         $4::valuation_tag_source[], $5::valuation_tag_status[],
+         $6::numeric[], $7::text[], $8::jsonb[], $9::text[], $10::ulid[]
+       ) AS v(id, valuation_id, slug, source, status,
+              confidence, rationale, evidence, created_by, decided_by)
+       ON CONFLICT (valuation_id, slug) DO UPDATE SET
+         confidence = EXCLUDED.confidence,
+         rationale  = EXCLUDED.rationale,
+         evidence   = EXCLUDED.evidence,
+         status     = CASE
+                        WHEN EXCLUDED.source = 'ai' AND valuation_tags.status <> 'suggested'
+                          THEN valuation_tags.status
+                        ELSE EXCLUDED.status
+                      END,
+         decided_by = CASE
+                        WHEN EXCLUDED.source = 'ai' AND valuation_tags.status <> 'suggested'
+                          THEN valuation_tags.decided_by
+                        ELSE EXCLUDED.decided_by
+                      END,
+         decided_at = CASE
+                        WHEN EXCLUDED.source = 'ai' AND valuation_tags.status <> 'suggested'
+                          THEN valuation_tags.decided_at
+                        WHEN EXCLUDED.decided_by IS NULL THEN NULL
+                        ELSE now()
+                      END
+       RETURNING *`,
+      [
+        tags.map(() => newUlid()),
+        tags.map(() => valuationId),
+        tags.map((t) => t.slug),
+        tags.map((t) => t.source),
+        tags.map((t) => t.status),
+        tags.map((t) => t.confidence ?? null),
+        tags.map((t) => t.rationale ?? null),
+        tags.map((t) => JSON.stringify(t.evidence ?? [])),
+        tags.map(() => actorId),
+        decidedIds,
+      ],
+    );
+    return rows.map(hydrate);
   });
 }
 
