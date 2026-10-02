@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { RequireAuth } from './components/RequireAuth';
 import { RequireRole } from './components/RequireRole';
 import { useAuth } from './lib/auth';
@@ -58,8 +58,8 @@ const TermsPage = named(() => import('./pages/marketing/StaticPages'), 'TermsPag
 const NotFoundPage = named(() => import('./pages/NotFoundPage'), 'NotFoundPage');
 
 // ── Authentication ────────────────────────────────────────────────────────────
-const LoginPage = named(() => import('./pages/LoginPage'), 'LoginPage');
-const RegisterPage = named(() => import('./pages/RegisterPage'), 'RegisterPage');
+// LoginPage and RegisterPage are now integrated into LandingPage as tabs.
+// /login and /register redirect to / via LoginRedirect and RegisterRedirect.
 const ForgotPasswordPage = named(() => import('./pages/ForgotPasswordPage'), 'ForgotPasswordPage');
 const ResetPasswordPage = named(() => import('./pages/ResetPasswordPage'), 'ResetPasswordPage');
 const VerifyEmailPage = named(() => import('./pages/VerifyEmailPage'), 'VerifyEmailPage');
@@ -180,13 +180,41 @@ function RoleLanding() {
 
 /**
  * / serves the public marketing landing to anonymous visitors (409.ai §22)
- * and routes signed-in users straight to their workspace.
+ * and routes signed-in users straight to their workspace. The landing page
+ * now embeds login and register forms as tabs, so /login and /register
+ * redirect here.
  */
 function HomeGate() {
   const { status } = useAuth();
   if (status === 'loading') return <PageLoader />;
   if (status === 'anonymous') return <LandingPage />;
   return <RoleLanding />;
+}
+
+/** Redirect /login to the landing page (sign-in tab is the default). */
+function LoginRedirect() {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={{ pathname: '/', search: location.search }}
+      state={location.state}
+      replace
+    />
+  );
+}
+
+/** Redirect /register to the landing page with the register tab active. */
+function RegisterRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.set('tab', 'register');
+  return (
+    <Navigate
+      to={{ pathname: '/', search: params.toString() }}
+      state={location.state}
+      replace
+    />
+  );
 }
 
 export default function App() {
@@ -225,8 +253,8 @@ export default function App() {
               for why they still need a boundary inside the router. */}
           <Route element={<StandaloneLayout />}>
             <Route path="/" element={<HomeGate />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/login" element={<LoginRedirect />} />
+            <Route path="/register" element={<RegisterRedirect />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/verify-email" element={<VerifyEmailPage />} />
