@@ -538,25 +538,28 @@ html {
   }
 }
 
-/* ── DoAide Landing Page (split template) ─────────────────────────────────── */
+/* ── DoAide Landing Page (split template — golden/black theme) ────────────── */
 
 .landing-root {
-  --accent: #818CF8;
-  --accent-dark: #6366F1;
-  --bg: #0A0A0B;
-  --bg-card: #141416;
-  --bg-card-hover: #1a1a1e;
-  --text: #E4E4E7;
-  --text-muted: #71717A;
+  --gold: #F0B429;
+  --gold-light: #F7CC5F;
+  --gold-dark: #D4A01F;
+  --gold-dim: #A87C1C;
+  --bg: rgb(10, 10, 11);
+  --bg-card: rgba(16, 16, 18, 0.8);
+  --bg-card-hover: rgba(22, 22, 25, 0.9);
+  --text: rgb(229, 231, 235);
+  --text-white: rgb(255, 255, 255);
+  --text-muted: rgba(255, 255, 255, 0.4);
   min-height: 100vh;
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-sans);
+  font-family: 'Schibsted Grotesk', var(--font-sans);
   overflow-x: hidden;
   position: relative;
 }
 
-/* ── Animated background ── */
+/* ── Animated background — golden glows ── */
 
 .landing-bg {
   position: fixed;
@@ -569,32 +572,32 @@ html {
 .landing-orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.15;
+  filter: blur(90px);
+  opacity: 0.12;
 }
 
 .landing-orb-1 {
-  width: 400px;
-  height: 400px;
-  background: var(--accent);
-  top: -100px;
+  width: 420px;
+  height: 420px;
+  background: var(--gold);
+  top: -120px;
   left: -100px;
   animation: landing-drift-1 20s ease-in-out infinite;
 }
 
 .landing-orb-2 {
-  width: 300px;
-  height: 300px;
-  background: var(--accent);
-  bottom: -50px;
-  right: -50px;
+  width: 320px;
+  height: 320px;
+  background: var(--gold-light);
+  bottom: -60px;
+  right: -60px;
   animation: landing-drift-2 25s ease-in-out infinite;
 }
 
 .landing-orb-3 {
   width: 200px;
   height: 200px;
-  background: var(--accent);
+  background: var(--gold);
   top: 40%;
   left: 50%;
   animation: landing-drift-3 18s ease-in-out infinite;
@@ -613,8 +616,8 @@ html {
 }
 
 @keyframes landing-drift-3 {
-  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.1; }
-  50% { transform: translate(-100px, 50px) scale(1.2); opacity: 0.2; }
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.08; }
+  50% { transform: translate(-100px, 50px) scale(1.2); opacity: 0.18; }
 }
 
 @keyframes landing-fade-up {
@@ -701,14 +704,15 @@ html {
 }
 
 .landing-brand-text {
-  font-size: 18px;
-  font-weight: 600;
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 22px;
+  font-weight: 400;
   letter-spacing: -0.3px;
-  color: var(--text);
+  color: var(--text-white);
 }
 
 .landing-brand-text em {
-  color: var(--accent);
+  color: var(--gold);
   font-style: italic;
 }
 
@@ -728,7 +732,7 @@ html {
 .landing-hero-robot-wrap {
   margin-bottom: 20px;
   animation: landing-float 4s ease-in-out infinite;
-  filter: drop-shadow(0 0 30px color-mix(in srgb, var(--accent) 30%, transparent));
+  filter: drop-shadow(0 0 30px rgba(240, 180, 41, 0.3));
 }
 
 .landing-hero-robot .landing-antenna-glow {
@@ -736,22 +740,26 @@ html {
 }
 
 .landing-title {
-  font-size: clamp(28px, 4vw, 44px);
-  font-weight: 700;
-  letter-spacing: -1.5px;
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: clamp(30px, 4vw, 48px);
+  font-weight: 400;
+  letter-spacing: -0.5px;
   line-height: 1.15;
   margin: 0 0 16px;
-  background: linear-gradient(135deg, var(--text), var(--accent));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text-white);
+}
+
+.landing-title-gold {
+  color: var(--gold);
 }
 
 .landing-subtitle {
-  font-size: 15px;
-  line-height: 1.6;
+  font-family: 'IBM Plex Mono', var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
   color: var(--text-muted);
   max-width: 420px;
+  letter-spacing: 0.02em;
 }
 
 /* ── Features ── */
@@ -769,8 +777,8 @@ html {
   gap: 10px;
   padding: 14px;
   background: var(--bg-card);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
   opacity: 0;
   animation: landing-card-pop 0.5s ease forwards;
   transition: all 0.3s ease;
@@ -778,28 +786,31 @@ html {
 }
 
 .landing-feature-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: rgba(240, 180, 41, 0.25);
   transform: translateY(-2px);
   background: var(--bg-card-hover);
+  box-shadow: 0 4px 20px rgba(240, 180, 41, 0.06);
 }
 
 .landing-feature-icon {
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1;
   flex-shrink: 0;
-  margin-top: 1px;
+  margin-top: 2px;
+  color: var(--gold);
 }
 
 .landing-feature-title {
   display: block;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-white);
 }
 
 .landing-feature-desc {
   display: block;
-  font-size: 11px;
+  font-family: 'IBM Plex Mono', var(--font-mono);
+  font-size: 10px;
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -809,7 +820,7 @@ html {
 .landing-footer {
   margin-top: auto;
   padding-top: 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .landing-footer-products {
@@ -821,13 +832,14 @@ html {
 
 .landing-footer-link {
   color: var(--text-muted);
+  font-family: 'IBM Plex Mono', var(--font-mono);
   font-size: 11px;
   text-decoration: none;
   transition: color 0.2s;
 }
 
 .landing-footer-link:hover {
-  color: var(--accent);
+  color: var(--gold);
 }
 
 .landing-footer-bottom {
@@ -848,7 +860,7 @@ html {
 }
 
 .landing-footer-home:hover {
-  color: var(--accent);
+  color: var(--gold);
 }
 
 .landing-footer-copy {
@@ -862,36 +874,36 @@ html {
   width: 100%;
   max-width: 400px;
   background: var(--bg-card);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 24px;
   padding: 32px 28px;
   box-shadow:
-    0 0 60px color-mix(in srgb, var(--accent) 6%, transparent),
-    0 2px 8px rgba(0, 0, 0, 0.3);
+    0 0 80px rgba(240, 180, 41, 0.04),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
 }
 
-/* ── Tab toggle ── */
+/* ── Tab toggle — underline style ── */
 
 .landing-tabs {
   display: flex;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  padding: 3px;
-  margin-bottom: 24px;
-  gap: 2px;
+  gap: 0;
+  margin-bottom: 28px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .landing-tab {
   flex: 1;
-  padding: 9px 0;
-  font-size: 13px;
+  padding: 12px 0;
+  font-size: 14px;
   font-weight: 600;
   border: none;
-  border-radius: 8px;
+  border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.2s ease;
+  margin-bottom: -1px;
 }
 
 .landing-tab:hover {
@@ -899,29 +911,30 @@ html {
 }
 
 .landing-tab-active {
-  background: var(--accent);
-  color: #0A0A0B;
+  color: var(--gold);
+  border-bottom-color: var(--gold);
 }
 
 .landing-tab-active:hover {
-  color: #0A0A0B;
+  color: var(--gold);
 }
 
 /* ── Form area ── */
 
 .landing-form-area {
-  /* Prevent layout shift between login (short) and register (tall) */
   min-height: 0;
 }
 
-/* Override the default Button primary styling inside the landing page */
+/* Override the default Button primary styling — golden background */
 .landing-submit-btn {
-  background: var(--accent) !important;
+  background: var(--gold) !important;
   color: #0A0A0B !important;
-  border-radius: 10px !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
 }
 .landing-submit-btn:hover:not(:disabled) {
-  background: var(--accent-dark) !important;
+  background: var(--gold-dark) !important;
+  box-shadow: 0 4px 16px rgba(240, 180, 41, 0.25) !important;
 }
 
 /* ── Social/SSO buttons ── */
@@ -932,9 +945,9 @@ html {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 9px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
   background: transparent;
   color: var(--text);
   font-size: 13px;
@@ -945,8 +958,8 @@ html {
 }
 
 .landing-social-btn:hover {
-  border-color: rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(240, 180, 41, 0.3);
+  background: rgba(240, 180, 41, 0.05);
 }
 
 /* ── Divider ── */
@@ -961,33 +974,36 @@ html {
 .landing-divider-line {
   flex: 1;
   height: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .landing-divider-text {
   font-size: 11px;
   color: var(--text-muted);
+  font-family: 'IBM Plex Mono', var(--font-mono);
 }
 
 /* Style overrides for form fields inside the dark auth card */
 .landing-auth-card label {
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
 }
 .landing-auth-card input[type="text"],
 .landing-auth-card input[type="email"],
 .landing-auth-card input[type="password"] {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.1);
   color: var(--text);
+  border-radius: 10px;
 }
 .landing-auth-card input[type="text"]:focus,
 .landing-auth-card input[type="email"]:focus,
 .landing-auth-card input[type="password"]:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px rgba(240, 180, 41, 0.15);
 }
 .landing-auth-card input::placeholder {
-  color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.15);
 }
 
 /* ── Responsive: mobile stacks vertically ── */

@@ -17,7 +17,9 @@ import { PASSWORD_HINT } from '../../lib/passwordPolicy';
 import { SignedInHandoff, handOffAfterSignIn } from '../../components/SignedInHandoff';
 import { LogoMark } from '../../components/Logo';
 
-const ACCENT = '#818CF8';
+const GOLD = '#F0B429';
+const GOLD_LIGHT = '#F7CC5F';
+const GOLD_DARK = '#D4A017';
 
 const FEATURES = [
   { icon: '📊', title: 'AI Valuation', desc: 'Engine-computed, analyst-reviewed' },
@@ -38,36 +40,42 @@ const DOAIDE_PRODUCTS = [
   { name: 'Trade', url: 'https://trade.doaide.com' },
 ];
 
-function RobotFace({ size = 32, color = ACCENT }: { size?: number; color?: string }) {
+function RobotFace({ size = 32 }: { size?: number }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width={size} height={size} aria-hidden="true">
-      <line x1="16" y1="6" x2="16" y2="2" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="16" cy="1.5" r="1.5" fill={color} />
-      <rect x="5" y="6" width="22" height="17" rx="5" fill={color} />
+      <line x1="16" y1="6" x2="16" y2="2" stroke={GOLD} strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="16" cy="1.5" r="1.5" fill={GOLD} />
+      <rect x="5" y="6" width="22" height="17" rx="5" fill={GOLD} />
       <ellipse cx="11" cy="13" rx="2.5" ry="3" fill="#0A0A0B" />
       <ellipse cx="21" cy="13" rx="2.5" ry="3" fill="#0A0A0B" />
-      <circle cx="11.5" cy="12.5" r="1" fill={color} opacity="0.6" />
-      <circle cx="21.5" cy="12.5" r="1" fill={color} opacity="0.6" />
+      <circle cx="11.5" cy="12.5" r="1" fill={GOLD_LIGHT} />
+      <circle cx="21.5" cy="12.5" r="1" fill={GOLD_LIGHT} />
       <path d="M12 19Q16 22 20 19" stroke="#0A0A0B" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-      <rect x="1" y="10" width="4" height="5" rx="2" fill={color} opacity="0.8" />
-      <rect x="27" y="10" width="4" height="5" rx="2" fill={color} opacity="0.8" />
+      <rect x="1" y="10" width="4" height="5" rx="2" fill={GOLD_DARK} />
+      <rect x="27" y="10" width="4" height="5" rx="2" fill={GOLD_DARK} />
     </svg>
   );
 }
 
-function HeroRobot({ color = ACCENT }: { color?: string }) {
+function HeroRobot() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100" width="120" height="100" className="landing-hero-robot" aria-hidden="true">
-      <line x1="60" y1="18" x2="60" y2="6" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-      <circle cx="60" cy="4" r="3" fill={color} className="landing-antenna-glow" />
-      <rect x="25" y="18" width="70" height="55" rx="16" fill={color} />
+      <defs>
+        <linearGradient id="robot-gold" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor={GOLD} />
+          <stop offset="100%" stopColor={GOLD_LIGHT} />
+        </linearGradient>
+      </defs>
+      <line x1="60" y1="18" x2="60" y2="6" stroke={GOLD} strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="60" cy="4" r="3" fill={GOLD_LIGHT} className="landing-antenna-glow" />
+      <rect x="25" y="18" width="70" height="55" rx="16" fill="url(#robot-gold)" />
       <ellipse cx="42" cy="40" rx="8" ry="10" fill="#0A0A0B" />
       <ellipse cx="78" cy="40" rx="8" ry="10" fill="#0A0A0B" />
-      <circle cx="44" cy="38" r="3" fill={color} opacity="0.5" />
-      <circle cx="80" cy="38" r="3" fill={color} opacity="0.5" />
+      <circle cx="44" cy="38" r="3" fill={GOLD_LIGHT} opacity="0.7" />
+      <circle cx="80" cy="38" r="3" fill={GOLD_LIGHT} opacity="0.7" />
       <path d="M45 60 Q60 72 75 60" stroke="#0A0A0B" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-      <rect x="5" y="30" width="16" height="18" rx="6" fill={color} opacity="0.8" />
-      <rect x="99" y="30" width="16" height="18" rx="6" fill={color} opacity="0.8" />
+      <rect x="5" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
+      <rect x="99" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
     </svg>
   );
 }
@@ -190,7 +198,7 @@ function LoginForm({ onMfa }: { onMfa: (challenge: string) => void }) {
           />
         </Field>
         <div className="-mt-1 text-right">
-          <Link to="/forgot-password" className="text-xs font-semibold text-[var(--accent)] hover:text-[var(--accent-dark)]">
+          <Link to="/forgot-password" className="text-xs font-semibold text-[var(--gold)] hover:text-[var(--gold-dark)]">
             Forgot password?
           </Link>
         </div>
@@ -266,7 +274,7 @@ function RegisterForm() {
           Reach us at{' '}
           <a
             href={`mailto:${supportEmail ?? 'support@409.ai'}`}
-            className="font-semibold text-[var(--accent)] hover:text-[var(--accent-dark)]"
+            className="font-semibold text-[var(--gold)] hover:text-[var(--gold-dark)]"
           >
             {supportEmail ?? 'support@409.ai'}
           </a>
@@ -435,7 +443,7 @@ function MfaForm({
         <div className="flex items-center justify-between">
           <button
             type="button"
-            className="text-xs font-semibold text-[var(--accent)] hover:text-[var(--accent-dark)]"
+            className="text-xs font-semibold text-[var(--gold)] hover:text-[var(--gold-dark)]"
             onClick={() => {
               setUseBackup((v) => !v);
               setCode('');
@@ -509,7 +517,7 @@ export function LandingPage() {
                 <HeroRobot />
               </div>
               <h1 className="landing-title">
-                409A valuations,<br />simplified.
+                <span className="landing-title-gold">409A</span> valuations,<br />simplified.
               </h1>
               <p className="landing-subtitle">
                 Independent, defensible valuations — AI-assisted intake,
