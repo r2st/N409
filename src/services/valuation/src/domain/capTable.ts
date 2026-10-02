@@ -1203,7 +1203,7 @@ export function validateCapTable(
       }
     }
 
-    summary.total_shares += Math.max(0, e.shares);
+    summary.total_shares += e.shares;
     if (e.class_type === 'common') summary.common_shares += e.shares;
     else if (e.class_type === 'preferred') summary.preferred_shares += e.shares;
     else if (e.class_type === 'option') summary.option_shares += e.shares;
