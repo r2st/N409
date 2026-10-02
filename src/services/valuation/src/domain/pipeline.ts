@@ -17,6 +17,18 @@ export type ReviewTaskKind = (typeof REVIEW_TASK_KINDS)[number];
 export const REVIEW_TASK_STATUSES = ['open', 'in_progress', 'blocked', 'done', 'cancelled'] as const;
 export type ReviewTaskStatus = (typeof REVIEW_TASK_STATUSES)[number];
 
+export const TASK_TRANSITIONS: Record<ReviewTaskStatus, readonly ReviewTaskStatus[]> = {
+  open: ['in_progress', 'blocked', 'done', 'cancelled'],
+  in_progress: ['open', 'blocked', 'done', 'cancelled'],
+  blocked: ['open', 'in_progress', 'done', 'cancelled'],
+  done: [],
+  cancelled: [],
+};
+
+export function canTransitionTask(from: ReviewTaskStatus, to: ReviewTaskStatus): boolean {
+  return (TASK_TRANSITIONS[from] as readonly string[]).includes(to);
+}
+
 /**
  * How a task status is named to a person.
  *

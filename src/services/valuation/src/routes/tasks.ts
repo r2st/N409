@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { REVIEW_TASK_KINDS, REVIEW_TASK_STATUSES } from '../domain/pipeline.js';
+import { REVIEW_TASK_KINDS, REVIEW_TASK_STATUSES, canTransitionTask, TASK_STATUS_LABELS } from '../domain/pipeline.js';
 import { findValuationById } from '../repos/valuations.js';
 import { createTask, findTaskById, listTasks, patchTask } from '../repos/tasks.js';
 import { assertAssignable, assigneeFilter } from '../domain/assignee.js';
@@ -38,7 +38,7 @@ const CreateBody = z.object({
     .nullable()
     .optional(),
   due_at: z.string().datetime().nullable().optional(),
-});
+}).strict();
 
 const PatchBody = z
   .object({
@@ -158,6 +158,14 @@ export function registerTaskRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     if ('assignee_id' in parsed.data) await assertAssigneeExists(deps.pool, parsed.data.assignee_id);
+
+    if (parsed.data.status && parsed.data.status !== task.status) {
+      if (!canTransitionTask(task.status, parsed.data.status)) {
+        throw problems.conflict(
+          `Cannot move a ${TASK_STATUS_LABELS[task.status]} task to ${TASK_STATUS_LABELS[parsed.data.status]}`,
+        );
+      }
+    }
 
     const updated = await patchTask(
       deps.pool,
