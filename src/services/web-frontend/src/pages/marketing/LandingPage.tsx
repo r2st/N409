@@ -83,7 +83,7 @@ function HeroRobot() {
 function PipelineGraphic() {
   return (
     <div className="landing-pipeline" aria-hidden="true">
-      <svg viewBox="0 0 440 80" xmlns="http://www.w3.org/2000/svg" className="landing-pipeline-svg">
+      <svg viewBox="0 0 440 96" xmlns="http://www.w3.org/2000/svg" className="landing-pipeline-svg">
         <defs>
           <filter id="pipe-glow">
             <feGaussianBlur stdDeviation="3" result="blur" />
@@ -100,9 +100,9 @@ function PipelineGraphic() {
         </defs>
 
         {/* Connecting lines */}
-        <line x1="100" y1="40" x2="150" y2="40" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
-        <line x1="210" y1="40" x2="260" y2="40" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
-        <line x1="320" y1="40" x2="370" y2="40" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
+        <line x1="100" y1="44" x2="150" y2="44" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
+        <line x1="210" y1="44" x2="260" y2="44" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
+        <line x1="320" y1="44" x2="370" y2="44" stroke="url(#pipe-line-grad)" strokeWidth="1.5" />
 
         {/* Flowing dots — 3 sets staggered */}
         {[0, 1, 2].map((set) => (
@@ -126,63 +126,63 @@ function PipelineGraphic() {
         ))}
 
         {/* Hidden motion paths */}
-        <path id="pipe-path-1" d="M100,40 L150,40" fill="none" stroke="none" />
-        <path id="pipe-path-2" d="M210,40 L260,40" fill="none" stroke="none" />
-        <path id="pipe-path-3" d="M320,40 L370,40" fill="none" stroke="none" />
+        <path id="pipe-path-1" d="M100,44 L150,44" fill="none" stroke="none" />
+        <path id="pipe-path-2" d="M210,44 L260,44" fill="none" stroke="none" />
+        <path id="pipe-path-3" d="M320,44 L370,44" fill="none" stroke="none" />
 
         {/* Stage 1: Intake */}
         <g className="landing-pipeline-stage">
-          <rect x="20" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
-          <rect x="20" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          <rect x="20" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="20" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* Document icon */}
-          <rect x="48" y="22" width="14" height="18" rx="2" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
-          <path d="M56,22 L56,27 L62,27" fill="none" stroke={GOLD_LIGHT} strokeWidth="1" />
-          <line x1="51" y1="31" x2="59" y2="31" stroke={GOLD_LIGHT} strokeWidth="0.8" opacity="0.6" />
-          <line x1="51" y1="34" x2="57" y2="34" stroke={GOLD_LIGHT} strokeWidth="0.8" opacity="0.6" />
-          <text x="60" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Intake</text>
+          <rect x="45" y="18" width="20" height="26" rx="3" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
+          <path d="M57,18 L57,25 L65,25" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
+          <line x1="49" y1="29" x2="61" y2="29" stroke={GOLD_LIGHT} strokeWidth="1" opacity="0.6" />
+          <line x1="49" y1="33" x2="58" y2="33" stroke={GOLD_LIGHT} strokeWidth="1" opacity="0.6" />
+          <text x="60" y="64" textAnchor="middle" fill={GOLD_LIGHT} fontSize="13" fontWeight="600" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Intake</text>
         </g>
 
         {/* Stage 2: Compute */}
         <g className="landing-pipeline-stage">
-          <rect x="130" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
-          <rect x="130" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          <rect x="130" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="130" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* AI/Gear icon */}
-          <circle cx="170" cy="30" r="8" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
-          <circle cx="170" cy="30" r="3" fill="none" stroke={GOLD_LIGHT} strokeWidth="0.8" />
+          <circle cx="170" cy="32" r="11" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
+          <circle cx="170" cy="32" r="4" fill="none" stroke={GOLD_LIGHT} strokeWidth="1" />
           {/* Gear teeth */}
           {[0, 60, 120, 180, 240, 300].map((deg) => (
             <line
               key={deg}
-              x1={170 + 7 * Math.cos((deg * Math.PI) / 180)}
-              y1={30 + 7 * Math.sin((deg * Math.PI) / 180)}
-              x2={170 + 10 * Math.cos((deg * Math.PI) / 180)}
-              y2={30 + 10 * Math.sin((deg * Math.PI) / 180)}
+              x1={170 + 10 * Math.cos((deg * Math.PI) / 180)}
+              y1={32 + 10 * Math.sin((deg * Math.PI) / 180)}
+              x2={170 + 14 * Math.cos((deg * Math.PI) / 180)}
+              y2={32 + 14 * Math.sin((deg * Math.PI) / 180)}
               stroke={GOLD_LIGHT}
-              strokeWidth="1.5"
+              strokeWidth="2"
               strokeLinecap="round"
             />
           ))}
-          <text x="170" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Compute</text>
+          <text x="170" y="64" textAnchor="middle" fill={GOLD_LIGHT} fontSize="13" fontWeight="600" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Compute</text>
         </g>
 
         {/* Stage 3: Review */}
         <g className="landing-pipeline-stage">
-          <rect x="240" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
-          <rect x="240" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          <rect x="240" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="240" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* Checkmark icon */}
-          <circle cx="280" cy="30" r="8" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
-          <path d="M274,30 L278,34 L286,26" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          <text x="280" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Review</text>
+          <circle cx="280" cy="32" r="11" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
+          <path d="M272,32 L277,37 L288,26" fill="none" stroke={GOLD_LIGHT} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <text x="280" y="64" textAnchor="middle" fill={GOLD_LIGHT} fontSize="13" fontWeight="600" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Review</text>
         </g>
 
         {/* Stage 4: Report */}
         <g className="landing-pipeline-stage">
-          <rect x="350" y="12" width="80" height="56" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
-          <rect x="350" y="12" width="80" height="56" rx="10" fill="none" className="landing-pipeline-stage-glow" />
+          <rect x="350" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="350" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* Chart/report icon */}
-          <rect x="378" y="22" width="14" height="18" rx="2" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" />
-          <polyline points="381,36 384,32 387,34 389,28" fill="none" stroke={GOLD_LIGHT} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
-          <text x="390" y="54" textAnchor="middle" fill={GOLD_LIGHT} fontSize="9" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Report</text>
+          <rect x="375" y="18" width="20" height="26" rx="3" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
+          <polyline points="379,38 383,32 387,35 391,26" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          <text x="390" y="64" textAnchor="middle" fill={GOLD_LIGHT} fontSize="13" fontWeight="600" fontFamily="'IBM Plex Mono', monospace" opacity="0.9">Report</text>
         </g>
       </svg>
     </div>
