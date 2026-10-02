@@ -37,6 +37,7 @@ const DOAIDE_PRODUCTS = [
   { name: 'Realty', url: 'https://realty.doaide.com' },
   { name: 'Reach', url: 'https://reach.doaide.com' },
   { name: 'Trade', url: 'https://trade.doaide.com' },
+  { name: 'Cortex', url: 'https://cortex.doaide.com' },
 ];
 
 function RobotFace({ size = 32 }: { size?: number }) {
