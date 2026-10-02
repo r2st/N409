@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Seo } from '../../components/Seo';
@@ -21,11 +21,11 @@ const GOLD = '#F0B429';
 const GOLD_LIGHT = '#F7CC5F';
 const GOLD_DARK = '#D4A017';
 
-const FEATURES = [
-  { icon: '📊', title: 'AI Valuation', desc: 'Engine-computed, analyst-reviewed' },
-  { icon: '✅', title: 'Compliance', desc: 'IRC §409A · ASC 718 · 820' },
-  { icon: '⚡', title: '24hr Reports', desc: 'Audit-ready deliverables' },
-  { icon: '🔗', title: 'Cap Table', desc: 'Automated sync & tracking' },
+const VALUE_PROPS = [
+  'AI-powered valuations',
+  'IRC §409A compliant',
+  'Reports in 24 hours',
+  'Analyst-reviewed',
 ];
 
 const DOAIDE_PRODUCTS = [
@@ -77,6 +77,63 @@ function HeroRobot() {
       <rect x="5" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
       <rect x="99" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
     </svg>
+  );
+}
+
+function ValueCycle() {
+  const [index, setIndex] = useState(0);
+  const [displayText, setDisplayText] = useState('');
+  const [phase, setPhase] = useState<'typing' | 'hold' | 'erasing'>('typing');
+  const charRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const tick = useCallback(() => {
+    const target = VALUE_PROPS[index] ?? '';
+    if (phase === 'typing') {
+      charRef.current += 1;
+      setDisplayText(target.slice(0, charRef.current));
+      if (charRef.current >= target.length) {
+        setPhase('hold');
+        timerRef.current = setTimeout(() => setPhase('erasing'), 2200);
+        return;
+      }
+      timerRef.current = setTimeout(tick, 50 + Math.random() * 30);
+    } else if (phase === 'erasing') {
+      charRef.current -= 1;
+      setDisplayText(target.slice(0, charRef.current));
+      if (charRef.current <= 0) {
+        setPhase('typing');
+        setIndex((i) => (i + 1) % VALUE_PROPS.length);
+        timerRef.current = setTimeout(tick, 400);
+        return;
+      }
+      timerRef.current = setTimeout(tick, 25);
+    }
+  }, [index, phase]);
+
+  useEffect(() => {
+    timerRef.current = setTimeout(tick, phase === 'hold' ? 0 : 80);
+    return () => clearTimeout(timerRef.current);
+  }, [tick, phase]);
+
+  const current = VALUE_PROPS[index] ?? '';
+  const progress = (index + (phase === 'hold' ? 1 : phase === 'erasing' ? 0.5 : displayText.length / (current.length || 1))) / VALUE_PROPS.length;
+
+  return (
+    <div className="landing-value-cycle">
+      <div className="landing-value-text" aria-live="polite" aria-label={current}>
+        <span className="landing-value-typed">{displayText}</span>
+        <span className="landing-value-cursor" />
+      </div>
+      <div className="landing-value-track">
+        <div className="landing-value-progress" style={{ width: `${progress * 100}%` }} />
+      </div>
+      <div className="landing-value-dots">
+        {VALUE_PROPS.map((_, i) => (
+          <span key={i} className={`landing-value-dot${i === index ? ' landing-value-dot-active' : ''}`} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -525,22 +582,8 @@ export function LandingPage() {
               </p>
             </div>
 
-            {/* Feature cards */}
-            <div className="landing-features">
-              {FEATURES.map((f, i) => (
-                <div
-                  key={f.title}
-                  className="landing-feature-card"
-                  style={{ animationDelay: `${0.4 + i * 0.1}s` }}
-                >
-                  <span className="landing-feature-icon">{f.icon}</span>
-                  <div>
-                    <span className="landing-feature-title">{f.title}</span>
-                    <span className="landing-feature-desc">{f.desc}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {/* Animated value props */}
+            <ValueCycle />
 
             {/* Footer */}
             <footer className="landing-footer">
