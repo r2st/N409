@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { calendarDateRow } from '../domain/calendarDate.js';
-import { recordEvent, type EventActor } from '../events/record.js';
+import { recordEvent, recordEvents, type EventActor } from '../events/record.js';
 import { GRANT_EVENT_TYPES } from '../domain/vesting.js';
 
 export interface GrantRow {
@@ -315,5 +315,94 @@ export async function cancelGrant(pool: pg.Pool, grant: GrantRow, actor: EventAc
       payload: { grant_id: grant.id },
     });
     return hydrated(cancelled);
+  });
+}
+
+export interface BatchGrantInput {
+  granteeName: string;
+  granteeEmail?: string | null;
+  grantDate: string;
+  optionsCount: number;
+  exercisePrice: number;
+  currency: string;
+  vestingTemplate: string;
+  vestingStartDate: string;
+  vestingMonths: number;
+  cliffMonths: number;
+  frequencyMonths: number;
+  createdBy: string;
+  source: string;
+  externalId: string;
+}
+
+/**
+ * Insert many grants in one transaction, skipping rows whose external_id
+ * already exists (ON CONFLICT DO NOTHING on the partial unique index).
+ *
+ * Returns { created, skipped } — the created count comes from RETURNING,
+ * so a concurrent import that lands between `existingGrantExternalIds` and
+ * this call is silently deduplicated by the index rather than throwing.
+ */
+export async function createGrantsBatch(
+  pool: pg.Pool,
+  valuationId: string,
+  grants: readonly BatchGrantInput[],
+  actor: EventActor,
+): Promise<{ created: number; skipped: number }> {
+  if (grants.length === 0) return { created: 0, skipped: 0 };
+
+  return withTransaction(pool, async (client) => {
+    const ids = grants.map(() => newUlid());
+    const { rows } = await client.query<{ id: string; grantee_name: string; options_count: number; exercise_price: string }>(
+      `INSERT INTO option_grants
+         (id, valuation_id, grantee_name, grantee_email, grant_date, options_count,
+          exercise_price, currency, vesting_template, vesting_start_date,
+          vesting_months, cliff_months, frequency_months, notes, created_by, source, external_id)
+       SELECT * FROM unnest(
+         $1::ulid[], $2::ulid[], $3::text[], $4::text[], $5::date[], $6::int[],
+         $7::numeric[], $8::text[], $9::text[], $10::date[], $11::int[], $12::int[],
+         $13::int[], $14::text[], $15::text[], $16::text[], $17::text[]
+       )
+       ON CONFLICT (valuation_id, external_id) WHERE external_id IS NOT NULL DO NOTHING
+       RETURNING id, grantee_name, options_count, exercise_price`,
+      [
+        ids,
+        grants.map(() => valuationId),
+        grants.map((g) => g.granteeName),
+        grants.map((g) => g.granteeEmail ?? null),
+        grants.map((g) => g.grantDate),
+        grants.map((g) => g.optionsCount),
+        grants.map((g) => g.exercisePrice),
+        grants.map((g) => g.currency),
+        grants.map((g) => g.vestingTemplate),
+        grants.map((g) => g.vestingStartDate),
+        grants.map((g) => g.vestingMonths),
+        grants.map((g) => g.cliffMonths),
+        grants.map((g) => g.frequencyMonths),
+        grants.map(() => null),
+        grants.map((g) => g.createdBy),
+        grants.map((g) => g.source),
+        grants.map((g) => g.externalId),
+      ],
+    );
+
+    if (rows.length > 0) {
+      await recordEvents(
+        client,
+        rows.map((r) => ({
+          valuationId,
+          type: GRANT_EVENT_TYPES.granted,
+          actor,
+          payload: {
+            grant_id: r.id,
+            grantee_name: r.grantee_name,
+            options_count: r.options_count,
+            exercise_price: r.exercise_price,
+          },
+        })),
+      );
+    }
+
+    return { created: rows.length, skipped: grants.length - rows.length };
   });
 }

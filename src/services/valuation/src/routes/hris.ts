@@ -38,9 +38,8 @@ import {
   ReconnectRequiredError,
   retryAfterSecondsFor,
 } from '../clients/deadline.js';
-import { isUniqueViolation } from '../db/pgError.js';
 import { storeRefreshedTokens, tokenNeedsRefresh } from '../clients/oauthRefresh.js';
-import { createGrant } from '../repos/grants.js';
+import { createGrantsBatch } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
@@ -310,76 +309,38 @@ export async function syncHrisConnection(
   let created = 0;
   let skipped = 0;
   try {
-    // Inside the guard, not above it (R261, M5). R186 put a catch around the
-    // insert loop for the reason spelled out below, and left the dedupe read
-    // three lines above it — a Postgres query, on a pool that is exactly as
-    // able to time out here as it is one statement later. A throw from it
-    // escaped both bookkeeping writes and left the state R186 exists to
-    // remove: `connected`, a due date in the past, and the provider's whole
-    // roster re-pulled every fifteen minutes behind a card reading healthy.
     const seen = await existingGrantExternalIds(
       deps.pool,
       connection.valuation_id,
       pull.grants.map((g) => g.external_id),
     );
-    for (const g of pull.grants) {
-      if (seen.has(g.external_id)) {
-        skipped++;
-        continue;
-      }
-      try {
-        await createGrant(
-          deps.pool,
-          {
-            valuationId: connection.valuation_id,
-            granteeName: g.grantee_name,
-            granteeEmail: g.grantee_email,
-            grantDate: g.grant_date,
-            optionsCount: g.options_count,
-            exercisePrice: g.exercise_price,
-            currency: 'USD',
-            vestingTemplate: 'imported',
-            vestingStartDate: g.vesting_start_date,
-            vestingMonths: g.vesting_months,
-            cliffMonths: g.cliff_months,
-            frequencyMonths: g.frequency_months,
-            createdBy: opts.actorId,
-            source: `hris:${connection.provider}`,
-            externalId: g.external_id,
-          },
-          actor,
-        );
-        created++;
-        seen.add(g.external_id);
-      } catch (err) {
-        /*
-         * The grant somebody else imported while this pull was in flight
-         * (R261, methodology M5).
-         *
-         * `seen` is a snapshot taken before the loop, and it is the only thing
-         * standing between two concurrent syncs of one connection. Two doors
-         * reach this function — the scheduler's fifteen-minute tick and the
-         * analyst's Import button — with no lock between them, and pressing
-         * Import while a scheduled pull is running is the ordinary way to
-         * arrive here, not an exotic one.
-         *
-         * What happened then was that the loser of the race hit
-         * `option_grants_external_idx`, and a unique violation is not one of
-         * the failures the catch below is for: it threw past the rest of the
-         * roster, moved a healthy connection to `error` on a backoff, and told
-         * the analyst their import "stopped before finishing" — for a grant
-         * that had just been imported successfully by the other door.
-         *
-         * `external_id` is this import's idempotency key; the index is the
-         * authoritative answer to the question `seen` was asked, one moment
-         * later. So the row already existing means already imported, which is
-         * what `skipped` counts. Narrowed to that one index, because any other
-         * unique violation on this table is a real refusal.
-         */
-        if (!isUniqueViolation(err, 'option_grants_external_idx')) throw err;
-        skipped++;
-        seen.add(g.external_id);
-      }
+    const newGrants = pull.grants.filter((g) => !seen.has(g.external_id));
+    skipped = pull.grants.length - newGrants.length;
+
+    if (newGrants.length > 0) {
+      const result = await createGrantsBatch(
+        deps.pool,
+        connection.valuation_id,
+        newGrants.map((g) => ({
+          granteeName: g.grantee_name,
+          granteeEmail: g.grantee_email,
+          grantDate: g.grant_date,
+          optionsCount: g.options_count,
+          exercisePrice: g.exercise_price,
+          currency: 'USD',
+          vestingTemplate: 'imported',
+          vestingStartDate: g.vesting_start_date,
+          vestingMonths: g.vesting_months,
+          cliffMonths: g.cliff_months,
+          frequencyMonths: g.frequency_months,
+          createdBy: opts.actorId,
+          source: `hris:${connection.provider}`,
+          externalId: g.external_id,
+        })),
+        actor,
+      );
+      created = result.created;
+      skipped += result.skipped;
     }
   } catch (err) {
     /*
