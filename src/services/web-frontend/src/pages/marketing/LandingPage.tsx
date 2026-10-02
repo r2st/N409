@@ -561,7 +561,7 @@ export function LandingPage() {
         <div className={`landing-left${cls}`}>
           {/* Floating golden particles */}
           <div className="landing-particles">
-            {Array.from({ length: 8 }, (_, i) => (
+            {Array.from({ length: 10 }, (_, i) => (
               <div key={i} className="landing-particle" />
             ))}
           </div>
@@ -578,6 +578,7 @@ export function LandingPage() {
             {/* Hero */}
             <div className="landing-hero-area">
               <div className="landing-hero-robot-wrap">
+                <div className="landing-hero-glow" />
                 <HeroRobot />
               </div>
               <h1 className="landing-title">
