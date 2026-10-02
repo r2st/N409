@@ -458,7 +458,86 @@ describe('edge cases: zero shares, null ratios, single-entry tables', () => {
   });
 });
 
-// ── 8. Exercise scenario rounding ────────────────────────────────────────────
+// ── 8. Comparison with asymmetric results ────────────────────────────────────
+
+describe('comparison: asymmetric results and text metrics', () => {
+  const side = (over: Partial<CompareSide>): CompareSide => ({
+    valuation_id: 'v1',
+    company_name: 'TestCo',
+    kind: '409a',
+    currency: 'USD',
+    state: 'concluded',
+    calculation_id: 'c1',
+    engine_version: '1.0.0',
+    calculated_at: '2024-01-01T00:00:00Z',
+    valuation_date: '2024-01-01',
+    results: {},
+    ...over,
+  });
+
+  it('a metric present on only one side has null delta and pct_change', () => {
+    const a = side({
+      valuation_id: 'a',
+      results: { fmv_per_share: 1.42, equity_value: 10_000_000 },
+    });
+    const b = side({
+      valuation_id: 'b',
+      results: { fmv_per_share: 1.87 },
+    });
+    const groups = compareValuations(a, b);
+    const eqRow = groups.flatMap((g) => g.rows).find((r) => r.key === 'equity_value');
+    expect(eqRow).toBeDefined();
+    expect(eqRow!.a).toBe(10_000_000);
+    expect(eqRow!.b).toBeNull();
+    expect(eqRow!.delta).toBeNull();
+    expect(eqRow!.pct_change).toBeNull();
+    expect(eqRow!.changed).toBe(true);
+  });
+
+  it('text metrics compare by equality, not as numbers', () => {
+    const a = side({
+      valuation_id: 'a',
+      results: { allocation_method: 'opm' },
+    });
+    const b = side({
+      valuation_id: 'b',
+      results: { allocation_method: 'opm' },
+    });
+    const groups = compareValuations(a, b);
+    const methodRow = groups.flatMap((g) => g.rows).find((r) => r.key === 'allocation_method');
+    expect(methodRow).toBeDefined();
+    expect(methodRow!.changed).toBe(false);
+    expect(methodRow!.delta).toBeNull();
+  });
+
+  it('a metric neither side reports is omitted from the groups entirely', () => {
+    const a = side({ valuation_id: 'a', results: { fmv_per_share: 1.0 } });
+    const b = side({ valuation_id: 'b', results: { fmv_per_share: 2.0 } });
+    const groups = compareValuations(a, b);
+    const rows = groups.flatMap((g) => g.rows);
+    // Neither side has discounts, so dlom/dloc rows should be absent
+    expect(rows.find((r) => r.key === 'dlom')).toBeUndefined();
+    expect(rows.find((r) => r.key === 'dloc')).toBeUndefined();
+  });
+
+  it('pct_change is null when side A is zero (avoid division by zero)', () => {
+    const a = side({
+      valuation_id: 'a',
+      results: { fmv_per_share: 0, equity_value: 0 },
+    });
+    const b = side({
+      valuation_id: 'b',
+      results: { fmv_per_share: 1.5, equity_value: 1_000_000 },
+    });
+    const groups = compareValuations(a, b);
+    const fmvRow = groups.flatMap((g) => g.rows).find((r) => r.key === 'fmv_per_share');
+    expect(fmvRow).toBeDefined();
+    expect(fmvRow!.delta).toBe(1.5);
+    expect(fmvRow!.pct_change).toBeNull();
+  });
+});
+
+// ── 9. Exercise scenario rounding ──────────────────────────────────────────
 
 describe('exercise scenarios: grossValue from unrounded spread', () => {
   it('grossValue uses unrounded spread (more precise than spreadPerShare × shares)', () => {
@@ -506,7 +585,7 @@ describe('exercise scenarios: grossValue from unrounded spread', () => {
   });
 });
 
-// ── 9. validateCapTable total_shares consistency ─────────────────────────────
+// ── 10. validateCapTable total_shares consistency ────────────────────────────
 
 describe('validateCapTable: total_shares equals sum of per-type shares', () => {
   it('total_shares is the raw sum of per-type sums on a valid table', () => {
@@ -530,7 +609,7 @@ describe('validateCapTable: total_shares equals sum of per-type shares', () => {
   });
 });
 
-// ── 10. Cross-module ratchet consistency ──────────────────────────────────────
+// ── 11. Cross-module ratchet consistency ─────────────────────────────────────
 
 describe('ratchet consistency: conversion_ratio > 1 across all consumers', () => {
   const table = [
