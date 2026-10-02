@@ -24,18 +24,22 @@ const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 
-const PreferencesBody = z.object({
-  preferences: z
-    .array(
-      z.object({
-        event_type: z.enum(NOTIFICATION_EVENT_TYPES),
-        in_app: z.boolean(),
-        email: z.boolean(),
-      }),
-    )
-    .min(1)
-    .max(NOTIFICATION_EVENT_TYPES.length),
-});
+const PreferencesBody = z
+  .object({
+    preferences: z
+      .array(
+        z
+          .object({
+            event_type: z.enum(NOTIFICATION_EVENT_TYPES),
+            in_app: z.boolean(),
+            email: z.boolean(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(NOTIFICATION_EVENT_TYPES.length),
+  })
+  .strict();
 
 const OutboxQuery = z.object({
   status: z.enum(['queued', 'sent', 'failed', 'skipped']).optional(),

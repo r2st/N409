@@ -21,11 +21,13 @@ import { nonBlankText } from '../domain/nonBlankText.js';
  * history; ops triage the inbox and mark messages resolved.
  */
 
-const CreateBody = z.object({
-  subject: nonBlankText(1, MAX_SUPPORT_MESSAGE_SUBJECT),
-  body: z.string().min(1).max(MAX_SUPPORT_MESSAGE_BODY),
-  page_path: z.string().max(500).optional(),
-});
+const CreateBody = z
+  .object({
+    subject: nonBlankText(1, MAX_SUPPORT_MESSAGE_SUBJECT),
+    body: z.string().min(1).max(MAX_SUPPORT_MESSAGE_BODY),
+    page_path: z.string().max(500).optional(),
+  })
+  .strict();
 
 const ListQuery = z.object({
   status: z.enum(['open', 'resolved']).optional(),
@@ -33,7 +35,7 @@ const ListQuery = z.object({
 
 const PatchBody = z.object({
   status: z.enum(['open', 'resolved']),
-});
+}).strict();
 
 export function registerSupportRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   app.post('/api/v1/support/messages', { preHandler: app.authenticate }, async (req, reply) => {

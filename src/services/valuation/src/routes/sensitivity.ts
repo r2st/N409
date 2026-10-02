@@ -40,6 +40,7 @@ const ModelBody = z
      */
     inputs: EngineInputsBody.default({}),
   })
+  .strict()
   .default({ inputs: {} });
 
 /**
@@ -48,18 +49,20 @@ const ModelBody = z
  * DLOM from the stored valuation params. Analyst tooling — ops only.
  */
 
-const Body = z.object({
-  equity_value_cents: z.number().int().positive().max(1e15),
-  strike_cents: z.number().int().min(0).max(1e15),
-  volatility: z.number().gt(0).max(5),
-  term_years: z.number().gt(0).max(30),
-  risk_free_rate: z.number().min(0).max(0.25),
-  common_shares: z.number().int().positive().max(1e12),
-  dlom: z.number().min(0).max(0.95).optional(),
-  volatility_steps: z.array(z.number().min(-0.9).max(2)).min(1).max(9).optional(),
-  term_steps: z.array(z.number().min(-20).max(20)).min(1).max(9).optional(),
-  rfr_steps: z.array(z.number().min(-0.25).max(0.25)).min(1).max(9).optional(),
-});
+const Body = z
+  .object({
+    equity_value_cents: z.number().int().positive().max(1e15),
+    strike_cents: z.number().int().min(0).max(1e15),
+    volatility: z.number().gt(0).max(5),
+    term_years: z.number().gt(0).max(30),
+    risk_free_rate: z.number().min(0).max(0.25),
+    common_shares: z.number().int().positive().max(1e12),
+    dlom: z.number().min(0).max(0.95).optional(),
+    volatility_steps: z.array(z.number().min(-0.9).max(2)).min(1).max(9).optional(),
+    term_steps: z.array(z.number().min(-20).max(20)).min(1).max(9).optional(),
+    rfr_steps: z.array(z.number().min(-0.25).max(0.25)).min(1).max(9).optional(),
+  })
+  .strict();
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Sensitivity analysis is operations-only');

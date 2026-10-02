@@ -73,26 +73,28 @@ const Slug = z
   .max(SLUG_MAX)
   .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and dashes only');
 
-const PostBody = z.object({
-  slug: Slug,
-  title: nonBlankText(1, 200),
-  excerpt: z.string().max(500).default(''),
-  body_html: z.string().min(1).max(200_000),
-  category: z.string().min(1).max(100).default('General'),
-  keywords: z.string().max(500).default(''),
-  author: z.string().max(200).default(''),
-  // Relative path or absolute URL to the card image. Validated as a shape
-  // rather than fetched: a broken image is a bad preview, an unvalidated one
-  // that reaches `og:image` is a way to point the brand's link card anywhere.
-  og_image: z
-    .string()
-    .max(500)
-    .regex(/^(https:\/\/|\/)/, 'must be an https URL or a site-relative path')
-    .nullable()
-    .default(null),
-  published: z.boolean().default(false),
-  published_at: calendarDate().nullable().default(null),
-});
+const PostBody = z
+  .object({
+    slug: Slug,
+    title: nonBlankText(1, 200),
+    excerpt: z.string().max(500).default(''),
+    body_html: z.string().min(1).max(200_000),
+    category: z.string().min(1).max(100).default('General'),
+    keywords: z.string().max(500).default(''),
+    author: z.string().max(200).default(''),
+    // Relative path or absolute URL to the card image. Validated as a shape
+    // rather than fetched: a broken image is a bad preview, an unvalidated one
+    // that reaches `og:image` is a way to point the brand's link card anywhere.
+    og_image: z
+      .string()
+      .max(500)
+      .regex(/^(https:\/\/|\/)/, 'must be an https URL or a site-relative path')
+      .nullable()
+      .default(null),
+    published: z.boolean().default(false),
+    published_at: calendarDate().nullable().default(null),
+  })
+  .strict();
 
 const PatchBody = PostBody.partial()
   .strict()

@@ -59,11 +59,13 @@ const SuppressionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(SUPPRESSION_PAGE_LIMIT).default(100),
 });
 
-const SuppressBody = z.object({
-  address: z.string().trim().min(3).max(320).email('Not an email address'),
-  reason: z.enum(['hard', 'soft', 'complaint']).default('hard'),
-  detail: z.string().max(500).optional(),
-});
+const SuppressBody = z
+  .object({
+    address: z.string().trim().min(3).max(320).email('Not an email address'),
+    reason: z.enum(['hard', 'soft', 'complaint']).default('hard'),
+    detail: z.string().max(500).optional(),
+  })
+  .strict();
 
 /**
  * One provider event, in the shape this platform accepts.
@@ -75,23 +77,27 @@ const SuppressBody = z.object({
  * provider is a small adapter in front of this rather than a change to the
  * ledger.
  */
-const WebhookEvent = z.object({
-  /** The outbox row this is about. */
-  message_id: ulidField(),
-  kind: z.enum(['delivered', 'bounced', 'complained', 'deferred', 'opened']),
-  /** ISO 8601. Defaults to now when a provider does not date its events. */
-  occurred_at: z.string().datetime().optional(),
-  /** The provider's own id, for idempotency across redeliveries. */
-  event_id: z.string().max(200).optional(),
-  /** RFC 3463 enhanced status (`5.1.1`), when the provider carries one. */
-  status: z.string().max(20).optional(),
-  bounce_kind: z.enum(['hard', 'soft', 'complaint']).optional(),
-  detail: z.string().max(1000).optional(),
-});
+const WebhookEvent = z
+  .object({
+    /** The outbox row this is about. */
+    message_id: ulidField(),
+    kind: z.enum(['delivered', 'bounced', 'complained', 'deferred', 'opened']),
+    /** ISO 8601. Defaults to now when a provider does not date its events. */
+    occurred_at: z.string().datetime().optional(),
+    /** The provider's own id, for idempotency across redeliveries. */
+    event_id: z.string().max(200).optional(),
+    /** RFC 3463 enhanced status (`5.1.1`), when the provider carries one. */
+    status: z.string().max(20).optional(),
+    bounce_kind: z.enum(['hard', 'soft', 'complaint']).optional(),
+    detail: z.string().max(1000).optional(),
+  })
+  .strict();
 
-const WebhookBody = z.object({
-  events: z.array(WebhookEvent).min(1).max(500),
-});
+const WebhookBody = z
+  .object({
+    events: z.array(WebhookEvent).min(1).max(500),
+  })
+  .strict();
 
 /**
  * Constant-time equality for the webhook signature.
@@ -227,7 +233,7 @@ export function registerEmailDeliveryRoutes(
       // The suppressing schema's own address field, so the two can never
       // diverge: an address this service accepted a suppression for is by
       // construction one it will accept a release for.
-      const parsed = z.object({ address: SuppressBody.shape.address }).safeParse(req.body);
+      const parsed = z.object({ address: SuppressBody.shape.address }).strict().safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid address', parsed.error);
       const released = await releaseSuppression(deps.pool, parsed.data.address, principal.id);
       if (!released) throw problems.notFound('No active suppression for that address');

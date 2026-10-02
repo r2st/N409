@@ -64,17 +64,19 @@ const ScimTokenBody = z
   })
   .strict();
 
-const SamlBody = z.object({
-  enabled: z.boolean(),
-  /** The re-authentication prompt — see the PUT route for why it is here. */
-  current_password: presentedPasswordField().optional(),
-  idp_entity_id: z.string().trim().max(500).nullable().optional(),
-  idp_sso_url: httpsUrl(1000).nullable().optional(),
-  idp_cert: z.string().trim().max(20000).nullable().optional(),
-  sp_entity_id: z.string().trim().max(500).nullable().optional(),
-  allowed_domain: z.string().trim().max(255).nullable().optional(),
-  default_role: z.enum(ROLE_KEYS).optional(),
-});
+const SamlBody = z
+  .object({
+    enabled: z.boolean(),
+    /** The re-authentication prompt — see the PUT route for why it is here. */
+    current_password: presentedPasswordField().optional(),
+    idp_entity_id: z.string().trim().max(500).nullable().optional(),
+    idp_sso_url: httpsUrl(1000).nullable().optional(),
+    idp_cert: z.string().trim().max(20000).nullable().optional(),
+    sp_entity_id: z.string().trim().max(500).nullable().optional(),
+    allowed_domain: z.string().trim().max(255).nullable().optional(),
+    default_role: z.enum(ROLE_KEYS).optional(),
+  })
+  .strict();
 
 export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const requireAdmin = (req: Parameters<typeof requirePrincipal>[0]) => {

@@ -72,7 +72,7 @@ const CreateBody = z
   })
   .strict();
 
-const TokenBody = z.object({ token: tokenField() });
+const TokenBody = z.object({ token: tokenField() }).strict();
 const SaveBody = TokenBody.extend({ answers: IntakeAnswers });
 
 /**

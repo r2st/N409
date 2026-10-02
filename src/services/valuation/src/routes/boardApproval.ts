@@ -43,33 +43,39 @@ import { recordThrottleRefusal } from '../observability/requestThrottle.js';
  * resolution flips to 'approved' and stamps the safe-harbor approval time.
  */
 
-const GenerateBody = z.object({
-  valuation_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'valuation_date must be YYYY-MM-DD')
-    .refine(isIsoCalendarDate, 'Not a real calendar date')
-    .optional(),
-  // Bounded above as well as below: the figure is printed on a board
-  // resolution, and `1e999` is Infinity to zod's `.positive()` and `null` to
-  // the JSON that stores it. $1e12/share is not a conclusion.
-  fmv_conclusion: z.number().positive().max(1e12).optional(),
-  methodology_summary: z.string().min(1).max(4000).optional(),
-  appraiser_qualifications: z.string().min(1).max(4000).optional(),
-});
+const GenerateBody = z
+  .object({
+    valuation_date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'valuation_date must be YYYY-MM-DD')
+      .refine(isIsoCalendarDate, 'Not a real calendar date')
+      .optional(),
+    // Bounded above as well as below: the figure is printed on a board
+    // resolution, and `1e999` is Infinity to zod's `.positive()` and `null` to
+    // the JSON that stores it. $1e12/share is not a conclusion.
+    fmv_conclusion: z.number().positive().max(1e12).optional(),
+    methodology_summary: z.string().min(1).max(4000).optional(),
+    appraiser_qualifications: z.string().min(1).max(4000).optional(),
+  })
+  .strict();
 
-const MemberBody = z.object({
-  name: nonBlankText(2, 200),
-  email: z.string().email().max(320),
-  title: z.string().max(200).nullable().optional(),
-});
+const MemberBody = z
+  .object({
+    name: nonBlankText(2, 200),
+    email: z.string().email().max(320),
+    title: z.string().max(200).nullable().optional(),
+  })
+  .strict();
 
-const SignBody = z.object({
-  token: z.string().min(10).max(200),
-  decision: z.enum(['signed', 'rejected']),
-  comment: z.string().max(2000).nullable().optional(),
-});
+const SignBody = z
+  .object({
+    token: z.string().min(10).max(200),
+    decision: z.enum(['signed', 'rejected']),
+    comment: z.string().max(2000).nullable().optional(),
+  })
+  .strict();
 
-const ResolutionBody = z.object({ token: z.string().min(1).max(200) });
+const ResolutionBody = z.object({ token: z.string().min(1).max(200) }).strict();
 
 /**
  * The two public routes below authenticate with nothing but a sign-off token,

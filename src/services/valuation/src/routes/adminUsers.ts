@@ -82,31 +82,33 @@ const ListQuery = z.object({
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
 
-const CreateBody = z.object({
-  email: EmailAddress,
-  password: newPasswordField(),
-  first_name: nonBlankText(1, 100).optional(),
-  last_name: nonBlankText(1, 100).optional(),
-  /*
-   * `ulidField()`, not `z.string()`, on all three doors that write it.
-   *
-   * Every one of them reads `if (body.partner_id) await assertAssignablePartner(…)`
-   * and then writes `partner_id ?? null`. `''` is falsy to the guard and defined
-   * to the write, so a blank partner skipped the "does this partner exist / is
-   * it archived" check and went to `users.partner_id ulid`, whose CHECK answers
-   * 23514 — an "Internal Server Error" on an administrator's own screen. See
-   * domain/ulidField.ts.
-   *
-   * `assertPartnerScopeConsistent` above reads `!partnerId` for the same reason
-   * and was the only thing that ever caught it, and only for a partner role: a
-   * blank partner on an ordinary account passed it and 500'd underneath.
-   */
-  partner_id: ulidField().nullable().optional(),
-  verified: z.boolean().optional(),
-  roles: RoleSet.min(1),
-  /** The *caller's* own password — see REAUTH_PROMPT. Not the new account's. */
-  current_password: presentedPasswordField().optional(),
-});
+const CreateBody = z
+  .object({
+    email: EmailAddress,
+    password: newPasswordField(),
+    first_name: nonBlankText(1, 100).optional(),
+    last_name: nonBlankText(1, 100).optional(),
+    /*
+     * `ulidField()`, not `z.string()`, on all three doors that write it.
+     *
+     * Every one of them reads `if (body.partner_id) await assertAssignablePartner(…)`
+     * and then writes `partner_id ?? null`. `''` is falsy to the guard and defined
+     * to the write, so a blank partner skipped the "does this partner exist / is
+     * it archived" check and went to `users.partner_id ulid`, whose CHECK answers
+     * 23514 — an "Internal Server Error" on an administrator's own screen. See
+     * domain/ulidField.ts.
+     *
+     * `assertPartnerScopeConsistent` above reads `!partnerId` for the same reason
+     * and was the only thing that ever caught it, and only for a partner role: a
+     * blank partner on an ordinary account passed it and 500'd underneath.
+     */
+    partner_id: ulidField().nullable().optional(),
+    verified: z.boolean().optional(),
+    roles: RoleSet.min(1),
+    /** The *caller's* own password — see REAUTH_PROMPT. Not the new account's. */
+    current_password: presentedPasswordField().optional(),
+  })
+  .strict();
 
 const PatchBody = z
   .object({
@@ -185,13 +187,15 @@ function toAdminUser(u: UserWithRoles & { deleted_at: Date | null; partner_name?
   };
 }
 
-const InviteBody = z.object({
-  email: EmailAddress,
-  roles: RoleSet.min(1),
-  partner_id: ulidField().nullable().optional(),
-  /** The caller's own password — see REAUTH_PROMPT. */
-  current_password: presentedPasswordField().optional(),
-});
+const InviteBody = z
+  .object({
+    email: EmailAddress,
+    roles: RoleSet.min(1),
+    partner_id: ulidField().nullable().optional(),
+    /** The caller's own password — see REAUTH_PROMPT. */
+    current_password: presentedPasswordField().optional(),
+  })
+  .strict();
 
 /**
  * The two doors in this file that hand out a way in, and the prompt in front of
@@ -693,7 +697,7 @@ export function registerAdminUserRoutes(
    * (and re-send) their existing roles, so a stale client can't accidentally
    * drop them. Distinct `user_promoted`/`user_demoted` audit events, too.
    */
-  const RoleMutationBody = z.object({ role: z.enum(ROLE_KEYS) });
+  const RoleMutationBody = z.object({ role: z.enum(ROLE_KEYS) }).strict();
 
   app.post('/api/v1/users/:id/promote', { preHandler: app.authenticate }, async (req) => {
     const principal = requireUserAdmin(req);

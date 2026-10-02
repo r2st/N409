@@ -56,11 +56,13 @@ const EntityTypeEnum = z.enum(['standalone', 'parent', 'subsidiary', 'portfolio_
  * `ulid` column, whose CHECK answered 23514 and the caller "Internal Server
  * Error". See domain/ulidField.ts.
  */
-const CreateOrgBody = z.object({
-  name: z.string().trim().min(1).max(200),
-  entity_type: OrgTypeEnum.default('holding_company'),
-  parent_org_id: ulidField().optional(),
-});
+const CreateOrgBody = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    entity_type: OrgTypeEnum.default('holding_company'),
+    parent_org_id: ulidField().optional(),
+  })
+  .strict();
 const UpdateOrgBody = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
@@ -68,14 +70,18 @@ const UpdateOrgBody = z
     parent_org_id: ulidField().nullable().optional(),
   })
   .strict();
-const AssignBody = z.object({
-  valuation_id: ulidField(),
-  entity_type: EntityTypeEnum.optional(),
-});
-const EntityBody = z.object({
-  entity_type: EntityTypeEnum,
-  parent_valuation_id: ulidField().nullable().optional(),
-});
+const AssignBody = z
+  .object({
+    valuation_id: ulidField(),
+    entity_type: EntityTypeEnum.optional(),
+  })
+  .strict();
+const EntityBody = z
+  .object({
+    entity_type: EntityTypeEnum,
+    parent_valuation_id: ulidField().nullable().optional(),
+  })
+  .strict();
 /**
  * `?detach=true` on the delete: the acknowledgement that this is dissolving a
  * group rather than tidying an empty one. Query rather than body because a

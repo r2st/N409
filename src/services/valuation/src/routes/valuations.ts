@@ -80,7 +80,7 @@ const CreateBody = z.object({
    */
   user_id: UlidParam.optional(),
   partner_id: UlidParam.optional(),
-});
+}).strict();
 
 const PatchBody = z
   .object({

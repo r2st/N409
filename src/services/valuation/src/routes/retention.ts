@@ -45,16 +45,20 @@ import { ulidField } from '../domain/ulidField.js';
  * policy's age unless a legal hold freezes them, and records every action.
  */
 
-const PolicyBody = z.object({
-  archive_after_days: z.number().int().min(1).max(36500).nullable(),
-  retention_days: z.number().int().min(1).max(36500).nullable(),
-  enabled: z.boolean(),
-});
-const HoldBody = z.object({
-  scope: z.enum(['global', 'valuation', 'user']),
-  reference_id: ulidField().nullable().optional(),
-  reason: z.string().trim().min(1).max(1000),
-});
+const PolicyBody = z
+  .object({
+    archive_after_days: z.number().int().min(1).max(36500).nullable(),
+    retention_days: z.number().int().min(1).max(36500).nullable(),
+    enabled: z.boolean(),
+  })
+  .strict();
+const HoldBody = z
+  .object({
+    scope: z.enum(['global', 'valuation', 'user']),
+    reference_id: ulidField().nullable().optional(),
+    reason: z.string().trim().min(1).max(1000),
+  })
+  .strict();
 
 /**
  * Resolve the aggregate a non-global hold names, refusing anything that does
@@ -560,7 +564,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
    * response because an admin who did not expect the company name to change
    * should find out from the answer and not from a support ticket.
    */
-  const RetireBody = z.object({ reason: z.string().trim().min(1).max(1000).optional() });
+  const RetireBody = z.object({ reason: z.string().trim().min(1).max(1000).optional() }).strict();
 
   app.post('/api/v1/admin/retention/valuations/:id/retire', { preHandler: app.authenticate }, async (req) => {
     const principal = requireAdmin(req);
@@ -639,7 +643,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
    * is not this route's job. What is its job is that they cannot choose it by
    * accident.
    */
-  const RestoreBody = z.object({ acknowledge_rearchival: z.boolean().optional() });
+  const RestoreBody = z.object({ acknowledge_rearchival: z.boolean().optional() }).strict();
 
   app.post(
     '/api/v1/admin/retention/valuations/:id/restore',

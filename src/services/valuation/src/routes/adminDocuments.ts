@@ -116,14 +116,17 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
       .object({
         assignments: z
           .array(
-            z.object({
-              document_id: z.string(),
-              category: z.enum(DOCUMENT_CATEGORIES),
-            }),
+            z
+              .object({
+                document_id: z.string(),
+                category: z.enum(DOCUMENT_CATEGORIES),
+              })
+              .strict(),
           )
           .min(1)
           .max(MAX_ASSIGN),
       })
+      .strict()
       .safeParse(req.body ?? {});
     if (!parsed.success) {
       throw invalidBody('Invalid assignment', parsed.error);

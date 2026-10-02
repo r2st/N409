@@ -57,26 +57,28 @@ const ClassName = z.string().trim().min(1).max(80);
 
 /** One row of the cap table — mirrors waterfall.py `_normalize`. */
 const ShareClass = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('common'), name: ClassName, shares: pos }),
-  z.object({
-    kind: z.literal('preferred'),
-    name: ClassName,
-    shares: pos,
-    preference: nonNeg,
-    seniority: z.number().int().min(1).max(50).default(1),
-    participating: z.boolean().default(false),
-    conversion_ratio: pos.max(1000).default(1),
-    /**
-     * Total proceeds cap on a participating class — the term sheet's "2x"
-     * resolved against the round's actual preference, preference included.
-     * Null/absent is uncapped, which is what every cap table stored before
-     * this field existed meant. The engine refuses a cap on a
-     * non-participating class and a cap at or below the preference; both are
-     * left to it rather than restated here, so the two cannot drift.
-     */
-    participation_cap: pos.nullable().optional(),
-  }),
-  z.object({ kind: z.literal('option'), name: ClassName, shares: pos, strike: pos }),
+  z.object({ kind: z.literal('common'), name: ClassName, shares: pos }).strict(),
+  z
+    .object({
+      kind: z.literal('preferred'),
+      name: ClassName,
+      shares: pos,
+      preference: nonNeg,
+      seniority: z.number().int().min(1).max(50).default(1),
+      participating: z.boolean().default(false),
+      conversion_ratio: pos.max(1000).default(1),
+      /**
+       * Total proceeds cap on a participating class — the term sheet's "2x"
+       * resolved against the round's actual preference, preference included.
+       * Null/absent is uncapped, which is what every cap table stored before
+       * this field existed meant. The engine refuses a cap on a
+       * non-participating class and a cap at or below the preference; both are
+       * left to it rather than restated here, so the two cannot drift.
+       */
+      participation_cap: pos.nullable().optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('option'), name: ClassName, shares: pos, strike: pos }).strict(),
 ]);
 
 export const EngineInputsBody = z

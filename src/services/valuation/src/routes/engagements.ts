@@ -59,7 +59,7 @@ const AdvanceBody = z
     reopen: z.boolean().optional(),
   })
   .strict();
-const AssignBody = z.object({ analyst_id: ulidField().nullable() });
+const AssignBody = z.object({ analyst_id: ulidField().nullable() }).strict();
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Engagement management is operations-only');

@@ -21,21 +21,25 @@ import { recordThrottleRefusal } from '../observability/requestThrottle.js';
  * a spam relay. Ops read the queue and mark each submission handled.
  */
 
-const CreateBody = z.object({
-  name: z.string().trim().min(1).max(200),
-  email: z.string().trim().email().max(320),
-  company: z.string().trim().max(200).optional(),
-  phone: OptionalPhone,
-  message: z.string().trim().min(1).max(10_000),
-});
+const CreateBody = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    email: z.string().trim().email().max(320),
+    company: z.string().trim().max(200).optional(),
+    phone: OptionalPhone,
+    message: z.string().trim().min(1).max(10_000),
+  })
+  .strict();
 
 const ListQuery = z.object({
   status: z.enum(['new', 'handled']).optional(),
 });
 
-const PatchBody = z.object({
-  status: z.enum(['new', 'handled']),
-});
+const PatchBody = z
+  .object({
+    status: z.enum(['new', 'handled']),
+  })
+  .strict();
 
 /** Blank strings survive zod's optional(); fold them to undefined. */
 function blankToUndefined(v: string | undefined): string | undefined {

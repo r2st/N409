@@ -152,21 +152,23 @@ export const PARTNER_API_ENDPOINTS: PartnerEndpointDoc[] = [];
  */
 export const PARTNER_API_SCHEMAS = new Map<string, OpenApiSchemas>();
 
-const CreateBody = z.object({
-  kind: z.enum(VALUATION_KINDS),
-  company_name: z.string().trim().min(1).max(300),
-  service_name: z.string().trim().min(1).max(300).optional(),
-  currency: CurrencyCode.optional(),
-  service_countries: z.array(CountryCode).max(50).optional(),
-  /**
-   * The partner's own id for this engagement (migration 0164). Bounded and
-   * trimmed rather than taken as sent: it is a durable lookup key, so
-   * `"abc"` and `"abc "` resolving to two different engagements would be a
-   * trap rather than a feature, and the uniqueness index cannot see the
-   * difference between a typo and a namespace.
-   */
-  external_id: z.string().trim().min(1).max(200).optional(),
-});
+const CreateBody = z
+  .object({
+    kind: z.enum(VALUATION_KINDS),
+    company_name: z.string().trim().min(1).max(300),
+    service_name: z.string().trim().min(1).max(300).optional(),
+    currency: CurrencyCode.optional(),
+    service_countries: z.array(CountryCode).max(50).optional(),
+    /**
+     * The partner's own id for this engagement (migration 0164). Bounded and
+     * trimmed rather than taken as sent: it is a durable lookup key, so
+     * `"abc"` and `"abc "` resolving to two different engagements would be a
+     * trap rather than a feature, and the uniqueness index cannot see the
+     * difference between a typo and a namespace.
+     */
+    external_id: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
 
 /**
  * The fields a partner may still correct, and nothing else.
@@ -205,13 +207,15 @@ const DeliveriesQuery = z.object({
   cursor: cursorParam(),
 });
 
-const UploadBody = z.object({
-  filename: z.string().min(1).max(300),
-  kind: z.enum(DOCUMENT_KINDS).default('other'),
-  content_type: z.string().max(200).optional(),
-  /** Base64-encoded file body — friendlier than multipart for API clients. */
-  content_base64: z.string().min(1),
-});
+const UploadBody = z
+  .object({
+    filename: z.string().min(1).max(300),
+    kind: z.enum(DOCUMENT_KINDS).default('other'),
+    content_type: z.string().max(200).optional(),
+    /** Base64-encoded file body — friendlier than multipart for API clients. */
+    content_base64: z.string().min(1),
+  })
+  .strict();
 
 /**
  * The registry fragment every idempotency-aware mutation shares.
@@ -1299,11 +1303,13 @@ export function registerPartnerApiRoutes(
     ...(includeSecret ? { secret: w.secret } : {}),
   });
 
-  const WebhookBody = z.object({
-    url: z.string().min(1).max(2000),
-    /** Empty or omitted = every event. */
-    events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).max(20).default([]),
-  });
+  const WebhookBody = z
+    .object({
+      url: z.string().min(1).max(2000),
+      /** Empty or omitted = every event. */
+      events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).max(20).default([]),
+    })
+    .strict();
 
   define(
     {

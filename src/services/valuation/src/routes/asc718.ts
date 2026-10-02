@@ -58,10 +58,12 @@ const DateStr = z
  * `Infinity / Infinity`, and the grant's expected term comes back NaN. NaN then
  * runs the whole way through Black-Scholes and lands in the response as `null`.
  */
-const ExerciseHistory = z.object({
-  years: z.number().min(0).max(30),
-  options: z.number().positive().max(1e12),
-});
+const ExerciseHistory = z
+  .object({
+    years: z.number().min(0).max(30),
+    options: z.number().positive().max(1e12),
+  })
+  .strict();
 
 const GrantBody = z.object({
   label: z.string().trim().min(1).max(120).optional(),
@@ -84,7 +86,7 @@ const GrantBody = z.object({
   contractual_term_years: z.number().gt(0).max(30).optional(),
   exercise_multiple: z.number().gt(1).max(10).optional(),
   exercise_history: z.array(ExerciseHistory).max(200).optional(),
-});
+}).strict();
 
 const EsppBody = z.object({
   label: z.string().trim().min(1).max(120).optional(),
@@ -95,7 +97,7 @@ const EsppBody = z.object({
   volatility: z.number().gt(0).max(5).optional(),
   risk_free_rate: z.number().min(0).max(0.25),
   dividend_yield: z.number().min(0).max(0.25).optional(),
-});
+}).strict();
 
 const RsuBody = z.object({
   label: z.string().trim().min(1).max(120).optional(),
@@ -113,19 +115,23 @@ const RsuBody = z.object({
   hurdle_price: z.number().positive().max(1e9).optional(),
   volatility: z.number().gt(0).max(5).optional(),
   risk_free_rate: z.number().min(0).max(0.25).optional(),
-});
+}).strict();
 
-const TsrPeerBody = z.object({
-  name: z.string().trim().min(1).max(120),
-  volatility: z.number().gt(0).max(5),
-  correlation: z.number().min(0).max(0.99).optional(),
-  dividend_yield: z.number().min(0).max(0.25).optional(),
-});
+const TsrPeerBody = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    volatility: z.number().gt(0).max(5),
+    correlation: z.number().min(0).max(0.99).optional(),
+    dividend_yield: z.number().min(0).max(0.25).optional(),
+  })
+  .strict();
 
-const TsrPayoutTier = z.object({
-  percentile: z.number().min(0).max(100),
-  payout_ratio: z.number().min(0).max(10),
-});
+const TsrPayoutTier = z
+  .object({
+    percentile: z.number().min(0).max(100),
+    payout_ratio: z.number().min(0).max(10),
+  })
+  .strict();
 
 const TsrBody = z.object({
   label: z.string().trim().min(1).max(120).optional(),
@@ -137,7 +143,7 @@ const TsrBody = z.object({
   risk_free_rate: z.number().min(0).max(0.25),
   peers: z.array(TsrPeerBody).min(1).max(50),
   payout_schedule: z.array(TsrPayoutTier).min(1).max(20),
-});
+}).strict();
 
 const Body = z
   .object({
@@ -191,7 +197,7 @@ const SettingsBody = z.object({
     })
     .nullish(),
   tsr_peer_basket: z.array(z.unknown()).max(MAX_TSR_PEERS).nullish(),
-});
+}).strict();
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('ASC 718 is operations-only');

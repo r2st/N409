@@ -25,10 +25,12 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  * calls a reviewer has to know to compose.
  */
 
-const DecisionBody = z.object({
-  decision: z.enum(REVIEW_DECISIONS),
-  comment: z.string().min(1).max(20_000).optional(),
-});
+const DecisionBody = z
+  .object({
+    decision: z.enum(REVIEW_DECISIONS),
+    comment: z.string().min(1).max(20_000).optional(),
+  })
+  .strict();
 
 const QueueQuery = z.object({
   assignee: assigneeFilter().optional(),

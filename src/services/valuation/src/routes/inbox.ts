@@ -113,7 +113,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
    */
   app.post('/api/v1/inbox/read', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    const parsed = z.object({ valuation_id: ulidField() }).safeParse(req.body);
+    const parsed = z.object({ valuation_id: ulidField() }).strict().safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid body', parsed.error);
     if (!isUlid(parsed.data.valuation_id)) throw problems.notFound();
 

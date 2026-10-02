@@ -50,21 +50,23 @@ import { quoteForMessage } from '../domain/displayText.js';
  * and on demand via POST /admin/auto-emails/run.
  */
 
-const TemplateBody = z.object({
-  key: z
-    .string()
-    .min(1)
-    .max(100)
-    .regex(/^[a-z0-9_]+$/, 'lowercase letters, digits and _ only'),
-  channel: z.enum(['email', 'sms']).default('email'),
-  category: z.enum(TEMPLATE_CATEGORIES).default('account'),
-  description: z.string().max(500).default(''),
-  // Subject is optional here — an SMS template has none — so the blank check
-  // is the channel-aware one below, on a value that is present.
-  subject: z.string().max(500).default(''),
-  body: templateText(20_000),
-  enabled: z.boolean().default(true),
-});
+const TemplateBody = z
+  .object({
+    key: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[a-z0-9_]+$/, 'lowercase letters, digits and _ only'),
+    channel: z.enum(['email', 'sms']).default('email'),
+    category: z.enum(TEMPLATE_CATEGORIES).default('account'),
+    description: z.string().max(500).default(''),
+    // Subject is optional here — an SMS template has none — so the blank check
+    // is the channel-aware one below, on a value that is present.
+    subject: z.string().max(500).default(''),
+    body: templateText(20_000),
+    enabled: z.boolean().default(true),
+  })
+  .strict();
 
 const TemplatePatch = TemplateBody.omit({ key: true, channel: true })
   .partial()
@@ -133,7 +135,7 @@ const AutoEmailBody = z.object({
    * direction is the one an operator must consciously change.
    */
   promotional: z.boolean().default(false),
-});
+}).strict();
 
 const AutoEmailPatch = AutoEmailBody.omit({ name: true })
   .partial()

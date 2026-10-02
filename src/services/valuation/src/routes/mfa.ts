@@ -47,8 +47,8 @@ import { presentedPasswordField } from '../domain/credentialFields.js';
  * `/confirm` is the moment the factor exists.
  */
 
-const ConfirmBody = z.object({ code: z.string().min(6).max(10) });
-const PasswordBody = z.object({ password: presentedPasswordField() });
+const ConfirmBody = z.object({ code: z.string().min(6).max(10) }).strict();
+const PasswordBody = z.object({ password: presentedPasswordField() }).strict();
 
 /**
  * Starting an enrolment is a credential-level action, and it was the one that

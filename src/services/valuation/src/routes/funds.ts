@@ -62,20 +62,24 @@ const DateStr = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 
-const FundBody = z.object({
-  name: z.string().trim().min(1).max(200),
-  fund_type: z.enum(['vc', 'pe', 'credit', 'growth', 'other']).default('vc'),
-  currency: CurrencyCode.default('USD'),
-  vintage_year: z.number().int().min(1970).max(2100).nullish(),
-});
+const FundBody = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    fund_type: z.enum(['vc', 'pe', 'credit', 'growth', 'other']).default('vc'),
+    currency: CurrencyCode.default('USD'),
+    vintage_year: z.number().int().min(1970).max(2100).nullish(),
+  })
+  .strict();
 
-const PositionBody = z.object({
-  company_name: z.string().trim().min(1).max(200),
-  security_type: z.enum(['common', 'preferred', 'safe', 'note', 'warrant', 'other']).default('preferred'),
-  quantity: z.number().min(0).max(1e15).default(0),
-  cost_basis: z.number().min(0).max(1e15).default(0),
-  mark_method: z.enum(['market', 'last_round', 'calibrated_opm', 'cost']).default('cost'),
-});
+const PositionBody = z
+  .object({
+    company_name: z.string().trim().min(1).max(200),
+    security_type: z.enum(['common', 'preferred', 'safe', 'note', 'warrant', 'other']).default('preferred'),
+    quantity: z.number().min(0).max(1e15).default(0),
+    cost_basis: z.number().min(0).max(1e15).default(0),
+    mark_method: z.enum(['market', 'last_round', 'calibrated_opm', 'cost']).default('cost'),
+  })
+  .strict();
 
 /**
  * Every field optional, and `.strict()` so a typo'd key is a 422 rather than a
@@ -127,6 +131,7 @@ const MarkBody = z
     round_price_per_share: z.number().min(0).max(1e12).optional(),
     model_value: z.number().min(0).max(1e15).optional(),
   })
+  .strict()
   /*
    * The figure the chosen method reads is required, not defaulted.
    *
@@ -170,22 +175,26 @@ const LpTermsBody = z
   .strict();
 
 /** `null` detaches — the measurement tools are usable without an engagement. */
-const LinkBody = z.object({ valuation_id: ulidField().nullable() });
+const LinkBody = z.object({ valuation_id: ulidField().nullable() }).strict();
 
-const WaterfallBody = z.object({
-  distributable: z.number().min(0).max(1e15),
-  years: z.number().min(0).max(50).default(1),
-});
+const WaterfallBody = z
+  .object({
+    distributable: z.number().min(0).max(1e15),
+    years: z.number().min(0).max(50).default(1),
+  })
+  .strict();
 
-const CalibrateBody = z.object({
-  round_price_per_share: z.number().positive().max(1e12),
-  total_equity_value: z.number().positive().max(1e15),
-  strike: z.number().min(0).max(1e15),
-  time_to_exit_years: z.number().positive().max(30),
-  risk_free_rate: z.number().min(0).max(0.25),
-  preferred_shares: z.number().positive().max(1e15),
-  fully_diluted_shares: z.number().positive().max(1e15),
-});
+const CalibrateBody = z
+  .object({
+    round_price_per_share: z.number().positive().max(1e12),
+    total_equity_value: z.number().positive().max(1e15),
+    strike: z.number().min(0).max(1e15),
+    time_to_exit_years: z.number().positive().max(30),
+    risk_free_rate: z.number().min(0).max(0.25),
+    preferred_shares: z.number().positive().max(1e15),
+    fully_diluted_shares: z.number().positive().max(1e15),
+  })
+  .strict();
 
 const RollForwardBody = z
   .object({

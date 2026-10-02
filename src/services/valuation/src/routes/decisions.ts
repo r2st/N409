@@ -25,12 +25,14 @@ import { invalidBody } from '../domain/validationProblem.js';
  * analyst working material.
  */
 
-const DecisionBody = z.object({
-  category: z.enum(DECISION_CATEGORIES),
-  decision: z.string().trim().min(1).max(2_000),
-  rationale: z.string().trim().min(1).max(10_000),
-  supersedes: z.string().nullable().optional(),
-});
+const DecisionBody = z
+  .object({
+    category: z.enum(DECISION_CATEGORIES),
+    decision: z.string().trim().min(1).max(2_000),
+    rationale: z.string().trim().min(1).max(10_000),
+    supersedes: z.string().nullable().optional(),
+  })
+  .strict();
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('The methodology decision log is operations-only');

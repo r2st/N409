@@ -262,7 +262,7 @@ export function registerOperationsRoutes(
     // the principal — where `POST /valuations` asks (R449).
     await refuseIfFirmWithdrawn(deps.pool, source.partner_id);
 
-    const parsed = z.object({ roll_forward: z.boolean().default(false) }).safeParse(req.body ?? {});
+    const parsed = z.object({ roll_forward: z.boolean().default(false) }).strict().safeParse(req.body ?? {});
     if (!parsed.success) throw invalidBody('Invalid clone request', parsed.error);
 
     // Ops clone on behalf of the original owner; a client clones as themselves.

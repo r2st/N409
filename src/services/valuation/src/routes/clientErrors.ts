@@ -74,19 +74,21 @@ const MAX_USER_AGENT = 200;
  */
 export const CLIENT_ERROR_KINDS = ['render', 'uncaught', 'unhandled_rejection'] as const;
 
-const ReportBody = z.object({
-  kind: z.enum(CLIENT_ERROR_KINDS),
-  /** The constructor name — `TypeError`, `ChunkLoadError`. */
-  name: z.string().trim().max(100).optional(),
-  message: z.string().trim().max(MAX_MESSAGE),
-  stack: z.string().max(MAX_STACK).optional(),
-  /** React's component stack, on a render crash. */
-  component_stack: z.string().max(MAX_STACK).optional(),
-  /** Where in the app it happened. Same origin as this service's own callers. */
-  url: z.string().trim().max(MAX_URL).optional(),
-  /** The bundle the browser was running, so a stale tab is distinguishable. */
-  release: z.string().trim().max(100).optional(),
-});
+const ReportBody = z
+  .object({
+    kind: z.enum(CLIENT_ERROR_KINDS),
+    /** The constructor name — `TypeError`, `ChunkLoadError`. */
+    name: z.string().trim().max(100).optional(),
+    message: z.string().trim().max(MAX_MESSAGE),
+    stack: z.string().max(MAX_STACK).optional(),
+    /** React's component stack, on a render crash. */
+    component_stack: z.string().max(MAX_STACK).optional(),
+    /** Where in the app it happened. Same origin as this service's own callers. */
+    url: z.string().trim().max(MAX_URL).optional(),
+    /** The bundle the browser was running, so a stale tab is distinguishable. */
+    release: z.string().trim().max(100).optional(),
+  })
+  .strict();
 
 /** The caller's `user-agent`, trimmed to something a log line can hold. */
 export function boundedUserAgent(header: string | string[] | undefined): string | null {

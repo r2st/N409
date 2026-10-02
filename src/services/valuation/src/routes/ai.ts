@@ -268,13 +268,14 @@ export const RunBody = z
       })
       .optional(),
   })
+  .strict()
   .default({ anonymize: true, auto_apply: false });
 
 /**
  * `overwrite` is opt-in and explicit: an analyst who classified the business by
  * hand and then ran the agent did not ask to have that reconsidered.
  */
-const ApplyProfileBody = z.object({ overwrite: z.boolean().default(false) }).default({ overwrite: false });
+const ApplyProfileBody = z.object({ overwrite: z.boolean().default(false) }).strict().default({ overwrite: false });
 
 /**
  * What an operator hands the anonymizer: pasted text, uploaded documents, or

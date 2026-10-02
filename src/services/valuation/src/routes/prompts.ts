@@ -40,11 +40,11 @@ const PatchBody = z
 
 const TestBody = z.object({
   input: z.string().min(1).max(20_000),
-});
+}).strict();
 
 const RevertBody = z.object({
   version: int4Version(),
-});
+}).strict();
 
 export interface AiTestResponse {
   model: string;

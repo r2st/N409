@@ -134,13 +134,15 @@ const billingUnavailable = (detail: string) =>
  * `annual_retainer` (migration 0080), and `plan_limits.tier` is the target of
  * a foreign key, not free text.
  */
-const SubscribeBody = z.object({
-  plan_tier: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9][a-z0-9_-]*$/, 'A plan tier is lower-case letters, digits, underscores and hyphens'),
-});
+const SubscribeBody = z
+  .object({
+    plan_tier: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z0-9][a-z0-9_-]*$/, 'A plan tier is lower-case letters, digits, underscores and hyphens'),
+  })
+  .strict();
 
 /**
  * Stripe subscription status → local status, with a status nobody has

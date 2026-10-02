@@ -42,15 +42,17 @@ const Slug = z
   .max(100)
   .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and dashes only');
 
-const ArticleBody = z.object({
-  slug: Slug,
-  title: nonBlankText(1, 200),
-  category: z.string().min(1).max(100).default('General'),
-  keywords: z.string().max(500).default(''),
-  body_html: z.string().min(1).max(50_000),
-  sort_order: z.number().int().min(0).max(10_000).default(0),
-  published: z.boolean().default(true),
-});
+const ArticleBody = z
+  .object({
+    slug: Slug,
+    title: nonBlankText(1, 200),
+    category: z.string().min(1).max(100).default('General'),
+    keywords: z.string().max(500).default(''),
+    body_html: z.string().min(1).max(50_000),
+    sort_order: z.number().int().min(0).max(10_000).default(0),
+    published: z.boolean().default(true),
+  })
+  .strict();
 
 const PatchBody = ArticleBody.partial()
   .strict()

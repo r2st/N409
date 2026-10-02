@@ -29,16 +29,18 @@ import { managedTemplateOverruns } from '../domain/report.js';
  * Ops-only — templates are production tooling.
  */
 
-const CreateBody = z.object({
-  name: z
-    .string()
-    .min(1)
-    .max(100)
-    .regex(/^[a-z0-9][a-z0-9_-]*$/, 'lowercase letters, digits, - and _ only'),
-  kind: z.enum(VALUATION_KINDS),
-  body: z.string().max(1_000_000).optional(),
-  notes: z.string().max(2000).optional(),
-});
+const CreateBody = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[a-z0-9][a-z0-9_-]*$/, 'lowercase letters, digits, - and _ only'),
+    kind: z.enum(VALUATION_KINDS),
+    body: z.string().max(1_000_000).optional(),
+    notes: z.string().max(2000).optional(),
+  })
+  .strict();
 
 const PatchBody = z
   .object({

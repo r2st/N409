@@ -86,12 +86,14 @@ const InstrumentParams = z
     message: `At most ${MAX_INSTRUMENT_PARAMS} instrument parameters`,
   });
 
-const InstrumentBody = z.object({
-  name: z.string().trim().min(1).max(200),
-  instrument_type: z.enum(['bond', 'term_loan', 'convertible', 'safe', 'credit_spread']),
-  currency: CurrencyCode.default('USD'),
-  params: InstrumentParams.default({}),
-});
+const InstrumentBody = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    instrument_type: z.enum(['bond', 'term_loan', 'convertible', 'safe', 'credit_spread']),
+    currency: CurrencyCode.default('USD'),
+    params: InstrumentParams.default({}),
+  })
+  .strict();
 
 const UpdateBody = z
   .object({
@@ -111,7 +113,7 @@ const CreditTermsBody = z
   .strict();
 
 /** `null` detaches — the measurement tools are usable without an engagement. */
-const LinkBody = z.object({ valuation_id: ulidField().nullable() });
+const LinkBody = z.object({ valuation_id: ulidField().nullable() }).strict();
 
 const ValueBody = z
   .object({
@@ -484,7 +486,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
   app.post('/api/v1/debt/rating-spread', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
-    const rating = z.object({ rating: z.string().trim().min(1).max(4) }).safeParse(req.body);
+    const rating = z.object({ rating: z.string().trim().min(1).max(4) }).strict().safeParse(req.body);
     if (!rating.success) throw invalidBody('Invalid rating lookup', rating.error);
     return engine('/engine/v1/debt-rating-spread', { rating: rating.data.rating });
   });

@@ -34,30 +34,35 @@ import { ulidField } from '../domain/ulidField.js';
  * hook then fires the auto email workflows / notifications.
  */
 
-const ReassignBody = z.object({ reviewer_id: ulidField().nullable() });
+const ReassignBody = z.object({ reviewer_id: ulidField().nullable() }).strict();
 
-const BulkBody = z.object({
-  ids: z.array(z.string()).min(1).max(200),
-  action: z.enum(BULK_ACTIONS),
-  state: z.enum(VALUATION_STATES).optional(),
-  reviewer_id: ulidField().nullable().optional(),
-});
+const BulkBody = z
+  .object({
+    ids: z.array(z.string()).min(1).max(200),
+    action: z.enum(BULK_ACTIONS),
+    state: z.enum(VALUATION_STATES).optional(),
+    reviewer_id: ulidField().nullable().optional(),
+  })
+  .strict();
 
 /**
  * Canonical bulk contract (improvement 5):
  * POST /valuations/bulk-action { action, valuation_ids, params }.
  * Normalized into the same executor as the legacy /valuations/bulk shape.
  */
-export const BulkActionBody = z.object({
-  action: z.enum(BULK_ACTIONS),
-  valuation_ids: z.array(z.string()).min(1).max(200),
-  params: z
-    .object({
-      state: z.enum(VALUATION_STATES).optional(),
-      reviewer_id: ulidField().nullable().optional(),
-    })
-    .optional(),
-});
+export const BulkActionBody = z
+  .object({
+    action: z.enum(BULK_ACTIONS),
+    valuation_ids: z.array(z.string()).min(1).max(200),
+    params: z
+      .object({
+        state: z.enum(VALUATION_STATES).optional(),
+        reviewer_id: ulidField().nullable().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 export interface BulkInput {
   ids: string[];

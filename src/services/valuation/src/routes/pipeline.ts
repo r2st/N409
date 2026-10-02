@@ -13,7 +13,7 @@ import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
-const ToggleBody = z.object({ auto_pipeline: z.boolean() });
+const ToggleBody = z.object({ auto_pipeline: z.boolean() }).strict();
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };

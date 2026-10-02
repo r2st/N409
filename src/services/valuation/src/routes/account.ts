@@ -71,11 +71,13 @@ const CloseAccountBody = z
   })
   .strict();
 
-const TokenBody = z.object({
-  name: z.string().trim().min(1).max(200),
-  /** Required for password accounts; ignored for SSO-only ones. See the mint route. */
-  current_password: presentedPasswordField().optional(),
-});
+const TokenBody = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    /** Required for password accounts; ignored for SSO-only ones. See the mint route. */
+    current_password: presentedPasswordField().optional(),
+  })
+  .strict();
 
 function isKnownTimezone(tz: string | null): boolean {
   if (tz === null) return true;

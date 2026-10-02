@@ -48,7 +48,7 @@ const CreateBody = z
     expires_in_days: z.number().int().min(1).max(MAX_EXPIRY_DAYS).default(30),
   })
   .strict();
-const RedeemBody = z.object({ token: tokenField() });
+const RedeemBody = z.object({ token: tokenField() }).strict();
 
 /**
  * What an auditor can put on the record, and the three things they ever want to
@@ -68,11 +68,13 @@ const DISPOSITIONS = {
 } as const;
 type Disposition = keyof typeof DISPOSITIONS;
 
-const NoteBody = z.object({
-  token: tokenField(),
-  disposition: z.enum(['question', 'change_requested', 'approved']),
-  body: z.string().trim().min(1).max(20_000),
-});
+const NoteBody = z
+  .object({
+    token: tokenField(),
+    disposition: z.enum(['question', 'change_requested', 'approved']),
+    body: z.string().trim().min(1).max(20_000),
+  })
+  .strict();
 
 /**
  * The portal redeem route authenticates with nothing but the link's token, so

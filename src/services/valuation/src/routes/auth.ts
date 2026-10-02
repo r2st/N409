@@ -70,17 +70,21 @@ import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
 import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
-const RegisterBody = z.object({
-  email: EmailAddress,
-  password: newPasswordField(),
-  first_name: nonBlankText(1, 100).optional(),
-  last_name: nonBlankText(1, 100).optional(),
-});
+const RegisterBody = z
+  .object({
+    email: EmailAddress,
+    password: newPasswordField(),
+    first_name: nonBlankText(1, 100).optional(),
+    last_name: nonBlankText(1, 100).optional(),
+  })
+  .strict();
 
-const LoginBody = z.object({
-  email: EmailAddress,
-  password: presentedPasswordField(),
-});
+const LoginBody = z
+  .object({
+    email: EmailAddress,
+    password: presentedPasswordField(),
+  })
+  .strict();
 
 const MfaVerifyBody = z
   .object({
@@ -89,32 +93,39 @@ const MfaVerifyBody = z
     backup_code: z.string().min(1).max(20).optional(),
     remember_device: z.boolean().optional(),
   })
+  .strict()
   .refine((b) => b.code != null || b.backup_code != null, {
     message: 'A TOTP code or a backup code is required.',
   });
 
-const ForgotPasswordBody = z.object({ email: EmailAddress });
+const ForgotPasswordBody = z.object({ email: EmailAddress }).strict();
 
-const VerifyEmailBody = z.object({ token: tokenField() });
+const VerifyEmailBody = z.object({ token: tokenField() }).strict();
 
-const ResetPasswordBody = z.object({
-  token: tokenField(),
-  password: newPasswordField(),
-});
+const ResetPasswordBody = z
+  .object({
+    token: tokenField(),
+    password: newPasswordField(),
+  })
+  .strict();
 
-const ChangePasswordBody = z.object({
-  current_password: presentedPasswordField(),
-  new_password: newPasswordField(),
-});
+const ChangePasswordBody = z
+  .object({
+    current_password: presentedPasswordField(),
+    new_password: newPasswordField(),
+  })
+  .strict();
 
-const InviteTokenBody = z.object({ token: tokenField() });
+const InviteTokenBody = z.object({ token: tokenField() }).strict();
 
-const AcceptInviteBody = z.object({
-  token: tokenField(),
-  password: newPasswordField(),
-  first_name: nonBlankText(1, 100).optional(),
-  last_name: nonBlankText(1, 100).optional(),
-});
+const AcceptInviteBody = z
+  .object({
+    token: tokenField(),
+    password: newPasswordField(),
+    first_name: nonBlankText(1, 100).optional(),
+    last_name: nonBlankText(1, 100).optional(),
+  })
+  .strict();
 
 /**
  * In-memory sliding-window limiter for the unauthenticated auth routes —

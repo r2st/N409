@@ -33,7 +33,7 @@ import type { SupportEmailSource } from '../hooks/autoEmails.js';
  * ops; the schema + completion rules live in domain/intake.ts.
  */
 
-const SaveBody = z.object({ answers: IntakeAnswers });
+const SaveBody = z.object({ answers: IntakeAnswers }).strict();
 
 async function loadReadable(pool: pg.Pool, id: string, principal: Principal): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();

@@ -37,11 +37,13 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
 import { ulidField } from '../domain/ulidField.js';
 
-const PostBody = z.object({
-  kind: z.enum(['chat', 'note']),
-  body: z.string().min(1).max(MAX_COMMENT_BODY),
-  pinned: z.boolean().optional(),
-});
+const PostBody = z
+  .object({
+    kind: z.enum(['chat', 'note']),
+    body: z.string().min(1).max(MAX_COMMENT_BODY),
+    pinned: z.boolean().optional(),
+  })
+  .strict();
 
 const PatchBody = z
   .object({
@@ -51,14 +53,16 @@ const PatchBody = z
   .partial()
   .strict();
 
-const InboxBody = z.object({
-  from: EmailAddress,
-  subject: z.string().max(1000).default(''),
-  body: z.string().min(1).max(100_000),
-  message_id: z.string().max(500).optional(),
-  /** Explicit routing wins over subject/sender matching. */
-  valuation_id: ulidField().optional(),
-});
+const InboxBody = z
+  .object({
+    from: EmailAddress,
+    subject: z.string().max(1000).default(''),
+    body: z.string().min(1).max(100_000),
+    message_id: z.string().max(500).optional(),
+    /** Explicit routing wins over subject/sender matching. */
+    valuation_id: ulidField().optional(),
+  })
+  .strict();
 
 /** The ticket body, cut to the column's bound with a line saying it was cut. */
 const TRUNCATION_NOTICE = '\n\n[truncated — the full email is in the support mailbox]';

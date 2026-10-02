@@ -121,12 +121,14 @@ export function normalizeViewQuery(raw: string): string {
   return text;
 }
 
-const CreateBody = z.object({
-  name: z.string().trim().min(1).max(MAX_VIEW_NAME),
-  query: z.string().max(4000).default(''),
-  visibility: z.enum(VIEW_VISIBILITIES).default('private'),
-  is_default: z.boolean().default(false),
-});
+const CreateBody = z
+  .object({
+    name: z.string().trim().min(1).max(MAX_VIEW_NAME),
+    query: z.string().max(4000).default(''),
+    visibility: z.enum(VIEW_VISIBILITIES).default('private'),
+    is_default: z.boolean().default(false),
+  })
+  .strict();
 
 const PatchBody = z
   .object({
