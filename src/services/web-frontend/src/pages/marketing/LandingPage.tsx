@@ -15,7 +15,6 @@ import {
 } from '../../lib/useFormValidation';
 import { PASSWORD_HINT } from '../../lib/passwordPolicy';
 import { SignedInHandoff, handOffAfterSignIn } from '../../components/SignedInHandoff';
-import { LogoMark } from '../../components/Logo';
 
 const GOLD = '#F0B429';
 const GOLD_LIGHT = '#F7CC5F';
@@ -559,6 +558,13 @@ export function LandingPage() {
       <div className="landing-split">
         {/* ── LEFT HALF: Product info ── */}
         <div className={`landing-left${cls}`}>
+          {/* Floating golden particles */}
+          <div className="landing-particles">
+            {Array.from({ length: 8 }, (_, i) => (
+              <div key={i} className="landing-particle" />
+            ))}
+          </div>
+
           <div className="landing-left-inner">
             {/* Brand */}
             <div className="landing-brand">
@@ -610,7 +616,7 @@ export function LandingPage() {
           <div className="landing-auth-card">
             {/* Mobile-only brand */}
             <div className="landing-mobile-brand">
-              <LogoMark size={28} />
+              <RobotFace size={24} />
               <span className="landing-brand-text">
                 Do<em>Aide</em> 409A
               </span>
@@ -641,8 +647,8 @@ export function LandingPage() {
                   </button>
                 </div>
 
-                {/* Forms */}
-                <div className="landing-form-area">
+                {/* Forms — key forces re-mount for fade-in animation */}
+                <div key={activeTab} className="landing-form-area">
                   {activeTab === 'login' ? (
                     <LoginForm onMfa={setMfaChallenge} />
                   ) : (
