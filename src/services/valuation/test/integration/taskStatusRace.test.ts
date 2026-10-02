@@ -164,6 +164,24 @@ describe.skipIf(!dbUp)('review task status under concurrency', () => {
     expect(restarted.started_at).toEqual(startedAt);
   });
 
+  it('refuses resurrection of a done task at the route level', async () => {
+    const id = await newTask('Terminal task');
+    expect((await patch(id, { status: 'done' })).statusCode).toBe(200);
+
+    const res = await patch(id, { status: 'open' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toContain('Done');
+  });
+
+  it('refuses resurrection of a cancelled task at the route level', async () => {
+    const id = await newTask('Cancelled terminal');
+    expect((await patch(id, { status: 'cancelled' })).statusCode).toBe(200);
+
+    const res = await patch(id, { status: 'in_progress' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toContain('Cancelled');
+  });
+
   it('does not refuse an edit that clobbers nothing', async () => {
     // Only the status move is conditional. A reassignment sets its own column,
     // so failing it because a colleague moved the status would be a refusal
