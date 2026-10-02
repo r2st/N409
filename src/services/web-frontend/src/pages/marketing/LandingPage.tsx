@@ -31,7 +31,7 @@ const VALUE_PROPS = [
 const DOAIDE_PRODUCTS = [
   { name: 'Desk', url: 'https://desk.doaide.com' },
   { name: 'Jobs', url: 'https://job.doaide.com' },
-  { name: '409A', url: 'https://409a.doaide.com' },
+  { name: '409', url: 'https://409.doaide.com' },
   { name: 'GST', url: 'https://gst.doaide.com' },
   { name: 'Pulse', url: 'https://pulse.doaide.com' },
   { name: 'Med', url: 'https://med.doaide.com' },
