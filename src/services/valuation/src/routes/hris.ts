@@ -92,7 +92,7 @@ const providerUnavailable = (provider: HrisProvider) =>
     detail: `${HRIS_PROVIDER_LABELS[provider]} is not configured on this deployment`,
   });
 
-const FrequencyBody = z.object({ frequency: z.enum(['manual', 'daily', 'weekly']) });
+const FrequencyBody = z.object({ frequency: z.enum(['manual', 'daily', 'weekly']) }).strict();
 
 /**
  * Query string of the OAuth callback. Unknown keys are stripped rather than
@@ -907,6 +907,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
+      refuseIfRetired(valuation, 'accepting integration changes');
       const actor = { actorType: 'human' as const, actorId: principal.id, source: 'hris' };
       if (!(await revokeConnection(deps.pool, valuation.id, provider, actor))) throw problems.notFound();
       return reply.status(204).send();

@@ -409,6 +409,7 @@ export function registerComparableRoutes(
       const principal = requirePrincipal(req);
       const { id, itemId } = req.params as { id: string; itemId: string };
       const valuation = await loadOps(id, principal);
+      refuseIfRetired(valuation, 'accepting changes');
       if (!isUlid(itemId)) throw problems.notFound();
 
       const current = await findComparableItem(deps.pool, valuation.id, itemId);

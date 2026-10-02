@@ -483,7 +483,7 @@ export function registerDocumentRoutes(
       refuseIfRetired(valuation, 'accepting documents');
       if (!isOps(principal)) throw problems.forbidden('Marking a document reviewed is operations-only');
 
-      const parsed = z.object({ reviewed: z.boolean().default(true) }).safeParse(req.body ?? {});
+      const parsed = z.object({ reviewed: z.boolean().default(true) }).strict().safeParse(req.body ?? {});
       if (!parsed.success) throw invalidBody('Invalid body', parsed.error);
 
       await loadDocument(deps.pool, valuation.id, documentId);
@@ -507,6 +507,7 @@ export function registerDocumentRoutes(
       const principal = requirePrincipal(req);
       const { id, documentId } = req.params as { id: string; documentId: string };
       const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      refuseIfRetired(valuation, 'accepting documents');
       const doc = await loadDocument(deps.pool, valuation.id, documentId);
 
       // Ops can prune anything; everyone else only what they uploaded.

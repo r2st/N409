@@ -18,12 +18,14 @@ import { nonBlankText } from '../domain/nonBlankText.js';
  * 'published' without the main signature.
  */
 
-const SignBody = z.object({
-  role: z.enum(['main', 'second']),
-  signer_name: nonBlankText(2, 200),
-  signer_title: z.string().max(200).nullable().optional(),
-  signature_text: nonBlankText(2, 500),
-});
+const SignBody = z
+  .object({
+    role: z.enum(['main', 'second']),
+    signer_name: nonBlankText(2, 200),
+    signer_title: z.string().max(200).nullable().optional(),
+    signature_text: nonBlankText(2, 500),
+  })
+  .strict();
 
 const actorOf = (principal: Principal): EventActor => ({ actorType: 'human', actorId: principal.id });
 
@@ -83,6 +85,7 @@ export function registerSignatureRoutes(app: FastifyInstance, deps: { pool: pg.P
       requireOps(principal);
       const { id, role } = req.params as { id: string; role: string };
       const valuation = await loadValuation(deps.pool, id);
+      refuseIfRetired(valuation, 'accepting signatures');
       if (valuation.state === 'published') {
         throw problems.conflict('Cannot remove signatures from a published valuation');
       }

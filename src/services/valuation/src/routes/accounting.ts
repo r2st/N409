@@ -690,6 +690,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorizedValuation(principal, id);
+      refuseIfRetired(valuation, 'accepting integration changes');
       const actor = { actorType: 'human' as const, actorId: principal.id, source: 'accounting_import' };
       if (!(await revokeConnection(deps.pool, valuation.id, provider, actor))) throw problems.notFound();
       return reply.status(204).send();

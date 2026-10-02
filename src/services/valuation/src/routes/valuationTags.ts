@@ -237,6 +237,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     const params = SlugParam.safeParse(req.params);
     if (!params.success) throw problems.notFound();
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const existing = await findValuationTag(deps.pool, id, params.data.slug);
     if (!existing) throw problems.notFound();

@@ -154,6 +154,7 @@ export function registerOverwriteRoutes(app: FastifyInstance, deps: { pool: pg.P
       const principal = requirePrincipal(req);
       const { id, field_key } = req.params as { id: string; field_key: string };
       const valuation = await loadForWorkingData(deps.pool, principal, id);
+      refuseIfRetired(valuation, 'accepting changes');
       if (!OVERWRITE_FIELDS_BY_KEY.has(field_key)) {
         throw problems.notFound(`Unknown overwrite field "${quoteForMessage(field_key)}"`);
       }

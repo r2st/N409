@@ -37,9 +37,9 @@ const dbUp = await isDbAvailable();
  * live 2xx proves the request was well-formed and reached the handler, so the
  * archived 409 can only have come from the guard.
  *
- * The fifteen DELETEs are exempt by a decision the board flow made before there
- * was a rule — cleaning up rows on a withdrawn file is the one thing that
- * should still work — and the partner API's three writes are a separate surface
+ * Two DELETEs remain exempt (auditor-access revocation and board-member
+ * removal — genuine cleanup that should still work on withdrawn files), and
+ * the partner API's three writes are a separate surface
  * swept by `partnerApiRetired.test.ts` (they leaked too — R90). Both lists are
  * exhaustive and checked against the route table in both directions, so
  * neither can quietly grow.
@@ -134,34 +134,19 @@ function fillParams(template: string, valuationId: string): string {
 }
 
 /**
- * The DELETE routes, left unguarded on purpose.
+ * The DELETE routes still left unguarded on purpose.
  *
- * The board flow settled this before there was a rule: "cleaning up the member
- * list is the one thing ops should still be able to do on a withdrawn file".
- * Removing a row from a retired engagement does not continue the work, produce
- * an artifact or tell anybody anything — it tidies. The rule these guards draw
- * is about *doing* work on a withdrawn file, and a delete is the opposite.
- *
- * Listed exhaustively rather than excluded by matching on the verb, so that a
- * DELETE added tomorrow lands here as a decision somebody made rather than as
- * one the sweep quietly made for them.
+ * R454 guarded thirteen DELETEs that R89 had left open: removing a grant, a
+ * round, a transaction, a comparable, a scenario, a monitor, a document, a
+ * signature, an overwrite, a tag, or an integration connection *is* a write
+ * that changes the file, which is the line the retirement rule draws. The two
+ * that remain open are genuine cleanup that should still work on withdrawn
+ * files: revoking an auditor's portal link and removing a board member from
+ * the resolution flow.
  */
 const UNGUARDED_DELETES: string[] = [
-  'DELETE /api/v1/valuations/:id/accounting/:provider',
   'DELETE /api/v1/valuations/:id/auditor-access/:accessId',
   'DELETE /api/v1/valuations/:id/board/members/:memberId',
-  'DELETE /api/v1/valuations/:id/cap-table/sync/:provider',
-  'DELETE /api/v1/valuations/:id/comparables/:itemId',
-  'DELETE /api/v1/valuations/:id/documents/:documentId',
-  'DELETE /api/v1/valuations/:id/grants/:grantId',
-  'DELETE /api/v1/valuations/:id/hris/:provider',
-  'DELETE /api/v1/valuations/:id/monitor',
-  'DELETE /api/v1/valuations/:id/overwrites/:field_key',
-  'DELETE /api/v1/valuations/:id/rounds/:roundId',
-  'DELETE /api/v1/valuations/:id/scenarios/:scenarioId',
-  'DELETE /api/v1/valuations/:id/signatures/:role',
-  'DELETE /api/v1/valuations/:id/tags/:slug',
-  'DELETE /api/v1/valuations/:id/transactions/:transactionId',
 ];
 
 /**
@@ -325,13 +310,8 @@ describe.skipIf(!dbUp)('every registered write route', () => {
     live = await create('Live Co');
     archived = await create('Withdrawn Co');
     await retireValuations(ctx.pool, [archived]);
-    routes = mutatingValuationRoutes(ctx.app).filter(
-      (r) =>
-        !r.startsWith('DELETE ') &&
-        !r.startsWith('POST /api/partner') &&
-        !r.startsWith('PUT /api/partner') &&
-        !RETIREMENT_CONTROLS.includes(r),
-    );
+    const exempt = new Set([...UNGUARDED_DELETES, ...PARTNER_API, ...RETIREMENT_CONTROLS]);
+    routes = mutatingValuationRoutes(ctx.app).filter((r) => !exempt.has(r));
   }, 120_000);
   afterAll(async () => ctx?.teardown());
 
@@ -388,16 +368,15 @@ describe.skipIf(!dbUp)('the coverage of that sweep', () => {
   }, 120_000);
   afterAll(async () => ctx?.teardown());
 
-  // Every registered mutating route is either swept above, or a DELETE that
-  // somebody decided to leave open, or the partner API's own surface. A route
-  // that is none of those fails here, so growing the API forces the decision
-  // rather than silently widening what a retired engagement accepts.
+  // Every registered mutating route is either swept above, or explicitly
+  // exempt (the two cleanup DELETEs, the partner API, the retirement controls).
+  // A route that is none of those fails here, so growing the API forces the
+  // decision rather than silently widening what a retired engagement accepts.
   it('accounts for every mutating valuation-scoped route', () => {
     const registered = mutatingValuationRoutes(ctx.app);
     const exempt = new Set([...UNGUARDED_DELETES, ...PARTNER_API, ...RETIREMENT_CONTROLS]);
     const swept = registered.filter((r) => !exempt.has(r));
     expect(swept.length + exempt.size).toBe(registered.length);
-    expect(registered.filter((r) => r.startsWith('DELETE ') && !exempt.has(r))).toEqual([]);
   });
 
   // The other direction: a route removed or renamed leaves a name behind in

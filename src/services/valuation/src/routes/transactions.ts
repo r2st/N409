@@ -33,27 +33,31 @@ const isoDate = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 
-const RoundBody = z.object({
-  name: nonBlankText(1, 200),
-  security_type: z.string().min(1).max(200).nullable().optional(),
-  closed_on: isoDate.nullable().optional(),
-  amount_raised_cents: cents.nullable().optional(),
-  pre_money_cents: cents.nullable().optional(),
-  post_money_cents: cents.nullable().optional(),
-  shares_issued: z.number().int().min(0).max(1e15).nullable().optional(),
-  notes: z.string().max(2000).nullable().optional(),
-});
+const RoundBody = z
+  .object({
+    name: nonBlankText(1, 200),
+    security_type: z.string().min(1).max(200).nullable().optional(),
+    closed_on: isoDate.nullable().optional(),
+    amount_raised_cents: cents.nullable().optional(),
+    pre_money_cents: cents.nullable().optional(),
+    post_money_cents: cents.nullable().optional(),
+    shares_issued: z.number().int().min(0).max(1e15).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  })
+  .strict();
 
 const RoundPatchBody = RoundBody.partial().strict();
 
-const TransactionBody = z.object({
-  kind: z.enum(TRANSACTION_KINDS),
-  occurred_on: isoDate,
-  shares: z.number().int().min(0).max(1e15).nullable().optional(),
-  price_per_share_cents: cents.nullable().optional(),
-  counterparty: z.string().max(300).nullable().optional(),
-  notes: z.string().max(2000).nullable().optional(),
-});
+const TransactionBody = z
+  .object({
+    kind: z.enum(TRANSACTION_KINDS),
+    occurred_on: isoDate,
+    shares: z.number().int().min(0).max(1e15).nullable().optional(),
+    price_per_share_cents: cents.nullable().optional(),
+    counterparty: z.string().max(300).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  })
+  .strict();
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
@@ -156,6 +160,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
       const principal = requirePrincipal(req);
       const { id, roundId } = req.params as { id: string; roundId: string };
       const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      refuseIfRetired(valuation, 'accepting changes');
       requireWriteAccess(principal, valuation);
       if (!isUlid(roundId) || !(await deleteRound(deps.pool, id, roundId, actorFor(principal)))) {
         throw problems.notFound();
@@ -205,6 +210,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
       const principal = requirePrincipal(req);
       const { id, transactionId } = req.params as { id: string; transactionId: string };
       const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      refuseIfRetired(valuation, 'accepting changes');
       requireWriteAccess(principal, valuation);
       if (
         !isUlid(transactionId) ||

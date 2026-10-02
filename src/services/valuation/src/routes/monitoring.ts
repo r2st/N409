@@ -445,7 +445,8 @@ export function registerMonitoringRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadValuation(deps.pool, id);
+    const valuation = await loadValuation(deps.pool, id);
+    refuseIfRetired(valuation, 'accepting monitoring changes');
     const monitor = await findMonitor(deps.pool, id);
     if (!monitor) throw problems.notFound();
     await disableMonitor(deps.pool, monitor, { actorType: 'human', actorId: principal.id });

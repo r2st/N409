@@ -91,8 +91,8 @@ const providerUnavailable = (provider: CapTableProvider) =>
     detail: `${CAP_TABLE_PROVIDER_LABELS[provider]} is not configured on this deployment`,
   });
 
-const FrequencyBody = z.object({ frequency: z.enum(['manual', 'daily', 'weekly']) });
-const PullBody = z.object({ apply: z.boolean().default(false) }).default({ apply: false });
+const FrequencyBody = z.object({ frequency: z.enum(['manual', 'daily', 'weekly']) }).strict();
+const PullBody = z.object({ apply: z.boolean().default(false) }).strict().default({ apply: false });
 
 /**
  * Query string of the OAuth callback. Unknown keys are stripped rather than
@@ -918,6 +918,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
+      refuseIfRetired(valuation, 'accepting cap table changes');
       const actor = { actorType: 'human' as const, actorId: principal.id, source: 'captable_sync' };
       if (!(await revokeConnection(deps.pool, valuation.id, provider, actor))) throw problems.notFound();
       return reply.status(204).send();

@@ -74,19 +74,21 @@ const GrantDate = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 
-const CreateBody = z.object({
-  grantee_name: nonBlankText(1, MAX_GRANTEE_NAME),
-  grantee_email: z.string().email().max(320).nullable().optional(),
-  grant_date: GrantDate,
-  options_count: int4Positive(),
-  exercise_price: z.number().nonnegative().max(1e9).optional(),
-  vesting_template: TemplateKey.default('standard_4yr_1yr_cliff'),
-  vesting_start_date: GrantDate.optional(),
-  vesting_months: z.number().int().min(0).max(VESTING_MONTHS_MAX).optional(),
-  cliff_months: z.number().int().min(0).max(CLIFF_MONTHS_MAX).optional(),
-  frequency_months: z.number().int().min(1).max(FREQUENCY_MONTHS_MAX).optional(),
-  notes: z.string().max(2000).nullable().optional(),
-});
+const CreateBody = z
+  .object({
+    grantee_name: nonBlankText(1, MAX_GRANTEE_NAME),
+    grantee_email: z.string().email().max(320).nullable().optional(),
+    grant_date: GrantDate,
+    options_count: int4Positive(),
+    exercise_price: z.number().nonnegative().max(1e9).optional(),
+    vesting_template: TemplateKey.default('standard_4yr_1yr_cliff'),
+    vesting_start_date: GrantDate.optional(),
+    vesting_months: z.number().int().min(0).max(VESTING_MONTHS_MAX).optional(),
+    cliff_months: z.number().int().min(0).max(CLIFF_MONTHS_MAX).optional(),
+    frequency_months: z.number().int().min(1).max(FREQUENCY_MONTHS_MAX).optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  })
+  .strict();
 
 const PatchBody = z
   .object({
@@ -358,7 +360,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id, grantId } = req.params as { id: string; grantId: string };
-    await loadReadable(deps.pool, id, principal);
+    refuseIfRetired(await loadReadable(deps.pool, id, principal), 'accepting changes');
     const grant = await findGrantById(deps.pool, grantId);
     if (!grant || grant.valuation_id !== id) throw problems.notFound();
     const cancelled = await cancelGrant(deps.pool, grant, { actorType: 'human', actorId: principal.id });

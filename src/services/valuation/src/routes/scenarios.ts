@@ -369,6 +369,7 @@ export function registerScenarioRoutes(
       const principal = requirePrincipal(req);
       const { id, scenarioId } = req.params as { id: string; scenarioId: string };
       const valuation = await loadValuation(principal, id);
+      refuseIfRetired(valuation, 'accepting changes');
       if (!isUlid(scenarioId)) throw problems.notFound();
       const scenario = await findScenarioById(deps.pool, scenarioId);
       if (!scenario || scenario.valuation_id !== valuation.id) throw problems.notFound();
