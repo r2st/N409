@@ -696,14 +696,18 @@ html {
   z-index: 1;
   display: flex;
   min-height: 100vh;
-  padding: 0 clamp(40px, 5vw, 80px);
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 clamp(24px, 4vw, 48px);
+  gap: 48px;
 }
 
 .landing-left {
-  flex: 1 1 55%;
+  flex: 1;
   display: flex;
   flex-direction: column;
   position: relative;
+  min-width: 0;
 }
 
 .landing-left-inner {
@@ -711,18 +715,15 @@ html {
   flex-direction: column;
   justify-content: center;
   flex: 1;
-  padding: 48px 32px 48px 0;
-  max-width: 560px;
-  margin-left: auto;
+  padding: 48px 0;
 }
 
 .landing-right {
-  flex: 0 0 45%;
-  max-width: 520px;
+  flex: 0 0 auto;
+  width: 400px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 48px 0 48px 32px;
+  padding: 48px 0;
   opacity: 0;
 }
 
@@ -1125,7 +1126,9 @@ html {
 @media (max-width: 768px) {
   .landing-split {
     flex-direction: column;
+    max-width: 100%;
     padding: 0;
+    gap: 0;
   }
 
   .landing-left {
@@ -1134,8 +1137,6 @@ html {
 
   .landing-left-inner {
     padding: 32px 24px 24px;
-    max-width: 100%;
-    margin-left: 0;
   }
 
   .landing-brand {
@@ -1185,7 +1186,7 @@ html {
 
   .landing-right {
     flex: none;
-    max-width: 100%;
+    width: 100%;
     padding: 8px 24px 40px;
   }
 
