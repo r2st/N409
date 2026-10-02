@@ -1,225 +1,212 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  ACCOUNTING_PROVIDERS,
-  HERO_KINDS,
-  HOW_IT_WORKS,
-  PRODUCTS,
-  STATS,
-  formatUsd,
-} from '../../lib/marketing';
-import { BookACallSection, PartnerLogos, ProofSection, TestimonialsSection } from './MarketingSections';
+import { LogoMark } from '../../components/Logo';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 
-/** Longest hero word — sizes the rotator slot so the headline never reflows. */
-const WIDEST_HERO_KIND = HERO_KINDS.reduce((a, b) => (b.length > a.length ? b : a));
-
-/** Public landing page (409.ai §22.3). */
 export function LandingPage() {
-  const [heroIndex, setHeroIndex] = useState(0);
-
-  useEffect(() => {
-    // Honour prefers-reduced-motion: the headline settles on "409A" — the term
-    // that carries the page's search intent anyway — instead of cycling.
-    const reduced =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduced) return;
-    const t = setInterval(() => setHeroIndex((i) => (i + 1) % HERO_KINDS.length), 2600);
-    return () => clearInterval(t);
-  }, []);
-
-  const minPriceCents = Math.min(...PRODUCTS.map((p) => p.priceCents));
-
   return (
-    <div>
+    <div className="min-h-screen overflow-hidden bg-chrome-900 text-chrome-fg">
       <Seo {...pageMeta('/')!} />
-      {/* Hero */}
-      <section className="ledger-grid relative overflow-hidden bg-chrome-900 text-chrome-fg">
-        <div className="mx-auto max-w-6xl px-5 py-24 lg:py-32">
-          <div className="overline mb-6 text-brass-400">Independent · Defensible · Audit-ready</div>
-          <h1 className="max-w-3xl font-display text-4xl leading-[1.1] font-medium sm:text-6xl">
-            Easier{' '}
-            {/* The rotating word sits in a slot sized to the longest option, so
-                swapping it never reflows the headline (cumulative layout shift
-                is a Core Web Vital and this is the LCP element). */}
-            <span className="relative inline-grid align-bottom">
-              <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                {WIDEST_HERO_KIND}
-              </span>
-              <span className="col-start-1 row-start-1 justify-self-start text-brass-300 underline decoration-bond-500 decoration-2 underline-offset-8">
-                {HERO_KINDS[heroIndex]}
-              </span>
+
+      {/* Ambient gradient orbs */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
+        <div className="landing-orb-1 absolute -top-40 -right-40 h-[36rem] w-[36rem] rounded-full bg-bond-600/10 blur-[120px]" />
+        <div className="landing-orb-2 absolute -bottom-60 -left-60 h-[44rem] w-[44rem] rounded-full bg-bond-400/8 blur-[140px]" />
+        <div className="landing-orb-3 absolute top-1/2 left-1/2 h-[30rem] w-[30rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-brass-600/5 blur-[100px]" />
+      </div>
+
+      {/* Top bar */}
+      <header className="landing-fade-in relative z-10">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5">
+          <Link to="/" className="flex items-center gap-2.5" aria-label="DoAide 409A home">
+            <LogoMark size={32} />
+            <span className="font-display text-xl font-semibold tracking-tight text-chrome-fg">
+              DoAide <em className="font-display italic text-bond-500">409A</em>
             </span>
-            <br />
-            valuations.
-          </h1>
-          <p className="mt-7 max-w-xl text-lg leading-relaxed text-chrome-dim">
-            First draft in 24 hours. Dual-signed. From {formatUsd(minPriceCents)} flat.
-          </p>
-          <div className="mt-9 flex flex-wrap items-center gap-4">
+          </Link>
+          <nav className="flex items-center gap-3">
+            <Link
+              to="/login"
+              className="rounded-md px-4 py-2 text-sm font-semibold text-chrome-fg transition-colors hover:text-bond-400"
+            >
+              Log in
+            </Link>
             <Link
               to="/register"
-              className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
+              className="rounded-md bg-bond-600 px-5 py-2 text-sm font-semibold text-bond-fg shadow-lift transition-all hover:bg-bond-500 hover:shadow-[0_0_24px_rgba(240,180,41,0.25)]"
             >
-              Start my valuation
+              Get started
             </Link>
-            <Link to="/which-valuation" className="text-sm font-semibold text-chrome-fg hover:text-brass-300">
-              Not sure which report? Take the quiz →
-            </Link>
-          </div>
-          <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-chrome-faint">
-            <span>✓ No credit card required</span>
-            <span>✓ No subscription — one flat price per report</span>
-          </div>
+          </nav>
         </div>
-        <div className="pointer-events-none absolute -right-40 -bottom-40 h-[28rem] w-[28rem] rounded-full bg-bond-700/25 blur-3xl" />
+      </header>
+
+      {/* Hero */}
+      <section className="relative z-10 mx-auto max-w-6xl px-5 pt-16 pb-20 sm:pt-24 sm:pb-28 lg:pt-32 lg:pb-36">
+        <div className="landing-slide-up flex flex-col items-center text-center">
+          <div className="landing-scale-in mb-8 flex h-20 w-20 items-center justify-center rounded-2xl border border-chrome-700 bg-chrome-800/80 shadow-[0_0_40px_rgba(240,180,41,0.12)] backdrop-blur sm:h-24 sm:w-24">
+            <LogoMark size={52} />
+          </div>
+
+          <div className="overline landing-fade-in-delay-1 mb-4 tracking-[0.22em] text-brass-400">
+            Independent · Defensible · Audit-ready
+          </div>
+
+          <h1 className="landing-fade-in-delay-2 max-w-3xl font-display text-4xl leading-[1.1] font-medium sm:text-5xl lg:text-6xl">
+            AI-powered{' '}
+            <span className="text-bond-400">409A</span>{' '}
+            valuations for startups
+          </h1>
+
+          <p className="landing-fade-in-delay-3 mt-6 max-w-xl text-lg leading-relaxed text-chrome-dim sm:text-xl">
+            Automated equity valuations. Compliance-ready reports.
+            First draft in 24&nbsp;hours — dual-signed and audit-defensible.
+          </p>
+
+          {/* CTA buttons */}
+          <div className="landing-fade-in-delay-4 mt-10 flex flex-col items-center gap-4 sm:flex-row">
+            <Link
+              to="/register"
+              className="group relative inline-flex items-center gap-2 rounded-lg bg-bond-600 px-8 py-3.5 text-base font-semibold text-bond-fg shadow-lift transition-all hover:bg-bond-500 hover:shadow-[0_0_32px_rgba(240,180,41,0.3)]"
+            >
+              <span>Start my valuation</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:translate-x-0.5" aria-hidden="true">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </Link>
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-2 rounded-lg border border-chrome-600 bg-chrome-800/50 px-8 py-3.5 text-base font-semibold text-chrome-fg shadow-card backdrop-blur transition-all hover:border-bond-600/40 hover:bg-chrome-700/60"
+            >
+              Sign in to your account
+            </Link>
+          </div>
+
+          <p className="landing-fade-in-delay-5 mt-5 text-xs text-chrome-faint">
+            No credit card required · Pay only when your report is ready
+          </p>
+        </div>
       </section>
 
-      {/* Stats */}
-      <section className="border-b border-paper-300 bg-paper-100">
-        <div className="mx-auto grid max-w-6xl gap-8 px-5 py-12 sm:grid-cols-3">
-          {STATS.map((s) => (
-            <div key={s.label} className="text-center">
-              <div className="tnum font-display text-5xl font-semibold text-bond-600">{s.value}</div>
-              <div className="overline mt-2 text-ink-400">{s.label}</div>
+      {/* Feature cards */}
+      <section className="relative z-10 mx-auto max-w-6xl px-5 pb-24">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURES.map((f, i) => (
+            <div
+              key={f.title}
+              className={`landing-card-${i + 1} rounded-xl border border-chrome-700/60 bg-chrome-800/40 p-7 backdrop-blur transition-all hover:border-bond-600/30 hover:bg-chrome-800/60`}
+            >
+              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-bond-600/10 text-bond-400">
+                {f.icon}
+              </div>
+              <h3 className="font-display text-lg font-semibold text-chrome-fg">{f.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-chrome-dim">{f.body}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Partner logos (gap #21) */}
-      <PartnerLogos />
-
-      {/* Why */}
-      <section className="mx-auto max-w-6xl px-5 py-20">
-        <div className="overline text-ink-400">Do I need a valuation?</div>
-        <h2 className="mt-2 max-w-2xl font-display text-3xl font-semibold text-ink-900">
-          If you grant options, report fair value, or transfer shares — yes.
-        </h2>
-        <div className="mt-10 grid gap-8 md:grid-cols-3">
-          <div>
-            <h3 className="font-display text-lg font-semibold text-ink-900">Price options safely</h3>
-            <p className="mt-2 text-sm leading-relaxed text-ink-600">
-              Safe-harbor protection for every grant.
-            </p>
-          </div>
-          <div>
-            <h3 className="font-display text-lg font-semibold text-ink-900">Survive the audit</h3>
-            <p className="mt-2 text-sm leading-relaxed text-ink-600">
-              Full methodology, inputs, and evidence bundle — end to end.
-            </p>
-          </div>
-          <div>
-            <h3 className="font-display text-lg font-semibold text-ink-900">Protect the company</h3>
-            <p className="mt-2 text-sm leading-relaxed text-ink-600">
-              Remove mispricing risk before diligence finds it.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section className="border-y border-paper-300 bg-surface">
-        <div className="mx-auto max-w-6xl px-5 py-20">
-          <div className="overline text-ink-400">How it works</div>
-          <h2 className="mt-2 font-display text-3xl font-semibold text-ink-900">Three simple steps</h2>
-          <div className="mt-10 grid gap-8 md:grid-cols-3">
-            {HOW_IT_WORKS.map((s) => (
-              <div key={s.step} className="rounded-lg border border-paper-300 bg-paper-50 p-6">
-                <div className="tnum font-display text-3xl font-semibold text-brass-400">{s.step}</div>
-                <h3 className="mt-3 font-display text-lg font-semibold text-ink-900">{s.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-ink-600">{s.body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Integrations */}
-      <section className="mx-auto max-w-6xl px-5 py-20">
-        <div className="overline text-ink-400">Integrations</div>
-        <h2 className="mt-2 max-w-2xl font-display text-3xl font-semibold text-ink-900">
-          Save hours of work with accounting integrations
-        </h2>
-        <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-600">
-          Pull financials directly — no spreadsheets, no re-typing.
-        </p>
-        <div className="mt-8 flex flex-wrap gap-3">
-          {ACCOUNTING_PROVIDERS.map((name) => (
-            <span
-              key={name}
-              className="rounded-full border border-paper-300 bg-surface px-5 py-2.5 text-sm font-semibold text-ink-700 shadow-card"
-            >
-              {name}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      {/* Products strip */}
-      <section className="border-y border-paper-300 bg-surface">
-        <div className="mx-auto max-w-6xl px-5 py-20">
-          <div className="overline text-ink-400">Products</div>
-          <h2 className="mt-2 font-display text-3xl font-semibold text-ink-900">
-            Thirteen report types, one platform
+      {/* Bottom CTA */}
+      <section className="relative z-10 border-t border-chrome-700/40">
+        <div className="landing-fade-in-bottom mx-auto max-w-6xl px-5 py-16 text-center">
+          <h2 className="font-display text-2xl font-semibold text-chrome-fg sm:text-3xl">
+            Price your equity with confidence
           </h2>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {PRODUCTS.map((p) => (
-              <Link
-                key={p.slug}
-                to={`/products/${p.slug}`}
-                className="group rounded-lg border border-paper-300 bg-paper-50 p-5 transition-shadow hover:shadow-lift"
-              >
-                <div className="flex items-baseline justify-between">
-                  <h3 className="font-display text-base font-semibold text-ink-900 group-hover:text-bond-700">
-                    {p.name}
-                  </h3>
-                  <span className="tnum text-xs font-semibold text-ink-400">
-                    from {formatUsd(p.priceCents)}
-                  </span>
-                </div>
-                <p className="mt-1.5 text-sm text-ink-600">{p.tagline}</p>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Verifiable proof — always shown. Testimonials render above it only
-          once we hold real, permissioned quotes (gap #20). */}
-      <TestimonialsSection />
-      <ProofSection />
-
-      {/* Book a call + demo video (gap #22) */}
-      <BookACallSection />
-
-      {/* CTA */}
-      <section className="ledger-grid bg-chrome-900">
-        <div className="mx-auto max-w-6xl px-5 py-20 text-center">
-          <h2 className="font-display text-3xl font-semibold text-chrome-fg">
-            Price your options with confidence
-          </h2>
-          {/* "Start for free" would read as though the report itself is free.
-              What is actually free is everything up to checkout. */}
           <p className="mx-auto mt-3 max-w-md text-sm text-chrome-dim">
-            15 minutes to set up. Draft in 24 hours. Pay only when ready.
+            Join hundreds of startups that trust DoAide 409A for compliant, defensible valuations.
           </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-4">
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
               to="/register"
-              className="inline-block rounded-md bg-bond-600 px-7 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
+              className="rounded-lg bg-bond-600 px-7 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-all hover:bg-bond-500 hover:shadow-[0_0_24px_rgba(240,180,41,0.25)]"
             >
-              Start my valuation
+              Create free account
             </Link>
-            <Link to="/pricing" className="text-sm font-semibold text-chrome-fg hover:text-brass-300">
+            <Link
+              to="/pricing"
+              className="text-sm font-semibold text-chrome-fg transition-colors hover:text-bond-400"
+            >
               See pricing →
             </Link>
           </div>
         </div>
       </section>
+
+      {/* Footer */}
+      <footer className="relative z-10 border-t border-chrome-700/40 bg-chrome-950/50">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-6 text-xs text-chrome-faint sm:flex-row sm:justify-between">
+          <span>© {new Date().getFullYear()} <a href="https://doaide.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-chrome-fg">DoAide</a> · AI tools for small businesses</span>
+          <nav className="flex flex-wrap justify-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-[0.14em]" aria-label="DoAide products">
+            <a href="https://desk.doaide.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-chrome-fg">Desk</a>
+            <a href="https://herald.doaide.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-chrome-fg">Herald</a>
+            <span className="text-brass-400">409A</span>
+            <a href="https://job.doaide.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-chrome-fg">AutoApply</a>
+            <a href="https://homenex.doaide.com" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-chrome-fg">Realty</a>
+          </nav>
+        </div>
+      </footer>
     </div>
   );
 }
+
+const FEATURES = [
+  {
+    title: 'AI-driven analysis',
+    body: 'Machine-learning models process your financials and cap table to produce a defensible fair market value — no spreadsheet gymnastics.',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z" />
+        <circle cx="12" cy="15" r="2" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Compliance-ready reports',
+    body: 'Dual-signed, audit-defensible 409A reports that satisfy IRC §409A safe-harbor requirements. Board-ready from day one.',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9 12l2 2 4-4" />
+        <path d="M4 6h16v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z" />
+        <path d="M4 6l2-2h12l2 2" />
+      </svg>
+    ),
+  },
+  {
+    title: '24-hour turnaround',
+    body: 'Upload your documents, answer a few questions, and receive your first draft within 24 hours — not weeks.',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 6v6l4 2" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Cap table integration',
+    body: 'Import your cap table directly. Options, SAFEs, convertible notes — all equity instruments modelled automatically.',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <path d="M3 9h18M9 3v18" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Flat pricing',
+    body: 'One price per report. No subscription, no hidden fees, no hourly billing. Pay only when your valuation is ready.',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Accounting integrations',
+    body: 'Pull financials from QuickBooks, Xero, FreshBooks and more — no spreadsheets, no re-typing.',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+      </svg>
+    ),
+  },
+];

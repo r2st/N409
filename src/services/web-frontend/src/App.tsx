@@ -185,12 +185,7 @@ function RoleLanding() {
 function HomeGate() {
   const { status } = useAuth();
   if (status === 'loading') return <PageLoader />;
-  if (status === 'anonymous')
-    return (
-      <MarketingLayout>
-        <LandingPage />
-      </MarketingLayout>
-    );
+  if (status === 'anonymous') return <LandingPage />;
   return <RoleLanding />;
 }
 
