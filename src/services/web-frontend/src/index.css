@@ -1000,6 +1000,47 @@ html {
   font-size: 11px;
 }
 
+/* ── Free tool CTA ── */
+
+.landing-free-cta {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.landing-free-cta-btn {
+  display: inline-block;
+  padding: 12px 28px;
+  background: var(--gold);
+  color: #0A0A0B;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.2s, transform 0.15s;
+  box-shadow: 0 2px 12px rgba(240, 180, 41, 0.3);
+}
+
+.landing-free-cta-btn:hover {
+  background: var(--gold-light);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(240, 180, 41, 0.4);
+}
+
+.landing-trust-signals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  margin-top: 14px;
+}
+
+.landing-trust-item {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', var(--font-mono);
+  white-space: nowrap;
+}
+
 /* ── Auth card ── */
 
 .landing-auth-card {

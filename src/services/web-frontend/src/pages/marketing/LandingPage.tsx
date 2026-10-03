@@ -695,6 +695,18 @@ export function LandingPage() {
               <PipelineGraphic />
             </div>
 
+            {/* Free tool CTA */}
+            <div className="landing-free-cta">
+              <Link to="/tools/409a-valuation-calculator" className="landing-free-cta-btn">
+                Estimate your 409A in 60 seconds — free →
+              </Link>
+              <div className="landing-trust-signals">
+                <span className="landing-trust-item">✓ IRS safe-harbor compliant</span>
+                <span className="landing-trust-item">✓ Audit-ready reports</span>
+                <span className="landing-trust-item">✓ From $1,190 vs $5–15K traditional</span>
+              </div>
+            </div>
+
             {/* Animated value props */}
             <ValueCycle />
 

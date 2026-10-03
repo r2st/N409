@@ -167,6 +167,12 @@ export function MarketingHeader() {
           >
             Sample report
           </Link>
+          <Link
+            to="/resources"
+            className="rounded-md px-3 py-2 text-sm font-semibold text-ink-700 hover:text-ink-900"
+          >
+            Free tools
+          </Link>
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
@@ -238,6 +244,20 @@ export function MarketingHeader() {
               className="text-sm font-semibold text-ink-700"
             >
               409A calculator
+            </Link>
+            <Link
+              to="/tools/stock-option-tax-calculator"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
+              Tax calculator
+            </Link>
+            <Link
+              to="/tools/409a-compliance-checker"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
+              Compliance checker
             </Link>
             <Link
               to="/login"
@@ -338,6 +358,15 @@ export function MarketingFooter() {
             </Link>
             <Link to="/tools/409a-valuation-calculator" className="hover:text-chrome-fg">
               409A calculator
+            </Link>
+            <Link to="/tools/stock-option-tax-calculator" className="hover:text-chrome-fg">
+              Stock option tax calculator
+            </Link>
+            <Link to="/tools/409a-compliance-checker" className="hover:text-chrome-fg">
+              Compliance checker
+            </Link>
+            <Link to="/resources" className="hover:text-chrome-fg">
+              Resources
             </Link>
             <Link to="/409a-valuation-guide" className="hover:text-chrome-fg">
               409A guide

@@ -58,6 +58,7 @@ describe('no placeholder contact details ship to production', () => {
     const offenders = FILES.filter(
       ({ file, text }) =>
         file !== 'lib/siteConfig.ts' &&
+        file !== 'components/ShareResultBar.tsx' &&
         /https?:\/\/(www\.)?(calendly\.com|youtube\.com|youtube-nocookie\.com|youtu\.be|twitter\.com|x\.com|linkedin\.com)/i.test(
           text,
         ),

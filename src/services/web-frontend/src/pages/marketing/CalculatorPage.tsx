@@ -4,6 +4,7 @@ import { api, describeActionFailure } from '../../lib/api';
 import { optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
+import { ShareResultBar } from '../../components/ShareResultBar';
 
 /**
  * The free, no-signup 409A estimator (`/tools/409a-valuation-calculator`).
@@ -388,6 +389,14 @@ export function CalculatorPage() {
                   format={usd}
                 />
               </div>
+
+              <ShareResultBar
+                title="409A valuation estimate"
+                text={`409A valuation estimate: equity value ${usd(result.equity_value.p10)} – ${usd(result.equity_value.p90)} (median ${usd(result.equity_value.median)}), common FMV ${usd(result.common_fmv.p10)} – ${usd(result.common_fmv.p90)} after ${Math.round(result.dlom * 100)}% DLOM.`}
+                emailSubject="409A Valuation Estimate"
+                emailLabel="Share with your CFO"
+                className="mt-4"
+              />
             </div>
           )}
         </div>

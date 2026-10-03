@@ -92,6 +92,24 @@ export function staticPages(): HeadInput[] {
         'Free 409A valuation calculator — estimate a range for your common stock from a priced round, capital raised, revenue or profit. No signup, no email required.',
     },
     {
+      path: '/tools/stock-option-tax-calculator',
+      title: 'Stock option tax calculator',
+      description:
+        'Free stock option tax calculator — estimate tax implications of exercising ISOs and NSOs, AMT exposure, and cost basis. No signup required.',
+    },
+    {
+      path: '/tools/409a-compliance-checker',
+      title: '409A compliance checker',
+      description:
+        'Free 409A compliance checker — answer five questions to check whether your 409A valuation is current and meets IRS safe harbor requirements. Instant results.',
+    },
+    {
+      path: '/resources',
+      title: '409A resources & tools',
+      description:
+        'Free 409A tools, guides, and educational resources — valuation calculator, stock option tax calculator, compliance checker, and expert guides on 409A valuations.',
+    },
+    {
       path: '/sample-report',
       title: 'Sample 409A valuation report',
       description:

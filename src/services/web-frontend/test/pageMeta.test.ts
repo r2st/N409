@@ -35,14 +35,15 @@ describe('page metadata registry (§24)', () => {
   });
 
   it('covers all products and comparisons', () => {
-    // Sixteen static pages: home, pricing, which-valuation, the 409A
-    // calculator, the three educational guides (409A guide, when do you need
-    // one, what does it cost), the sample report, the compare hub, the partner
-    // hub, developers, blog, about, contact, terms, privacy. Individual blog
-    // posts are database rows and are deliberately absent — this registry is
-    // build-time data.
+    // Nineteen static pages: home, pricing, which-valuation, the three
+    // tool pages (409A calculator, stock option tax calculator, compliance
+    // checker), resources, the three educational guides (409A guide, when do
+    // you need one, what does it cost), the sample report, the compare hub,
+    // the partner hub, developers, blog, about, contact, terms, privacy.
+    // Individual blog posts are database rows and are deliberately absent —
+    // this registry is build-time data.
     expect(allPageMeta()).toHaveLength(
-      16 + PRODUCTS.length + FUNDING_STAGES.length + PARTNER_SEGMENTS.length + COMPARISONS.length,
+      19 + PRODUCTS.length + FUNDING_STAGES.length + PARTNER_SEGMENTS.length + COMPARISONS.length,
     );
     for (const product of PRODUCTS) {
       expect(productPageMeta(product.slug)?.path).toBe(`/products/${product.slug}`);
