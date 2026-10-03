@@ -158,6 +158,7 @@ const CommunicationsPage = named(() => import('./pages/CommunicationsPage'), 'Co
 const OnboardingPage = named(() => import('./pages/OnboardingPage'), 'OnboardingPage');
 const PaymentSuccessPage = named(() => import('./pages/PaymentRedirectPages'), 'PaymentSuccessPage');
 const PaymentCancelPage = named(() => import('./pages/PaymentRedirectPages'), 'PaymentCancelPage');
+const OrderPage = named(() => import('./pages/OrderPage'), 'OrderPage');
 
 /** Shared full-page loader — used while auth resolves and while a chunk loads. */
 function PageLoader() {
@@ -286,6 +287,7 @@ export default function App() {
             <Route path="/onboarding" element={<OnboardingPage />} />
             <Route path="/payment/success" element={<PaymentSuccessPage />} />
             <Route path="/payment/cancel" element={<PaymentCancelPage />} />
+            <Route path="/order" element={<OrderPage />} />
             <Route path="/valuations/:id" element={<ValuationWorkspace />}>
               <Route index element={<ValuationDetailPage />} />
               <Route path="intake" element={<IntakeTab />} />

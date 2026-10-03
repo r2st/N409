@@ -294,6 +294,74 @@ export function formatUsd(cents: number): string {
   });
 }
 
+// ── Self-serve pricing tiers ─────────────────────────────────────────────────
+// The three tiers shown on /pricing. Mirrors plan_limits rows seeded in
+// migration 0209 — keep tier slugs and prices in sync.
+
+export interface PricingTier {
+  tier: string;
+  name: string;
+  priceCents: number;
+  interval: 'one_time' | 'month';
+  tagline: string;
+  features: string[];
+  valuationLimit: number | null;
+  highlight?: boolean;
+}
+
+export const PRICING_TIERS: PricingTier[] = [
+  {
+    tier: 'starter',
+    name: 'Starter',
+    priceCents: 29_900,
+    interval: 'one_time',
+    tagline: 'One valuation, one price.',
+    features: [
+      'Single 409A valuation report',
+      'AI-assisted intake',
+      'Analyst-signed, audit-defensible report',
+      'Draft review with revisions included',
+      'Basic email support',
+      '7-day delivery (Express available)',
+    ],
+    valuationLimit: 1,
+  },
+  {
+    tier: 'growth',
+    name: 'Growth',
+    priceCents: 19_900,
+    interval: 'month',
+    tagline: 'For growing teams that need regular valuations.',
+    features: [
+      'Up to 3 valuations per year',
+      'Priority support',
+      'Compliance dashboard',
+      'Draft review with revisions included',
+      'Live status tracking',
+      'Roll-forward from prior valuation',
+    ],
+    valuationLimit: 3,
+    highlight: true,
+  },
+  {
+    tier: 'enterprise_monthly',
+    name: 'Enterprise',
+    priceCents: 49_900,
+    interval: 'month',
+    tagline: 'For companies that never want to think about it.',
+    features: [
+      'Unlimited valuations',
+      'Dedicated support',
+      'Audit defense included',
+      'Custom branding on reports',
+      'Compliance dashboard',
+      'Priority Express delivery',
+      'Partner API access',
+    ],
+    valuationLimit: null,
+  },
+];
+
 // ── "Which valuation?" quiz ───────────────────────────────────────────────────
 
 /** A comparison page's identity — what a link to it needs, and nothing else. */

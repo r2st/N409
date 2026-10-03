@@ -81,6 +81,7 @@ export const ROUTE_TITLES: Readonly<Record<string, string | null>> = {
   '/onboarding': 'Getting started',
   '/payment/success': 'Payment received',
   '/payment/cancel': 'Payment cancelled',
+  '/order': 'Order',
 
   /*
    * One valuation, thirty tabs. These strings are the tab strip's own labels,

@@ -15,6 +15,7 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import { findUserById } from '../repos/users.js';
 import {
   createBillingPortalSession,
+  createCheckoutSession,
   createSubscriptionCheckoutSession,
   StripeApiError,
   verifyWebhookSignature,
@@ -42,6 +43,7 @@ import {
   SUBSCRIPTION_PAGE_LIMIT,
   upsertSubscription,
 } from '../repos/billing.js';
+import { createOrder, listOrdersForUser } from '../repos/orders.js';
 import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
@@ -1729,5 +1731,105 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       await recordStripeEvent(deps.pool, key);
       return reply.send({ received: true });
     });
+  });
+
+  // ── Self-serve order flow (pricing page tiers) ──────────────────────────────
+
+  const OrderCheckoutBody = z
+    .object({
+      tier: z
+        .string()
+        .min(1)
+        .max(64)
+        .regex(/^[a-z0-9][a-z0-9_-]*$/),
+      company_name: z.string().min(1).max(256),
+      company_url: z.string().max(512).nullable().optional(),
+    })
+    .strict();
+
+  app.post('/api/v1/orders/checkout', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!checkoutAvailableTo(deps.stripeSecretKey, principal)) {
+      throw billingUnavailable(PLANS_UNAVAILABLE_DETAIL);
+    }
+    const parsed = OrderCheckoutBody.safeParse(req.body);
+    if (!parsed.success) throw invalidBody('Invalid order', parsed.error);
+
+    const plan = await findPlan(deps.pool, parsed.data.tier);
+    if (!plan) {
+      throw problems.notFound(
+        `There is no plan called "${parsed.data.tier}" on sale. Reload the pricing page for current plans.`,
+      );
+    }
+
+    const user = await findUserById(deps.pool, principal.id);
+    const base = deps.publicBaseUrl.replace(/\/$/, '');
+
+    let session;
+    try {
+      if (plan.interval === 'one_time') {
+        session = await createCheckoutSession(deps.stripeSecretKey, {
+          valuationId: principal.id,
+          productName: plan.name,
+          amountCents: plan.price_cents,
+          currency: plan.currency,
+          successUrl: `${base}/payment/success?order=true`,
+          cancelUrl: `${base}/payment/cancel?order=true`,
+          customerEmail: user?.email,
+        });
+      } else {
+        if (await findActiveSubscription(deps.pool, principal.id)) {
+          throw problems.conflict(
+            'You already have an active subscription. To change plans, use "Manage subscription" on the billing page.',
+          );
+        }
+        session = await createSubscriptionCheckoutSession(deps.stripeSecretKey, {
+          userId: principal.id,
+          planTier: plan.tier,
+          planName: plan.name,
+          amountCents: plan.price_cents,
+          currency: plan.currency,
+          interval: plan.interval,
+          successUrl: `${base}/billing?subscription=success`,
+          cancelUrl: `${base}/billing?subscription=canceled`,
+          customerEmail: user?.email,
+        });
+      }
+    } catch (err) {
+      if (err instanceof StripeApiError) {
+        req.log.warn({ err, planTier: plan.tier }, 'order checkout stripe call failed');
+        throw stripeProblem(err);
+      }
+      throw err;
+    }
+
+    await createOrder(deps.pool, {
+      userId: principal.id,
+      planTier: plan.tier,
+      companyName: parsed.data.company_name,
+      companyUrl: parsed.data.company_url ?? null,
+      amountCents: plan.price_cents,
+      currency: plan.currency,
+      stripeCheckoutId: session.id,
+    });
+
+    return { checkout_url: session.url };
+  });
+
+  app.get('/api/v1/me/orders', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const rows = await listOrdersForUser(deps.pool, principal.id);
+    return {
+      orders: rows.map((o) => ({
+        id: o.id,
+        tier: o.plan_tier,
+        plan_name: o.plan_tier.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+        amount_cents: o.amount_cents,
+        currency: o.currency,
+        status: o.status,
+        company_name: o.company_name,
+        created_at: o.created_at.toISOString(),
+      })),
+    };
   });
 }
