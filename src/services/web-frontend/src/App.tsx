@@ -45,6 +45,7 @@ const ValuationCostPage = named(() => import('./pages/marketing/GuidePages'), 'V
 const CalculatorPage = named(() => import('./pages/marketing/CalculatorPage'), 'CalculatorPage');
 const TaxCalculatorPage = named(() => import('./pages/marketing/TaxCalculatorPage'), 'TaxCalculatorPage');
 const ComplianceCheckerPage = named(() => import('./pages/marketing/ComplianceCheckerPage'), 'ComplianceCheckerPage');
+const ValuationEstimatorPage = named(() => import('./pages/marketing/ValuationEstimatorPage'), 'ValuationEstimatorPage');
 const ResourcesPage = named(() => import('./pages/marketing/ResourcesPage'), 'ResourcesPage');
 const SampleReportPage = named(() => import('./pages/marketing/SampleReportPage'), 'SampleReportPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
@@ -68,6 +69,8 @@ const ResetPasswordPage = named(() => import('./pages/ResetPasswordPage'), 'Rese
 const VerifyEmailPage = named(() => import('./pages/VerifyEmailPage'), 'VerifyEmailPage');
 const AcceptInvitePage = named(() => import('./pages/AcceptInvitePage'), 'AcceptInvitePage');
 const GoogleCompletePage = named(() => import('./pages/GoogleCompletePage'), 'GoogleCompletePage');
+const GitHubCompletePage = named(() => import('./pages/GitHubCompletePage'), 'GitHubCompletePage');
+const MicrosoftCompletePage = named(() => import('./pages/MicrosoftCompletePage'), 'MicrosoftCompletePage');
 const AuditorPortalPage = named(() => import('./pages/AuditorPortalPage'), 'AuditorPortalPage');
 const ClientIntakePage = named(() => import('./pages/ClientIntakePage'), 'ClientIntakePage');
 const BoardSignPage = named(() => import('./pages/BoardSignPage'), 'BoardSignPage');
@@ -239,6 +242,7 @@ export default function App() {
             <Route path="/tools/409a-valuation-calculator" element={<CalculatorPage />} />
             <Route path="/tools/stock-option-tax-calculator" element={<TaxCalculatorPage />} />
             <Route path="/tools/409a-compliance-checker" element={<ComplianceCheckerPage />} />
+            <Route path="/tools/startup-valuation-estimator" element={<ValuationEstimatorPage />} />
             <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/sample-report" element={<SampleReportPage />} />
             <Route path="/products/:slug" element={<ProductPage />} />
@@ -267,6 +271,8 @@ export default function App() {
             <Route path="/verify-email" element={<VerifyEmailPage />} />
             <Route path="/accept-invite" element={<AcceptInvitePage />} />
             <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
+            <Route path="/auth/github/complete" element={<GitHubCompletePage />} />
+            <Route path="/auth/microsoft/complete" element={<MicrosoftCompletePage />} />
             {/* Public board-member resolution signing (feature 5) */}
             <Route path="/board-sign" element={<BoardSignPage />} />
             {/* Public external auditor portal (feature 8), token from link fragment */}

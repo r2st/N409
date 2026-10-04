@@ -42,6 +42,17 @@ const TOOLS = [
       </svg>
     ),
   },
+  {
+    title: 'Startup Valuation Estimator',
+    description: 'Estimate your startup\'s fair market value from revenue, growth rate, industry, and funding stage.',
+    path: '/tools/startup-valuation-estimator',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <path d="M3 3v18h18" />
+        <path d="M7 16l4-6 4 3 5-7" />
+      </svg>
+    ),
+  },
 ];
 
 const GUIDES = [

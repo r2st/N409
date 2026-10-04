@@ -104,6 +104,12 @@ export function staticPages(): HeadInput[] {
         'Free 409A compliance checker — answer five questions to check whether your 409A valuation is current and meets IRS safe harbor requirements. Instant results.',
     },
     {
+      path: '/tools/startup-valuation-estimator',
+      title: 'Startup valuation estimator — how much is my startup worth?',
+      description:
+        'Free startup valuation estimator — enter revenue, growth rate, industry, and funding stage to estimate your company\'s fair market value and 409A common stock range. No signup required.',
+    },
+    {
       path: '/resources',
       title: '409A resources & tools',
       description:

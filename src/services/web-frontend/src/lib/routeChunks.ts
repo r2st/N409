@@ -31,6 +31,7 @@ const ROUTE_MODULES: Array<[RegExp, string]> = [
   [/^\/tools\/409a-valuation-calculator$/, 'src/pages/marketing/CalculatorPage.tsx'],
   [/^\/tools\/stock-option-tax-calculator$/, 'src/pages/marketing/TaxCalculatorPage.tsx'],
   [/^\/tools\/409a-compliance-checker$/, 'src/pages/marketing/ComplianceCheckerPage.tsx'],
+  [/^\/tools\/startup-valuation-estimator$/, 'src/pages/marketing/ValuationEstimatorPage.tsx'],
   [/^\/resources$/, 'src/pages/marketing/ResourcesPage.tsx'],
   [/^\/sample-report$/, 'src/pages/marketing/SampleReportPage.tsx'],
   [/^\/compare\/409a-valuation-providers$/, 'src/pages/marketing/CompareHubPage.tsx'],
