@@ -74,7 +74,18 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // guards draw.
     refuseIfRetired(valuation, 'producing evidence bundles');
 
-    const [eventPage, calculationPage, documentPage, commentPage, signatures, aiJobPage, report, generator] =
+    // R366 (M8): every loader below reads a different table keyed on the same
+    // valuation, and not one of them takes an argument the others produce. They
+    // were spread across three sequential Promise.all batches (8 + 7 + 4),
+    // which cost three serial round-trip windows. Only `listVersions` depends
+    // on another result (`report`), so it stays in a second await.
+    const [
+      eventPage, calculationPage, documentPage, commentPage, signatures, aiJobPage, report, generator,
+      decisionPage, qaPage, scenarios, researchPage, comparablePage, traces, workbookCells,
+      { rows: reviewTaskPage },
+      { rows: adminEventPage },
+      { rows: promptVersions },
+    ] =
       await Promise.all([
         // One over the trail's own ceiling, so a bundle that carries a page of
         // the spine rather than all of it can say which it is. The number is
@@ -89,11 +100,8 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         listAiJobs(deps.pool, id),
         findReportByValuation(deps.pool, id),
         findUserById(deps.pool, principal.id),
-      ]);
-    // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
-    // methodology decision log, QA review history, and saved scenarios.
-    const [decisionPage, qaPage, scenarios, researchPage, comparablePage, traces, workbookCells] =
-      await Promise.all([
+        // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
+        // methodology decision log, QA review history, and saved scenarios.
         listDecisions(deps.pool, id),
         listQaReviews(deps.pool, id),
         listScenarios(deps.pool, id),
@@ -117,53 +125,38 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         // — an auditor reconciling the report to the source has been given the
         // derived figures and never the ones they were derived from.
         listWorkbookCells(deps.pool, id),
+        /*
+         * The two lists this route reads itself, both capped for the reason
+         * every other list in the bundle is.
+         *
+         * Newest-first in SQL and re-ordered below, so a bundle that has to
+         * stop short stops at the oldest end — the same choice `loadTrail`
+         * makes about the spine.
+         */
+        deps.pool.query(
+          `SELECT * FROM review_tasks WHERE valuation_id = $1
+            ORDER BY created_at DESC LIMIT $2`,
+          [id, EVIDENCE_ROW_LIMIT + 1],
+        ),
+        deps.pool.query(
+          `SELECT * FROM admin_events WHERE subject_id = $1
+            ORDER BY occurred_at DESC LIMIT $2`,
+          [id, EVIDENCE_ROW_LIMIT + 1],
+        ),
+        deps.pool.query(
+          `SELECT DISTINCT v.id, p.pipeline, v.version, v.system_prompt, v.model, v.created_at
+             FROM ai_prompt_versions v
+             JOIN ai_prompts p ON p.id = v.prompt_id
+             JOIN ai_jobs j ON j.pipeline = p.pipeline AND j.prompt_version = v.version
+             WHERE j.valuation_id = $1
+             ORDER BY p.pipeline, v.version`,
+          [id],
+        ),
       ]);
-
-    /*
-     * The two lists this route reads itself, both capped for the reason every
-     * other list in the bundle is.
-     *
-     * They were the last uncapped reads here, and they were uncapped because
-     * of where they are written rather than because anybody decided they
-     * should be: `unboundedListCensus` and `silentCapCensus` both enumerate
-     * `src/repos`, and SQL issued from a route file is in neither population.
-     * A review cycle adds a task and an administrator's every act on the
-     * engagement adds an admin event, so both grow with the work.
-     *
-     * Newest-first in SQL and re-ordered here, so a bundle that has to stop
-     * short stops at the oldest end — the same choice `loadTrail` makes about
-     * the spine, and the one that keeps the recent history an auditor is
-     * asking about.
-     */
-    const [
-      { rows: reviewTaskPage },
-      { rows: adminEventPage },
-      { rows: promptVersions },
-      { versions, truncated: versionsTruncated },
-    ] = await Promise.all([
-      deps.pool.query(
-        `SELECT * FROM review_tasks WHERE valuation_id = $1
-          ORDER BY created_at DESC LIMIT $2`,
-        [id, EVIDENCE_ROW_LIMIT + 1],
-      ),
-      deps.pool.query(
-        `SELECT * FROM admin_events WHERE subject_id = $1
-          ORDER BY occurred_at DESC LIMIT $2`,
-        [id, EVIDENCE_ROW_LIMIT + 1],
-      ),
-      deps.pool.query(
-        `SELECT DISTINCT v.id, p.pipeline, v.version, v.system_prompt, v.model, v.created_at
-           FROM ai_prompt_versions v
-           JOIN ai_prompts p ON p.id = v.prompt_id
-           JOIN ai_jobs j ON j.pipeline = p.pipeline AND j.prompt_version = v.version
-           WHERE j.valuation_id = $1
-           ORDER BY p.pipeline, v.version`,
-        [id],
-      ),
-      report
-        ? listVersions(deps.pool, report.id)
-        : Promise.resolve({ versions: [] as Awaited<ReturnType<typeof listVersions>>['versions'], truncated: false }),
-    ]);
+    // `listVersions` depends on `report` from the batch above.
+    const { versions, truncated: versionsTruncated } = report
+      ? await listVersions(deps.pool, report.id)
+      : { versions: [] as Awaited<ReturnType<typeof listVersions>>['versions'], truncated: false };
     const reviewTasksTruncated = reviewTaskPage.length > EVIDENCE_ROW_LIMIT;
     const reviewTasks = reviewTaskPage.slice(0, EVIDENCE_ROW_LIMIT).reverse();
     const adminEventsTruncated = adminEventPage.length > EVIDENCE_ROW_LIMIT;

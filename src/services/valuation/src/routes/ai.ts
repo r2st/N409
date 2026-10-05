@@ -489,16 +489,26 @@ export async function runAiPipeline(
   rejectedInputs: RejectedInput[];
 }> {
   const { valuation, pipeline } = args;
-  const params = await findParams(deps.pool, valuation.id);
-  // A page, and that is what the model gets. `encodeDocuments` already spends
-  // a bounded character budget over whatever it is handed, so the corpus was
-  // never "every file" — the cap makes the bound explicit instead of leaving
-  // it to whichever document the budget happened to run out on.
-  const { documents } = await listDocuments(deps.pool, valuation.id);
 
-  // Registry-managed prompt: the stored system prompt + model binding ride
-  // along so admins can tune pipelines without a deploy (Bot Prompts view).
-  const promptRow = await findPromptByPipeline(deps.pool, pipeline);
+  // R366 (M8): these four reads touch independent tables and none produces an
+  // argument the others need, so they share one round-trip window instead of
+  // four sequential ones. `latestPromptVersion` depends on `promptRow` and
+  // runs after the batch; the narrative/tag/redaction branches are unchanged.
+  const [params, { documents }, promptRow, redactionIdentity] = await Promise.all([
+    findParams(deps.pool, valuation.id),
+    listDocuments(deps.pool, valuation.id),
+    findPromptByPipeline(deps.pool, pipeline),
+    findRedactionIdentity(deps.pool, valuation.user_id).catch(
+      (err: unknown) => {
+        deps.log.warn(
+          { err, valuationId: valuation.id, pipeline },
+          'could not read the engagement owner for prompt redaction; their name is not being struck',
+        );
+        return 'unavailable' as const;
+      },
+    ),
+  ]);
+
   // On/off toggle (migration 0060): a disabled agent is refused before any job
   // is created or LLM call is made.
   if (promptRow && promptRow.enabled === false) {
@@ -566,15 +576,7 @@ export async function runAiPipeline(
    * swallowed — "redaction was applied" and "these entities were applied" are
    * different claims, and this is the one place they can come apart.
    */
-  const client: RedactionIdentityResult = await findRedactionIdentity(deps.pool, valuation.user_id).catch(
-    (err: unknown) => {
-      deps.log.warn(
-        { err, valuationId: valuation.id, pipeline },
-        'could not read the engagement owner for prompt redaction; their name is not being struck',
-      );
-      return 'unavailable' as const;
-    },
-  );
+  const client: RedactionIdentityResult = redactionIdentity;
   const { companies: knownCompanies, people: knownPeople } = ownerRedactionEntities(client);
 
   /*
