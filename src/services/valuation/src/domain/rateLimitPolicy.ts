@@ -176,6 +176,30 @@ export const PUBLIC_POLICIES = {
       'is the one that costs a render.',
     windows: [perMinutes(10, 10, 'ip')],
   },
+  /** routes/unsubscribe.ts — `UNSUBSCRIBE_LIMIT`. R378. */
+  unsubscribe: {
+    name: 'unsubscribe',
+    description:
+      'RFC 8058 one-click and the footer link. A rate limit the POST path silently absorbs ' +
+      '(still 200, but the preference is not touched) and the GET path rejects. Protects the ' +
+      'signature-verification CPU and the upsert it guards.',
+    windows: [perMinutes(30, 10, 'ip')],
+  },
+  /** routes/fmvEstimator.ts — `ESTIMATOR_LIMIT`. R378. */
+  fmvEstimator: {
+    name: 'fmv-estimator',
+    description:
+      'The free 409A calculator. Pure computation — no database — but unbounded requests from one ' +
+      'address can pin the event loop.',
+    windows: [perMinutes(60, 10, 'ip')],
+  },
+  /** routes/valuationSelector.ts — `SELECTOR_LIMIT`. R378. */
+  valuationSelector: {
+    name: 'valuation-selector',
+    description:
+      'The "which valuation?" quiz. Likewise pure computation, and likewise unbounded before R378.',
+    windows: [perMinutes(60, 10, 'ip')],
+  },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 /** A public route is either governed by a named policy or deliberately open. */
@@ -220,12 +244,8 @@ export const PUBLIC_RATE_LIMITS: Readonly<Record<string, PublicRateLimit>> = {
   'GET /api/v1/sample-report': open(
     "the deliverable's chapter outline as JSON; static content, and the render behind it is limited separately",
   ),
-  'POST /api/v1/valuation-selector': open(
-    'the "which valuation?" quiz — a pure function of a bounded enum body, no database and nothing stored',
-  ),
-  'POST /api/v1/fmv-estimator': open(
-    'the free estimator — likewise pure, with every numeric field capped in the schema',
-  ),
+  'POST /api/v1/valuation-selector': throttled(PUBLIC_POLICIES.valuationSelector),
+  'POST /api/v1/fmv-estimator': throttled(PUBLIC_POLICIES.fmvEstimator),
 
   // ── Redirect halves of a handshake, authenticated by a signed state ──────
   'GET /api/v1/auth/google': open('starts the OIDC redirect; issues a state and redirects'),
@@ -247,11 +267,9 @@ export const PUBLIC_RATE_LIMITS: Readonly<Record<string, PublicRateLimit>> = {
     'a mail provider bursts delivery signals by design, and the route is unregistered without EMAIL_WEBHOOK_SECRET',
   ),
 
-  // ── Signed-token endpoints where refusing would be the worse failure ─────
-  'POST /api/v1/unsubscribe': open(
-    'RFC 8058 one-click; a 429 to a mailbox provider reads as "this sender does not honour unsubscribe"',
-  ),
-  'GET /api/v1/unsubscribe': open('the footer link a person clicks; same token, same reasoning'),
+  // ── Signed-token endpoints — now throttled per IP (R378) ─────────────────
+  'POST /api/v1/unsubscribe': throttled(PUBLIC_POLICIES.unsubscribe),
+  'GET /api/v1/unsubscribe': throttled(PUBLIC_POLICIES.unsubscribe),
   'POST /api/v1/auth/logout': open(
     'clears a cookie; refusing it would leave a session the user asked to end',
   ),

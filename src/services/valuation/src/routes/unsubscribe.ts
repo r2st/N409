@@ -1,10 +1,13 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import { problems } from '@n409/shared';
 import { MARKETING_PREFERENCE_KEY } from '../domain/communications.js';
 import { verifyUnsubscribeToken } from '../domain/unsubscribeToken.js';
 import { upsertPreference } from '../repos/notificationPreferences.js';
+import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { logFailure, logUnretried } from '@n409/shared';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * One-click unsubscribe (RFC 8058), the endpoint behind `List-Unsubscribe`.
@@ -55,10 +58,26 @@ function html(reply: FastifyReply, status: number, title: string, message: strin
     );
 }
 
+/**
+ * Per-IP throttle on the unsubscribe endpoints.
+ *
+ * Every other public endpoint that writes to the database has one; these two
+ * did not. The POST verifies a cryptographic token and upserts a preference
+ * row on every valid request, so an unthrottled caller can burn CPU on
+ * signature verification and hold database connections open with upserts.
+ *
+ * 30 in 10 minutes: Gmail and Yahoo issue the one-click POST once per
+ * recipient, and a human clicking the footer link does it once. An office
+ * behind one NAT will never approach it; a flood will hit it quickly.
+ */
+const UNSUBSCRIBE_LIMIT = 30;
+const UNSUBSCRIBE_WINDOW_MS = 10 * 60 * 1000;
+
 export function registerUnsubscribeRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; secret: string },
+  deps: { pool: pg.Pool; secret: string; limiter?: FixedWindowRateLimiter },
 ): void {
+  const limiter = deps.limiter ?? new FixedWindowRateLimiter(UNSUBSCRIBE_LIMIT, UNSUBSCRIBE_WINDOW_MS);
   /** Returns whether the token was good; never throws on a bad one. */
   const apply = async (raw: unknown): Promise<boolean> => {
     const parsed = Query.safeParse(raw);
@@ -92,6 +111,12 @@ export function registerUnsubscribeRoutes(
     );
 
     scope.post('/api/v1/unsubscribe', async (req, reply) => {
+      const { allowed, resetAt } = limiter.check(req.ip);
+      if (!allowed) {
+        recordThrottleRefusal('unsubscribe');
+        // Still 200: a provider that gets 429 may stop showing the button.
+        return reply.status(200).header('cache-control', 'no-store').send({ unsubscribed: false });
+      }
       const ok = await apply(req.query).catch((err: unknown) => {
         /*
          * `logUnretried`, not `warn` (R352, methodology M5).
@@ -119,6 +144,16 @@ export function registerUnsubscribeRoutes(
   });
 
   app.get('/api/v1/unsubscribe', async (req, reply) => {
+    const { allowed, resetAt } = limiter.check(req.ip);
+    if (!allowed) {
+      recordThrottleRefusal('unsubscribe');
+      return html(
+        reply,
+        429,
+        'Too many requests',
+        `Please try again in ${Math.max(1, Math.ceil((resetAt - Date.now()) / 1000))} seconds.`,
+      );
+    }
     let ok = false;
     try {
       ok = await apply(req.query);

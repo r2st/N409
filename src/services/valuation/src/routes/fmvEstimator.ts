@@ -9,6 +9,8 @@ import {
   SAFE_HARBOR_DISCLAIMER,
 } from '../domain/fmvEstimator.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
+import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
  * The free 409A estimator behind `/tools/409a-valuation-calculator`.
@@ -23,7 +25,16 @@ import { invalidBody } from '../domain/validationProblem.js';
  * legitimate reaches it, `Number.MAX_VALUE` through a multiple band produces
  * `Infinity` rather than an error, and a range of `Infinity` renders as a
  * plausible-looking blank on the page.
+ *
+ * R378: added a per-IP limiter. The earlier comment — "the platform limiter is
+ * the only one it needs" — described a limiter that does not exist for
+ * unauthenticated routes: `applyCostLimiter` in auth.ts keys on
+ * `req.principal.id`, so it never fires here. Every other public POST on
+ * this service has its own per-IP throttle; this was the exception.
  */
+
+const ESTIMATOR_LIMIT = 60;
+const ESTIMATOR_WINDOW_MS = 10 * 60 * 1000;
 
 const MAX_MONEY = 1e12;
 
@@ -39,8 +50,21 @@ const EstimatorBody = z
   })
   .strict();
 
-export function registerFmvEstimatorRoutes(app: FastifyInstance): void {
+export function registerFmvEstimatorRoutes(
+  app: FastifyInstance,
+  deps: { limiter?: FixedWindowRateLimiter } = {},
+): void {
+  const limiter = deps.limiter ?? new FixedWindowRateLimiter(ESTIMATOR_LIMIT, ESTIMATOR_WINDOW_MS);
+
   app.post('/api/v1/fmv-estimator', async (req) => {
+    const { allowed, resetAt } = limiter.check(req.ip);
+    if (!allowed) {
+      recordThrottleRefusal('fmv-estimator');
+      throw problems.tooManyRequests(
+        'Too many estimator requests from this address',
+        Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
+      );
+    }
     const parsed = EstimatorBody.safeParse(req.body ?? {});
     if (!parsed.success) {
       throw invalidBody('Invalid estimator inputs', parsed.error);

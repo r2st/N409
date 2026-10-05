@@ -86,7 +86,10 @@ export type ThrottledDoor =
   | 'register'
   | 'password-reset'
   | 'email-verification'
-  | 'invitation';
+  | 'invitation'
+  | 'unsubscribe'
+  | 'fmv-estimator'
+  | 'valuation-selector';
 
 export function registerRequestThrottleMetrics(registry: MetricsRegistry): void {
   refusals = registry.counter(

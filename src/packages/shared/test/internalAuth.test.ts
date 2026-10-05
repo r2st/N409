@@ -360,6 +360,22 @@ describe('registerInternalAuth gatedElsewhere', () => {
     await app.close();
   });
 
+  // R378: `gatedElsewhere` did not normalise trailing slashes, while
+  // `isInternalPublicPath` (the check two lines above it) did. Now both strip
+  // trailing slashes, so `/metrics/` passes the auth hook instead of being
+  // rejected with 401. The route itself may 404 (Fastify's router is strict
+  // about trailing slashes), but the point is the auth hook no longer blocks it.
+  it('normalises trailing slashes on exempt paths', async () => {
+    const app = build(['/metrics']);
+    // Without the fix these would be 401 — the gatedElsewhere check saw
+    // "/metrics/" and didn't match the set entry "/metrics".
+    const single = await app.inject({ method: 'GET', url: '/metrics/' });
+    expect(single.statusCode).not.toBe(401);
+    const multi = await app.inject({ method: 'GET', url: '/metrics///' });
+    expect(multi.statusCode).not.toBe(401);
+    await app.close();
+  });
+
   // An exemption is by exact path, so a prefix cannot open the routes under it.
   it('does not exempt a path that merely starts with an exempt one', async () => {
     const app = Fastify({ logger: false });

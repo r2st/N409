@@ -145,7 +145,9 @@ export function registerInternalAuth(
     // this one is about the secret in force right now.
     const expected = internalToken(env);
     if (isInternalPublicPath(req.url)) return;
-    if (gatedElsewhere.has(req.url.split('?')[0] ?? '')) return;
+    const rawPath = req.url.split('?')[0] ?? '';
+    const normPath = rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath;
+    if (gatedElsewhere.has(normPath)) return;
     if (expected === null) {
       // Unreachable at boot in production, but the secret is deliberately
       // re-read so it can rotate without a restart — and a rotation that
