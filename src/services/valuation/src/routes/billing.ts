@@ -1831,7 +1831,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         .string()
         .min(1)
         .max(64)
-        .regex(/^[a-z0-9][a-z0-9_-]*$/),
+        .regex(/^[a-z0-9][a-z0-9_-]*$/, 'A plan tier is lower-case letters, digits, underscores and hyphens'),
       company_name: z.string().min(1).max(256),
       company_url: z.string().max(512).nullable().optional(),
     })

@@ -229,9 +229,25 @@ export function stripeProblem(err: StripeApiError): ApiProblem {
         'you tried.',
     );
   }
+  // A sixth: our own traffic hit Stripe's ceiling.
+  //
+  // `rate_limit_error` is Stripe telling *us* we sent too many requests, and
+  // its sentence — "Too many requests hit the API too quickly" — is addressed
+  // to a developer, not a cardholder. Forwarding it tells the customer they
+  // did something wrong when the fault is ours, and advises "an exponential
+  // backoff" of requests they cannot control. The honest answer is the one
+  // the `unreachable` case already gives: the payment was not started, try in
+  // a moment.
+  if (err.stripeType === 'rate_limit_error' || err.status === 429) {
+    return stripeUpstream(
+      'The payment service is busy at the moment, so the payment was not started. Nothing has ' +
+        'been charged — try again in a moment.',
+    );
+  }
   // Everything else is Stripe's own sentence, which is the useful part, plus
   // the two facts it never carries: what happened to the money, and whether
-  // pressing the button again is worth anything.
+  // pressing the button again is worth anything. The remaining type is
+  // `card_error`, whose message Stripe writes for the cardholder.
   return stripeUpstream(
     `Stripe: ${err.message} Nothing has been charged. If this repeats, contact support and mention the time you tried.`,
   );

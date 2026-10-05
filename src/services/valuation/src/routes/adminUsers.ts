@@ -960,7 +960,7 @@ export function registerAdminUserRoutes(
           .string()
           .min(1)
           .max(100)
-          .regex(/^[a-z0-9-]+$/),
+          .regex(/^[a-z0-9-]+$/, 'A partner key is lower-case letters, digits and hyphens'),
       })
       .safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid partner', parsed.error);
