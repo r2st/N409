@@ -538,7 +538,7 @@ export async function findArchivableValuations(
 export async function markValuationsArchived(db: Queryable, ids: readonly string[]): Promise<string[]> {
   if (ids.length === 0) return [];
   const { rows } = await db.query<{ id: string }>(
-    `UPDATE valuations SET archived_at = now()
+    `UPDATE valuations SET archived_at = now(), version = version + 1
       WHERE id = ANY($1) AND archived_at IS NULL
       RETURNING id`,
     [[...new Set(ids)]],

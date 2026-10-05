@@ -508,13 +508,15 @@ export function registerValuationRoutes(
          */
         ...(expectedVersion !== undefined
           ? { expectedVersion }
-          : parsed.data.state
+          : parsed.data.state && parsed.data.state !== valuation.state
             ? { expectedVersion: valuation.version }
             : {}),
         // Both gates re-run under the row lock, in the same order. The two
         // checks above answer for the uncontended case; these answer for the
         // row as it stands at the moment of the UPDATE.
-        ...(parsed.data.state ? { preCommit: stateWriteGuard(valuation.id, parsed.data.state) } : {}),
+        ...(parsed.data.state && parsed.data.state !== valuation.state
+          ? { preCommit: stateWriteGuard(valuation.id, parsed.data.state) }
+          : {}),
       },
     );
     reply.header('ETag', versionEtag(updated.version));
