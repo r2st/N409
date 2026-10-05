@@ -802,6 +802,50 @@ describe('alert rules', () => {
     expect(both, 'events a rule selects and the roster also calls routine').toEqual([]);
   });
 
+  it('gives every page-severity alert a `for` clause', () => {
+    // R377, M11. A page-severity alert without `for` fires on a single scrape.
+    // Counter resets (deploy, restart) make `increase()` briefly read nonzero
+    // even when nothing leaked, so a missing `for` turns a counter artifact
+    // into a 3 a.m. page. The one intentional exception is documented inline.
+    const INTENTIONALLY_INSTANT = new Set(['IntegrationConnectGrantedButUnstored']);
+    const rules = parsedRules();
+    const missing: string[] = [];
+    for (const rule of rules) {
+      if (!rule.block.includes('severity: page')) continue;
+      if (INTENTIONALLY_INSTANT.has(rule.name)) continue;
+      if (!/\bfor:\s/.test(rule.block)) missing.push(rule.name);
+    }
+    expect(missing, 'page-severity alerts missing a `for` clause').toEqual([]);
+  });
+
+  it('does not name a gauge with the _total suffix reserved for counters', () => {
+    // R377, M11. Prometheus convention reserves `_total` for counters.  A gauge
+    // named `_total` misleads `increase()` — which handles counter resets — and
+    // confuses every tool that infers the metric type from the suffix.
+    //
+    // Pre-existing violations whose underlying values are pool-size snapshots
+    // or sweep tallies, not monotonic counts an `increase()` rule watches.
+    // Renaming them is a future pass; adding new ones is the thing held here.
+    const KNOWN: Set<string> = new Set([
+      'system_settings_read_failures_total',
+      'upstream_circuit_rejected_total',
+      'db_pool_connections_total',
+      'background_sweep_skipped_total',
+      'background_sweep_runs_total',
+      'background_sweep_failures_total',
+    ]);
+    const gaugeNames: string[] = [];
+    const tsSources = sourceFiles(path.join(REPO, 'src'));
+    for (const file of tsSources) {
+      const src = readFileSync(file, 'utf8');
+      for (const m of src.matchAll(/\.gauge\(\s*'([a-z_][a-z0-9_]*)'/g)) {
+        gaugeNames.push(m[1]!);
+      }
+    }
+    const totalGauges = gaugeNames.filter((n) => n.endsWith('_total') && !KNOWN.has(n));
+    expect(totalGauges, 'gauges using the _total suffix reserved for counters').toEqual([]);
+  });
+
   it('pages only on the severities it declares', () => {
     const severities = new Set([...RULES.matchAll(/severity: (\w+)/g)].map((m) => m[1]!));
     // Deliberately two. A third level is where "info" alerts come from, and an

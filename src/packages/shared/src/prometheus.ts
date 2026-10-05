@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { buildInfo } from './build.js';
 import { setAlertLineSink } from './logger.js';
 import {
@@ -678,6 +679,18 @@ export function registerProcessMetrics(
   );
   registry.gauge('nodejs_heap_used_bytes', 'V8 heap in use', () => proc.memoryUsage().heapUsed);
   registry.gauge('nodejs_heap_total_bytes', 'V8 heap allocated', () => proc.memoryUsage().heapTotal);
+
+  // Event loop lag: how long a timer callback waits beyond its scheduled time.
+  // PDF renders and synchronous crypto block the loop for hundreds of
+  // milliseconds; without this number the only symptom is requests piling up,
+  // which is a consequence rather than a cause.
+  const eld = monitorEventLoopDelay({ resolution: 20 });
+  eld.enable();
+  registry.gauge(
+    'nodejs_eventloop_lag_seconds',
+    'Event loop delay — time a timer callback waited beyond its scheduled time (max over the sampling window)',
+    () => eld.max / 1e9,
+  );
 
   // And what this endpoint is itself holding back. See `seriesCensus`: the cap
   // trades attribution for a bounded map, and the moment that trade is taken is

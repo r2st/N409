@@ -383,6 +383,20 @@ describe('registerProcessMetrics', () => {
     expect(text).toMatch(/n409_build_info\{service="valuation",sha="[^"]*",source="[^"]*"\} 1/);
   });
 
+  it('exposes event loop lag as a gauge', () => {
+    const r = new MetricsRegistry();
+    registerProcessMetrics(r, 'valuation');
+    const text = r.render();
+    expect(headerOf(text, 'nodejs_eventloop_lag_seconds')).toEqual([
+      expect.stringContaining('# HELP nodejs_eventloop_lag_seconds'),
+      '# TYPE nodejs_eventloop_lag_seconds gauge',
+    ]);
+    const series = seriesOf(text, 'nodejs_eventloop_lag_seconds');
+    expect(series).toHaveLength(1);
+    const value = parseFloat(series[0]!.split(' ')[1]!);
+    expect(value).toBeGreaterThanOrEqual(0);
+  });
+
   it('reports what each instrument is holding, and which have begun folding', () => {
     /*
      * R341, M11. `cardinality` and `truncated` have been computed since the cap

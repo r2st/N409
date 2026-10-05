@@ -167,7 +167,7 @@ app.metrics.gauge(
 // `sample()`: a scrape must not consume the once-only report the interval below
 // exists to log, or a Prometheus poll would silence an operator's alert.
 app.metrics.gauge(
-  'db_pool_checkouts_leaked_total',
+  'db_pool_checkouts_leaked',
   'Connections checked out and never returned, cumulative',
   () => poolHealth.peek().leaksDetected,
 );
@@ -176,7 +176,7 @@ app.metrics.gauge(
   'Age of the longest-held checked-out connection',
   () => poolHealth.peek().oldestCheckoutMs / 1000,
 );
-app.metrics.gauge('db_slow_queries_total', 'Statements over the slow-query threshold since boot', () =>
+app.metrics.gauge('db_slow_queries', 'Statements over the slow-query threshold since boot', () =>
   queryStats.top(Number.MAX_SAFE_INTEGER).reduce((n, st) => n + st.slowCount, 0),
 );
 

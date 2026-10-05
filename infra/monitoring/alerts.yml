@@ -553,6 +553,17 @@ groups:
         annotations:
           summary: '{{ $labels.job }} is holding over 100 requests at once'
 
+      # The direct measurement of what RequestsPilingUp detects indirectly.
+      # PDF renders, synchronous crypto, and tight loops all block the event
+      # loop — the lag metric says by how much, without waiting for requests
+      # to pile up enough to trip a count threshold.
+      - alert: EventLoopBlocked
+        expr: nodejs_eventloop_lag_seconds > 0.5
+        for: 2m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} event loop lag exceeds 500 ms'
+
       - alert: SlowRequests
         expr: |
           histogram_quantile(0.95, sum by (job, le) (rate(http_request_duration_seconds_bucket[10m]))) > 2
@@ -1071,7 +1082,8 @@ groups:
       # A leaked checkout never comes back on its own, so any increase is
       # permanent loss of pool capacity.
       - alert: PoolCheckoutLeaked
-        expr: increase(db_pool_checkouts_leaked_total[1h]) > 0
+        expr: increase(db_pool_checkouts_leaked[1h]) > 0
+        for: 5m
         labels: { severity: page }
         annotations:
           summary: 'a pg connection was checked out and never returned'
@@ -1085,7 +1097,7 @@ groups:
           summary: 'a pg connection has been held for over a minute'
 
       - alert: SlowQueriesAppearing
-        expr: increase(db_slow_queries_total[15m]) > 20
+        expr: increase(db_slow_queries[15m]) > 20
         for: 15m
         labels: { severity: ticket }
         annotations:
