@@ -164,7 +164,11 @@ export interface EngineValidateResponse {
   warnings: UpstreamIssue[];
 }
 
-const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+const num = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 /** Engine payload params — numbers, not the DB's numeric-as-string. */
 export function engineParams(p: ValuationParamsRow): Record<string, unknown> {

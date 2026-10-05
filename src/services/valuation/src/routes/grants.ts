@@ -179,7 +179,11 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     }
 
     // Exercise price from the adopted FMV unless explicitly overridden.
-    const adoptedFmv = Number(resolution.fmv_conclusion);
+    const raw = Number(resolution.fmv_conclusion);
+    if (!Number.isFinite(raw)) {
+      throw problems.unprocessable('Adopted FMV is not a finite number — cannot price grants');
+    }
+    const adoptedFmv = raw;
     const exercisePrice = parsed.data.exercise_price ?? adoptedFmv;
 
     const template = templateByKey(parsed.data.vesting_template);

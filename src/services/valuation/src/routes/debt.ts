@@ -412,8 +412,14 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const params: Record<string, unknown> = { ...instrument.params };
     if (instrument.instrument_type === 'credit_spread') {
       const terms = await findCreditTerms(deps.pool, id);
-      if (terms?.benchmark_yield != null) params.benchmark_yield = Number(terms.benchmark_yield);
-      if (terms?.spread != null) params.spread = Number(terms.spread);
+      if (terms?.benchmark_yield != null) {
+        const n = Number(terms.benchmark_yield);
+        if (Number.isFinite(n)) params.benchmark_yield = n;
+      }
+      if (terms?.spread != null) {
+        const n = Number(terms.spread);
+        if (Number.isFinite(n)) params.spread = n;
+      }
       else if (terms?.rating) params.rating = terms.rating;
     }
     Object.assign(params, parsed.data.overrides);
