@@ -45,6 +45,7 @@ import {
 } from '../repos/billing.js';
 import {
   cancelOrderBySubscription,
+  cancelPendingOrderByCheckout,
   createOrder,
   fulfillOneTimeOrder,
   fulfillSubscriptionOrder,
@@ -1104,16 +1105,42 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             });
             if (started) await auditSubscriptionWrite(log, key.eventId, started, null, checkoutSessionId);
             if (checkoutSessionId && typeof obj.subscription === 'string') {
-              await fulfillSubscriptionOrder(deps.pool, checkoutSessionId, obj.subscription).catch(
-                (err: unknown) => {
-                  logUnretried(
-                    log,
-                    err,
-                    { checkoutSessionId },
-                    'order row could not be fulfilled — the subscription stands',
-                  );
-                },
-              );
+              // A subscription that is already canceled when the checkout
+              // event lands (an out-of-order `customer.subscription.deleted`)
+              // must not activate the order. Stripe does not guarantee event
+              // ordering, so the cancellation can arrive first; the
+              // subscription row is correctly kept canceled by the
+              // `WHERE status <> 'canceled'` on upsert, but the order had
+              // no such guard — it was activated for a dead subscription and
+              // nothing would ever cancel it, because the deletion event was
+              // already processed and deduped.
+              if (started?.status === 'canceled') {
+                log.info(
+                  { checkoutSessionId, stripeSubscriptionId: obj.subscription },
+                  'subscription already canceled — canceling order instead of fulfilling it',
+                );
+                await cancelPendingOrderByCheckout(deps.pool, checkoutSessionId).catch(
+                  (err: unknown) => {
+                    logUnretried(
+                      log,
+                      err,
+                      { checkoutSessionId },
+                      'order row could not be canceled for already-canceled subscription',
+                    );
+                  },
+                );
+              } else {
+                await fulfillSubscriptionOrder(deps.pool, checkoutSessionId, obj.subscription).catch(
+                  (err: unknown) => {
+                    logUnretried(
+                      log,
+                      err,
+                      { checkoutSessionId },
+                      'order row could not be fulfilled — the subscription stands',
+                    );
+                  },
+                );
+              }
             }
           } else {
             /**
@@ -1399,18 +1426,37 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               },
             });
             await announceSubscriptionCanceled(log, ended);
-            if (ended.stripe_subscription_id) {
-              await cancelOrderBySubscription(deps.pool, ended.stripe_subscription_id).catch(
-                (err: unknown) => {
-                  logUnretried(
-                    log,
-                    err,
-                    { stripeSubscriptionId: ended.stripe_subscription_id },
-                    'order row could not be canceled — the subscription cancellation stands',
-                  );
-                },
-              );
-            }
+          }
+          // Outside the newly_canceled guard: the order must be canceled
+          // regardless of which event — updated or deleted — first moved the
+          // subscription to canceled. When the updated event wins the race,
+          // newly_canceled is false here and the order was left active forever.
+          // cancelOrderBySubscription is idempotent (WHERE status = 'active').
+          if (ended?.stripe_subscription_id) {
+            await cancelOrderBySubscription(deps.pool, ended.stripe_subscription_id).catch(
+              (err: unknown) => {
+                logUnretried(
+                  log,
+                  err,
+                  { stripeSubscriptionId: ended.stripe_subscription_id },
+                  'order row could not be canceled — the subscription cancellation stands',
+                );
+              },
+            );
+          }
+        } else if (type === 'checkout.session.expired') {
+          const checkoutSessionId = typeof obj.id === 'string' ? obj.id : null;
+          if (checkoutSessionId) {
+            await cancelPendingOrderByCheckout(deps.pool, checkoutSessionId).catch(
+              (err: unknown) => {
+                logUnretried(
+                  log,
+                  err,
+                  { checkoutSessionId },
+                  'pending order could not be canceled for expired checkout session',
+                );
+              },
+            );
           }
         } else if (type === 'invoice.paid' || type === 'invoice.payment_succeeded') {
           const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;

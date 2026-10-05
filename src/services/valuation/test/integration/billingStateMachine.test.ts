@@ -28,6 +28,7 @@ import {
   nextInvoiceSequence,
   upsertSubscription,
 } from '../../src/repos/billing.js';
+import { createOrder, findOrderByCheckoutId } from '../../src/repos/orders.js';
 import { listNotifications } from '../../src/repos/notifications.js';
 import { interceptPoolQueries, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -918,5 +919,194 @@ describe.skipIf(!dbUp)('subscription transitions', () => {
       [user.id, [...SERVED_SUBSCRIPTION_STATUSES]],
     );
     expect(rows[0]!.n).toBe('1');
+  });
+});
+
+// ── Part 5: the order lifecycle across webhook event ordering ────────────────
+
+describe.skipIf(!dbUp)('order lifecycle through webhook races', () => {
+  let ctx: TestApp;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_SECRET_KEY: 'sk_test', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const deliver = (event: unknown) => {
+    const payload = JSON.stringify(event);
+    return ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/billing/webhook',
+      headers: signed(payload),
+      payload,
+    });
+  };
+
+  const orderRow = async (checkoutId: string) => findOrderByCheckoutId(ctx.pool, checkoutId);
+
+  const subscriptionEvent = (userId: string, stripeId: string, status: string) => ({
+    id: `evt_sub_${uniq()}`,
+    type: 'customer.subscription.updated',
+    data: {
+      object: {
+        id: stripeId,
+        status,
+        metadata: { user_id: userId, plan_tier: 'annual_retainer' },
+        current_period_start: Math.floor(Date.now() / 1000),
+      },
+    },
+  });
+
+  const checkoutEvent = (checkoutId: string, subscriptionId: string, userId: string) => ({
+    id: `evt_checkout_${uniq()}`,
+    type: 'checkout.session.completed',
+    data: {
+      object: {
+        id: checkoutId,
+        mode: 'subscription',
+        subscription: subscriptionId,
+        customer: `cus_${uniq()}`,
+        payment_status: 'paid',
+        metadata: { user_id: userId, plan_tier: 'annual_retainer' },
+      },
+    },
+  });
+
+  /**
+   * R364 Finding 1: subscription.deleted before checkout.session.completed.
+   *
+   * When `customer.subscription.deleted` arrives before `checkout.session.completed`,
+   * the subscription row is correctly kept canceled by the upsert's WHERE clause,
+   * but the order had no guard — it was activated for a dead subscription.
+   */
+  it('cancels a pending order when checkout completes for an already-dead subscription', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const stripeSubId = `sub_dead_checkout_${uniq()}`;
+    const checkoutId = `cs_dead_checkout_${uniq()}`;
+
+    await createOrder(ctx.pool, {
+      userId: user.id,
+      planTier: 'annual_retainer',
+      companyName: 'Test Co',
+      companyUrl: null,
+      amountCents: 100_00,
+      currency: 'usd',
+      stripeCheckoutId: checkoutId,
+    });
+
+    // Subscription created then immediately deleted — before checkout completes.
+    await deliver(subscriptionEvent(user.id, stripeSubId, 'active'));
+    await deliver({
+      id: `evt_del_${uniq()}`,
+      type: 'customer.subscription.deleted',
+      data: { object: { id: stripeSubId } },
+    });
+
+    // Checkout event arrives late — must NOT activate the order.
+    await deliver(checkoutEvent(checkoutId, stripeSubId, user.id));
+
+    const order = await orderRow(checkoutId);
+    expect(order?.status, 'order activated for dead subscription').toBe('canceled');
+  });
+
+  /**
+   * R364 Finding 2: subscription.updated with status=canceled wins the race
+   * against subscription.deleted.
+   *
+   * The subscription is canceled by the updated event (newly_canceled: true).
+   * The deleted event then finds newly_canceled: false and the order
+   * cancellation (inside the newly_canceled guard) never ran.
+   */
+  it('cancels the order even when subscription.updated cancels the subscription first', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const stripeSubId = `sub_update_race_${uniq()}`;
+    const checkoutId = `cs_update_race_${uniq()}`;
+
+    // Subscription starts active, order is fulfilled.
+    await deliver(subscriptionEvent(user.id, stripeSubId, 'active'));
+    await createOrder(ctx.pool, {
+      userId: user.id,
+      planTier: 'annual_retainer',
+      companyName: 'Test Co',
+      companyUrl: null,
+      amountCents: 100_00,
+      currency: 'usd',
+      stripeCheckoutId: checkoutId,
+    });
+    await deliver(checkoutEvent(checkoutId, stripeSubId, user.id));
+    expect((await orderRow(checkoutId))?.status).toBe('active');
+
+    // The updated event cancels the subscription first.
+    await deliver(subscriptionEvent(user.id, stripeSubId, 'canceled'));
+
+    // The deleted event arrives second — newly_canceled is false, but the
+    // order must still be canceled.
+    await deliver({
+      id: `evt_del_${uniq()}`,
+      type: 'customer.subscription.deleted',
+      data: { object: { id: stripeSubId } },
+    });
+
+    const order = await orderRow(checkoutId);
+    expect(order?.status, 'order stayed active after subscription canceled').toBe('canceled');
+  });
+
+  /**
+   * R364 Finding 3: checkout.session.expired leaves an order stuck as pending.
+   *
+   * An order is created before the checkout session opens. If the user
+   * abandons checkout, Stripe sends checkout.session.expired, but there was
+   * no handler for it — the order stayed pending forever.
+   */
+  it('cancels a pending order when its checkout session expires', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const checkoutId = `cs_expired_${uniq()}`;
+
+    await createOrder(ctx.pool, {
+      userId: user.id,
+      planTier: 'annual_retainer',
+      companyName: 'Test Co',
+      companyUrl: null,
+      amountCents: 100_00,
+      currency: 'usd',
+      stripeCheckoutId: checkoutId,
+    });
+    expect((await orderRow(checkoutId))?.status).toBe('pending');
+
+    await deliver({
+      id: `evt_expired_${uniq()}`,
+      type: 'checkout.session.expired',
+      data: { object: { id: checkoutId, mode: 'subscription' } },
+    });
+
+    const order = await orderRow(checkoutId);
+    expect(order?.status, 'pending order not canceled on expired checkout').toBe('canceled');
+  });
+
+  it('is idempotent: a second checkout.session.expired delivery is a no-op', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const checkoutId = `cs_expired_idem_${uniq()}`;
+
+    await createOrder(ctx.pool, {
+      userId: user.id,
+      planTier: 'annual_retainer',
+      companyName: 'Test Co',
+      companyUrl: null,
+      amountCents: 100_00,
+      currency: 'usd',
+      stripeCheckoutId: checkoutId,
+    });
+
+    const expired = {
+      id: `evt_expired_${uniq()}`,
+      type: 'checkout.session.expired',
+      data: { object: { id: checkoutId, mode: 'subscription' } },
+    };
+    await deliver(expired);
+    // Redelivery with a different event id.
+    await deliver({ ...expired, id: `evt_expired_redeliver_${uniq()}` });
+
+    const order = await orderRow(checkoutId);
+    expect(order?.status).toBe('canceled');
   });
 });

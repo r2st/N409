@@ -149,6 +149,30 @@ export async function cancelOrderBySubscription(
   return rows[0] ?? null;
 }
 
+/**
+ * Cancel a pending order by its checkout session, when the subscription it was
+ * meant to activate is already dead.
+ *
+ * Reached when `customer.subscription.deleted` lands before
+ * `checkout.session.completed`: the subscription row is correctly kept
+ * canceled by the upsert's `WHERE status <> 'canceled'`, but the order had
+ * no such guard — `fulfillSubscriptionOrder` would activate it for a dead
+ * subscription and nothing would ever cancel it, because the deletion event
+ * was already processed and deduped.
+ */
+export async function cancelPendingOrderByCheckout(
+  pool: pg.Pool,
+  stripeCheckoutId: string,
+): Promise<OrderRow | null> {
+  const { rows } = await pool.query<OrderRow>(
+    `UPDATE orders SET status = 'canceled', updated_at = now()
+     WHERE stripe_checkout_id = $1 AND status = 'pending'
+     RETURNING *`,
+    [stripeCheckoutId],
+  );
+  return rows[0] ?? null;
+}
+
 /** @deprecated Use {@link fulfillSubscriptionOrder} instead. */
 export async function updateOrderStripeSubscription(
   pool: pg.Pool,
