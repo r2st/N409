@@ -394,12 +394,24 @@ describe('DocumentsPanel list', () => {
     await waitFor(() => expect(screen.queryByText('reviewed')).not.toBeInTheDocument());
   });
 
-  it('says the list could not be loaded rather than showing a skeleton for ever', async () => {
+  it('surfaces the server detail on a load failure', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(problem(503, 'Storage is unavailable.'));
     render(<DocumentsPanel valuationId={VAL_ID} />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load documents/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Storage is unavailable.');
     expect(screen.queryByText('No documents yet')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the generic message when the server sends no detail', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ status: 500, title: 'Internal Server Error' }), {
+        status: 500,
+        headers: { 'content-type': 'application/problem+json' },
+      }),
+    );
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load documents.');
   });
 });
 

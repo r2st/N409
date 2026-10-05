@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
-import { api, apiDownload, apiUpload, describeActionFailure, describeRequestFailure } from '../../lib/api';
+import { api, apiDownload, apiUpload, describeActionFailure, describeLoadFailure, describeRequestFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import {
   DOCUMENT_KIND_LABELS,
@@ -91,8 +91,8 @@ export function DocumentsPanel({
       }>(`/valuations/${valuationId}/documents`);
       setDocuments(docs);
       setTruncated(more);
-    } catch {
-      setError('Could not load documents.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load documents.'));
     }
   }, [valuationId]);
 

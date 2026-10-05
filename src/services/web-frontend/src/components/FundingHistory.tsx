@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { all, integer, numberMin, optional, required, useFormValidation } from '../lib/useFormValidation';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { formatDate, formatCents, formatNumber } from '../lib/format';
 import { TRANSACTION_KINDS } from '../lib/types';
 import type { FundingRound, ValuationTransaction } from '../lib/types';
@@ -68,8 +68,8 @@ export function FundingHistory({
       setRounds(r.rounds);
       setTransactions(t.transactions);
       setTruncated({ rounds: r.truncated, transactions: t.truncated });
-    } catch {
-      setError('Could not load funding history.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load funding history.'));
     }
   }, [valuationId]);
 

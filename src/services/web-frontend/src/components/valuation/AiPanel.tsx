@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, describeActionFailure } from '../../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { AI_PIPELINE_META, AI_PIPELINES, type AiJob, type AiPipeline } from '../../lib/pipeline';
 import { Button, EmptyState, ErrorNote, ListTruncationNote, Spinner } from '../ui';
@@ -142,8 +142,8 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
       );
       setJobs(items);
       setCapped(truncated);
-    } catch {
-      setError('Could not load AI runs.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load AI runs.'));
     }
   }, [valuationId]);
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, describeActionFailure } from '../lib/api';
+import { api, ApiError, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { formatDate, KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS, type ValuationKind } from '../lib/types';
 import {
@@ -206,8 +206,8 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
   const open = async (link: IntakeLink) => {
     try {
       setDetail(await api<LinkDetail>(scoped(`/firm/intake-links/${link.id}`)));
-    } catch {
-      setError('Could not load that submission.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load that submission.'));
     }
   };
 
@@ -229,8 +229,8 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
       const legal =
         typeof submission.answers.legal_name === 'string' ? submission.answers.legal_name.trim() : '';
       setConverting({ link, companyName: legal || link.client_name || '', kind: '409a' });
-    } catch {
-      setError('Could not load that submission.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load that submission.'));
     }
   };
 

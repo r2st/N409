@@ -97,8 +97,16 @@ describe('AiPanel', () => {
       expect(await screen.findByText('No AI runs yet')).toBeInTheDocument();
     });
 
-    it('reports a failed load', async () => {
-      mockApi({ jobs: problem(503, 'unavailable') });
+    it('surfaces the server detail on a failed load', async () => {
+      mockApi({ jobs: problem(503, 'The AI service is temporarily unavailable.') });
+      renderPanel();
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'The AI service is temporarily unavailable.',
+      );
+    });
+
+    it('falls back to the generic message when the server sends no detail', async () => {
+      mockApi({ jobs: () => json({ status: 500, title: 'Internal Server Error' }, 500) });
       renderPanel();
       expect(await screen.findByRole('alert')).toHaveTextContent('Could not load AI runs.');
     });

@@ -184,22 +184,37 @@ describe('IntakeLinksPanel — each write that can fail', () => {
   });
 
 
-  it('says the submission could not be opened', async () => {
+  it('surfaces the server detail when a submission cannot be opened', async () => {
     mockApi({ detail: 500 });
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View' }));
+    expect(await screen.findByText('gone')).toBeInTheDocument();
+  });
+
+  it('falls back to the generic message when the server sends no detail on view', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      const method = init?.method ?? 'GET';
+      if (/\/firm\/intake-links\/[^/?]+/.test(path) && method === 'GET')
+        return new Response(JSON.stringify({ status: 500, title: 'Internal Server Error' }), {
+          status: 500,
+          headers: { 'content-type': 'application/problem+json' },
+        });
+      return jsonResponse({ links: [SUBMITTED] });
+    });
     renderPanel();
 
     await userEvent.click(await screen.findByRole('button', { name: 'View' }));
     expect(await screen.findByText('Could not load that submission.')).toBeInTheDocument();
   });
 
-  it('says so when the submission behind a convert cannot be read', async () => {
-    // Convert reads the answers first to pre-fill the name, so this fails
-    // before the modal opens — the button must not look like it did nothing.
+  it('surfaces the server detail when the submission behind a convert cannot be read', async () => {
     mockApi({ detail: 500 });
     renderPanel();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Convert' }));
-    expect(await screen.findByText('Could not load that submission.')).toBeInTheDocument();
+    expect(await screen.findByText('gone')).toBeInTheDocument();
     expect(screen.queryByText('Convert to an engagement')).not.toBeInTheDocument();
   });
 

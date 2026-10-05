@@ -54,7 +54,7 @@ interface Call {
 
 function mockApi(
   state: { rounds?: FundingRound[]; transactions?: ValuationTransaction[] },
-  opts: { loadStatus?: number; writeStatus?: number; writeDetailless?: boolean } = {},
+  opts: { loadStatus?: number; loadDetail?: string; writeStatus?: number; writeDetailless?: boolean } = {},
 ) {
   const calls: Call[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -63,7 +63,12 @@ function mockApi(
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
 
     if (method === 'GET') {
-      if (opts.loadStatus) return jsonResponse({ status: opts.loadStatus, detail: 'No' }, opts.loadStatus);
+      if (opts.loadStatus) {
+        const body = opts.loadDetail !== undefined
+          ? { status: opts.loadStatus, detail: opts.loadDetail }
+          : { status: opts.loadStatus, title: 'Internal Server Error' };
+        return jsonResponse(body, opts.loadStatus);
+      }
       if (path.endsWith('/rounds')) return jsonResponse({ rounds: state.rounds ?? [] });
       return jsonResponse({ transactions: state.transactions ?? [] });
     }
@@ -105,8 +110,15 @@ describe('FundingHistory', () => {
     mockApi({}, { loadStatus: 500 });
     renderHistory();
 
-    await screen.findByText('Could not load funding history.');
+    await screen.findByText(/Could not load funding history/);
     expect(screen.queryByText('No funding rounds recorded.')).not.toBeInTheDocument();
+  });
+
+  it('surfaces the server detail on a load failure instead of the generic fallback', async () => {
+    mockApi({}, { loadStatus: 403, loadDetail: 'You do not have access to this valuation.' });
+    renderHistory();
+
+    await screen.findByText('You do not have access to this valuation.');
   });
 
   it('lists a round with its money formatted in the valuation’s currency', async () => {
