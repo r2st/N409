@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, ApiError, describeRequestFailure } from '../lib/api';
+import { api, ApiError, describeLoadFailure, describeRequestFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { PRICING_TIERS, formatUsd, type PricingTier } from '../lib/marketing';
 import { formatChargedCents, formatDate } from '../lib/format';
@@ -201,10 +201,17 @@ function OrderHistory() {
   useEffect(() => {
     api<{ orders: OrderHistoryItem[] }>('/me/orders')
       .then((d) => setOrders(d.orders))
-      .catch(() => setError('Could not load order history.'));
+      .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load order history.')));
   }, []);
 
-  if (error) return null;
+  if (error) {
+    return (
+      <section className="mt-10" data-testid="order-history">
+        <h2 className="overline mb-3 text-ink-400">Order history</h2>
+        <ErrorNote>{error}</ErrorNote>
+      </section>
+    );
+  }
   if (!orders || orders.length === 0) return null;
 
   const STATUS_TONES: Record<string, string> = {

@@ -141,6 +141,47 @@ describe('OrderPage', () => {
     });
   });
 
+  it('shows error when order history fails to load (R382)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const key = String(url);
+      if (key.includes('/me/orders')) {
+        return jsonResponse(
+          { type: 'urn:n409:problem:internal', detail: 'database connection lost' },
+          500,
+        );
+      }
+      throw new Error(`unexpected fetch: ${key}`);
+    });
+
+    renderOrder();
+    await waitFor(() => {
+      expect(screen.getByTestId('order-history')).toBeTruthy();
+    });
+    const history = screen.getByTestId('order-history');
+    expect(within(history).getByRole('alert')).toBeTruthy();
+  });
+
+  it('preserves server detail in order-history error message (R382)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const key = String(url);
+      if (key.includes('/me/orders')) {
+        return jsonResponse(
+          { type: 'urn:n409:problem:unavailable', detail: 'Service temporarily unavailable' },
+          503,
+        );
+      }
+      throw new Error(`unexpected fetch: ${key}`);
+    });
+
+    renderOrder();
+    await waitFor(() => {
+      expect(screen.getByTestId('order-history')).toBeTruthy();
+    });
+    const history = screen.getByTestId('order-history');
+    const alert = within(history).getByRole('alert');
+    expect(alert.textContent).toContain('Service temporarily unavailable');
+  });
+
   it('shows order history when orders exist', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       const key = String(url);
