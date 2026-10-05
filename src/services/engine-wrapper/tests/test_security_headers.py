@@ -25,7 +25,11 @@ def test_health_carries_the_full_set():
     assert "default-src 'none'" in csp
     assert "frame-ancestors 'none'" in csp
     assert res.headers["cross-origin-resource-policy"] == "same-site"
-    assert "geolocation=()" in res.headers["permissions-policy"]
+    policy = res.headers["permissions-policy"]
+    assert "geolocation=()" in policy
+    assert "idle-detection=()" in policy
+    assert "serial=()" in policy
+    assert "clipboard-read=()" in policy
 
 
 def test_ready_and_the_versioned_health_carry_them():

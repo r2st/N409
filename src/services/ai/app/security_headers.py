@@ -60,10 +60,12 @@ _HSTS = "max-age=15552000; includeSubDomains"
 
 # Every feature this estate never uses from an API response, denied outright.
 _PERMISSIONS_POLICY = (
-    "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), "
-    "fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), "
-    "midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), "
-    "screen-wake-lock=(), usb=(), xr-spatial-tracking=()"
+    "accelerometer=(), ambient-light-sensor=(), autoplay=(), camera=(), "
+    "clipboard-read=(), clipboard-write=(), display-capture=(), encrypted-media=(), "
+    "fullscreen=(), geolocation=(), gyroscope=(), idle-detection=(), local-fonts=(), "
+    "magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), "
+    "publickey-credentials-create=(), publickey-credentials-get=(), "
+    "screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
 )
 
 

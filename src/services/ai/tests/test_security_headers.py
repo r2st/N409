@@ -52,6 +52,9 @@ def test_health_carries_the_full_set():
     assert "geolocation=()" in policy
     assert "camera=()" in policy
     assert "microphone=()" in policy
+    assert "idle-detection=()" in policy
+    assert "serial=()" in policy
+    assert "clipboard-read=()" in policy
 
 
 def test_ready_carries_them_on_both_verdicts(monkeypatch):

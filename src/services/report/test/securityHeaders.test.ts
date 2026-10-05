@@ -45,6 +45,7 @@ describe('security headers', () => {
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['content-security-policy']).toContain("default-src 'none'");
     expect(res.headers['x-frame-options']).toBe('DENY');
+    expect(res.headers['cache-control']).toBe('no-store');
   });
 
   it('sets them on a 422 that echoes the caller back', async () => {
@@ -58,6 +59,7 @@ describe('security headers', () => {
     expect(res.statusCode).toBe(422);
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['permissions-policy']).toContain('camera=()');
+    expect(res.headers['cache-control']).toBe('no-store');
   });
 
   it('sets them on the token gate 401, which never reaches a handler', async () => {
