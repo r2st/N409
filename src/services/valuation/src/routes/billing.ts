@@ -43,7 +43,13 @@ import {
   SUBSCRIPTION_PAGE_LIMIT,
   upsertSubscription,
 } from '../repos/billing.js';
-import { createOrder, listOrdersForUser } from '../repos/orders.js';
+import {
+  cancelOrderBySubscription,
+  createOrder,
+  fulfillOneTimeOrder,
+  fulfillSubscriptionOrder,
+  listOrdersForUser,
+} from '../repos/orders.js';
 import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
@@ -1097,6 +1103,18 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
             });
             if (started) await auditSubscriptionWrite(log, key.eventId, started, null, checkoutSessionId);
+            if (checkoutSessionId && typeof obj.subscription === 'string') {
+              await fulfillSubscriptionOrder(deps.pool, checkoutSessionId, obj.subscription).catch(
+                (err: unknown) => {
+                  logUnretried(
+                    log,
+                    err,
+                    { checkoutSessionId },
+                    'order row could not be fulfilled — the subscription stands',
+                  );
+                },
+              );
+            }
           } else {
             /**
              * A subscription checkout of ours that completed with nothing on it
@@ -1367,6 +1385,18 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               },
             });
             await announceSubscriptionCanceled(log, ended);
+            if (ended.stripe_subscription_id) {
+              await cancelOrderBySubscription(deps.pool, ended.stripe_subscription_id).catch(
+                (err: unknown) => {
+                  logUnretried(
+                    log,
+                    err,
+                    { stripeSubscriptionId: ended.stripe_subscription_id },
+                    'order row could not be canceled — the subscription cancellation stands',
+                  );
+                },
+              );
+            }
           }
         } else if (type === 'invoice.paid' || type === 'invoice.payment_succeeded') {
           const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;
