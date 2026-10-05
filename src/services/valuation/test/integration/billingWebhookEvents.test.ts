@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { consumeValuation, findActiveSubscription, upsertSubscription } from '../../src/repos/billing.js';
+import { createOrder } from '../../src/repos/orders.js';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -110,6 +111,52 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(await subscriptionOf(user.id)).toBeNull();
+    });
+
+    it('fulfils a one-time order when a payment-mode checkout completes', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await createOrder(ctx.pool, {
+        userId: user.id,
+        planTier: 'per_valuation',
+        companyName: 'Test Corp',
+        companyUrl: null,
+        amountCents: 150_000,
+        currency: 'usd',
+        stripeCheckoutId: 'cs_onetime_1',
+      });
+      const res = await deliver({
+        type: 'checkout.session.completed',
+        data: { object: { id: 'cs_onetime_1', mode: 'payment', payment_status: 'paid' } },
+      });
+      expect(res.statusCode).toBe(200);
+      const { rows } = await ctx.pool.query<{ status: string }>(
+        "SELECT status FROM orders WHERE stripe_checkout_id = 'cs_onetime_1'",
+      );
+      expect(rows[0]?.status).toBe('completed');
+    });
+
+    it('one-time order fulfilment is idempotent on redelivery', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await createOrder(ctx.pool, {
+        userId: user.id,
+        planTier: 'per_valuation',
+        companyName: 'Idem Corp',
+        companyUrl: null,
+        amountCents: 150_000,
+        currency: 'usd',
+        stripeCheckoutId: 'cs_onetime_idem',
+      });
+      const event = {
+        type: 'checkout.session.completed',
+        data: { object: { id: 'cs_onetime_idem', mode: 'payment', payment_status: 'paid' } },
+      };
+      await deliver(event);
+      await deliver(event);
+      const { rows } = await ctx.pool.query<{ status: string }>(
+        "SELECT status FROM orders WHERE stripe_checkout_id = 'cs_onetime_idem'",
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.status).toBe('completed');
     });
 
     it('ignores a session carrying no plan metadata', async () => {

@@ -1161,6 +1161,20 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               );
             }
           }
+        } else if (type === 'checkout.session.completed' && obj.mode === 'payment') {
+          const checkoutSessionId = typeof obj.id === 'string' ? obj.id : null;
+          if (checkoutSessionId) {
+            await fulfillOneTimeOrder(deps.pool, checkoutSessionId).catch(
+              (err: unknown) => {
+                logUnretried(
+                  log,
+                  err,
+                  { checkoutSessionId },
+                  'one-time order could not be fulfilled — payment succeeded',
+                );
+              },
+            );
+          }
         } else if (type === 'customer.subscription.updated' || type === 'customer.subscription.created') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
           if (meta.user_id && meta.plan_tier && typeof obj.id === 'string') {
