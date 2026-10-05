@@ -161,6 +161,31 @@ function extractFairValue(result: Record<string, unknown>): number | null {
   return null;
 }
 
+/**
+ * Merge credit-term fields into an engine params object.
+ *
+ * Spread (numeric) takes precedence; when it is absent or non-finite the
+ * rating string is the fallback. Before R376 a non-finite spread blocked
+ * the rating fallback because the `else if` bound to the null-check rather
+ * than the finiteness check.
+ */
+export function applyCreditTerms(
+  params: Record<string, unknown>,
+  terms: { benchmark_yield: string | null; spread: string | null; rating: string | null } | null | undefined,
+): void {
+  if (!terms) return;
+  if (terms.benchmark_yield != null) {
+    const n = Number(terms.benchmark_yield);
+    if (Number.isFinite(n)) params.benchmark_yield = n;
+  }
+  const spreadNum = terms.spread != null ? Number(terms.spread) : NaN;
+  if (Number.isFinite(spreadNum)) {
+    params.spread = spreadNum;
+  } else if (terms.rating) {
+    params.rating = terms.rating;
+  }
+}
+
 export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; engineUrl: string }): void {
   const engine = async <T>(path: string, body: unknown): Promise<T> => {
     try {
@@ -411,16 +436,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     // spread path) + the caller's per-run overrides.
     const params: Record<string, unknown> = { ...instrument.params };
     if (instrument.instrument_type === 'credit_spread') {
-      const terms = await findCreditTerms(deps.pool, id);
-      if (terms?.benchmark_yield != null) {
-        const n = Number(terms.benchmark_yield);
-        if (Number.isFinite(n)) params.benchmark_yield = n;
-      }
-      if (terms?.spread != null) {
-        const n = Number(terms.spread);
-        if (Number.isFinite(n)) params.spread = n;
-      }
-      else if (terms?.rating) params.rating = terms.rating;
+      applyCreditTerms(params, await findCreditTerms(deps.pool, id));
     }
     Object.assign(params, parsed.data.overrides);
 
