@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid, type FailureClass } from '@n409/shared';
+import { newUlid, problems, type FailureClass } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, recordEvents, type EventActor } from '../events/record.js';
 import { invalidateValuationAfter } from './valuations.js';
@@ -19,6 +19,31 @@ export const ACTIVE_RUN_STATUSES: ReadonlySet<PipelineRunStatus> = new Set([
   'extracting',
   'calculating',
 ]);
+
+/**
+ * Legal forward moves for an in-progress pipeline run.
+ *
+ * The orchestrator advances `queued → extracting → calculating → ready`, and
+ * any active status may fail. Without this table `setPipelineRunStatus`
+ * accepted any non-terminal write — `calculating → extracting` would have
+ * succeeded, walking the run backwards and recording a hop the spine cannot
+ * make sense of.
+ *
+ * `failed → queued` (the retry re-queue) is handled by
+ * `claimRetryablePipelineRuns`, which writes its own UPDATE and is not a
+ * caller of `setPipelineRunStatus`.
+ */
+export const PIPELINE_RUN_TRANSITIONS: Record<PipelineRunStatus, readonly PipelineRunStatus[]> = {
+  queued: ['extracting', 'failed'],
+  extracting: ['calculating', 'failed'],
+  calculating: ['ready', 'failed'],
+  ready: [],
+  failed: [],
+};
+
+export function canTransitionPipelineRun(from: PipelineRunStatus, to: PipelineRunStatus): boolean {
+  return (PIPELINE_RUN_TRANSITIONS[from] as readonly string[]).includes(to);
+}
 
 export interface PipelineRunRow {
   id: string;
@@ -119,6 +144,12 @@ export async function setPipelineRunStatus(
   status: PipelineRunStatus,
   opts: { error?: string; actor?: EventActor; failure?: FailureClass } = {},
 ): Promise<PipelineRunRow | null> {
+  if (!canTransitionPipelineRun(run.status, status)) {
+    throw problems.conflict(
+      `Cannot move pipeline run from '${run.status}' to '${status}' — that transition is not allowed.`,
+    );
+  }
+
   // The retry schedule, stamped by the same statement that records the failure
   // — never a second UPDATE. A process that died between the two would leave a
   // run failed with no schedule, which is silently the old behaviour: owed
