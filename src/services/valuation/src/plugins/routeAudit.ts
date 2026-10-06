@@ -220,6 +220,11 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
     reason: 'unsubscribe link in an email footer; authenticated by a signed token',
   },
   {
+    method: 'POST',
+    url: '/api/v1/subscribe',
+    reason: 'public email subscription; rate-limited and validated by schema',
+  },
+  {
     method: 'GET',
     url: '/api/v1/blog/posts',
     reason: 'published marketing articles; a blog index a crawler cannot read is not a blog',
