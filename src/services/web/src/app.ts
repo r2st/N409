@@ -466,6 +466,7 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     frameguard: { action: 'deny' },
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     hsts: { maxAge: 15552000, includeSubDomains: true }, // 180 days
+    crossOriginResourcePolicy: { policy: 'same-site' },
   });
   // helmet sets no Permissions-Policy at all, so the HTML origin — the one
   // surface where the header actually constrains a script — was sending none

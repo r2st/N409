@@ -38,6 +38,7 @@ describe('web service', () => {
       expect(res.headers['x-frame-options']).toBe('DENY');
       expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
       expect(res.headers['strict-transport-security']).toContain('max-age=15552000');
+      expect(res.headers['cross-origin-resource-policy']).toBe('same-site');
       await app.close();
     });
 
