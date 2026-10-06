@@ -10,7 +10,7 @@ import { WhichValuationPage } from '../src/pages/marketing/WhichValuationPage';
 import { ComparePage } from '../src/pages/marketing/ComparePage';
 import { CompareHubPage } from '../src/pages/marketing/CompareHubPage';
 import { AUDIT_DEFENCE_RATE_USD, COMPARISONS, PRICING_FAQ, PRODUCTS, formatUsd } from '../src/lib/marketing';
-import { RAISE_BANDS, quote } from '../src/lib/marketingContent';
+import { EXPRESS_DELIVERY_CENTS, QSBS_ADDON_CENTS, RAISE_BANDS, quote } from '../src/lib/marketingContent';
 import { PRODUCT_CONTENT } from '../src/lib/productContent';
 
 function renderAt(path: string) {
@@ -35,45 +35,41 @@ describe('marketing data (§22)', () => {
   it('quotes base price plus add-ons', () => {
     const p409a = PRODUCTS.find((p) => p.kind === '409a')!;
     expect(quote(p409a, { express: false, qsbsLetter: false })).toEqual({
-      totalCents: 119_000,
+      totalCents: 4_900,
       deliveryDays: 7,
       bandUpliftCents: 0,
     });
     expect(quote(p409a, { express: true, qsbsLetter: true })).toEqual({
-      totalCents: 219_000,
+      totalCents: 4_900 + EXPRESS_DELIVERY_CENTS + QSBS_ADDON_CENTS,
       deliveryDays: 1,
       bandUpliftCents: 0,
     });
   });
 
-  it('walks the capital-raised ladder to the published $3,499 ceiling', () => {
+  it('flat pricing — no band uplift at any raise level', () => {
     const p409a = PRODUCTS.find((p) => p.kind === '409a')!;
     const ladder = RAISE_BANDS.map(
       (_, i) => quote(p409a, { express: false, qsbsLetter: false, raiseBand: i }).totalCents,
     );
-    expect(ladder).toEqual([119_000, 169_000, 229_000, 289_000, 349_900]);
+    expect(ladder).toEqual([4_900, 4_900, 4_900, 4_900, 4_900]);
   });
 
-  it('mirrors the server ladder exactly — a drift here overcharges at checkout', () => {
-    // These uplifts are duplicated from the valuation service's
-    // domain/pricing.ts RAISE_BANDS. The prospect configures a price here and
-    // the checkout recomputes it there; if the two disagree, the Stripe page
-    // quotes a different number than the one that convinced them to sign up.
-    expect(RAISE_BANDS.map((b) => b.upliftCents)).toEqual([0, 50_000, 110_000, 170_000, 230_900]);
+  it('mirrors the server ladder exactly — all zero uplifts', () => {
+    expect(RAISE_BANDS.map((b) => b.upliftCents)).toEqual([0, 0, 0, 0, 0]);
   });
 
   it('clamps an out-of-range band instead of quoting NaN', () => {
     const p409a = PRODUCTS.find((p) => p.kind === '409a')!;
-    expect(quote(p409a, { express: false, qsbsLetter: false, raiseBand: -3 }).totalCents).toBe(119_000);
-    expect(quote(p409a, { express: false, qsbsLetter: false, raiseBand: 99 }).totalCents).toBe(349_900);
+    expect(quote(p409a, { express: false, qsbsLetter: false, raiseBand: -3 }).totalCents).toBe(4_900);
+    expect(quote(p409a, { express: false, qsbsLetter: false, raiseBand: 99 }).totalCents).toBe(4_900);
   });
 
-  it('stacks the band with the add-ons', () => {
+  it('stacks the base and add-ons (band uplift is zero)', () => {
     const p409a = PRODUCTS.find((p) => p.kind === '409a')!;
     expect(quote(p409a, { express: true, qsbsLetter: true, raiseBand: 3 })).toEqual({
-      totalCents: 119_000 + 170_000 + 50_000 + 50_000,
+      totalCents: 4_900 + EXPRESS_DELIVERY_CENTS + QSBS_ADDON_CENTS,
       deliveryDays: 1,
-      bandUpliftCents: 170_000,
+      bandUpliftCents: 0,
     });
   });
 
@@ -119,29 +115,28 @@ describe('pricing calculator', () => {
     expect(total()).toBe(formatUsd(PRODUCTS[0]!.priceCents));
 
     await user.click(screen.getByRole('checkbox', { name: /Express delivery/ }));
-    expect(total()).toBe(formatUsd(PRODUCTS[0]!.priceCents + 50_000));
+    expect(total()).toBe(formatUsd(PRODUCTS[0]!.priceCents + EXPRESS_DELIVERY_CENTS));
 
     await user.click(screen.getByRole('checkbox', { name: /QSBS attestation letter/ }));
-    expect(total()).toBe(formatUsd(PRODUCTS[0]!.priceCents + 100_000));
+    expect(total()).toBe(formatUsd(PRODUCTS[0]!.priceCents + EXPRESS_DELIVERY_CENTS + QSBS_ADDON_CENTS));
   });
 
   it('switches report type', async () => {
     const user = userEvent.setup();
     renderAt('/pricing');
     await user.selectOptions(screen.getByRole('combobox'), 'asc-718-valuation');
-    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(149_000));
+    const asc718 = PRODUCTS.find((p) => p.kind === '718')!;
+    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(asc718.priceCents));
   });
 
-  it('raises the price as the capital-raised slider moves', async () => {
+  it('stays flat as the capital-raised slider moves', async () => {
     renderAt('/pricing');
     const slider = screen.getByRole('slider', { name: /capital raised/i });
-    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(119_000));
+    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(4_900));
     expect(screen.getByTestId('raise-band')).toHaveTextContent('Under $1M');
 
-    // fireEvent rather than userEvent: a range input is dragged, and
-    // userEvent's keyboard path would step one band at a time.
     fireEvent.change(slider, { target: { value: '4' } });
-    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(349_900));
+    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(4_900));
     expect(screen.getByTestId('raise-band')).toHaveTextContent('$20M+');
   });
 
@@ -243,6 +238,6 @@ describe('pricing page depth (gaps #31/#32/#33)', () => {
     const contactLinks = screen.getAllByRole('link', { name: 'Get in touch' });
     expect(contactLinks.length).toBeGreaterThan(0);
     expect(contactLinks.every((el) => el.getAttribute('href') === '/contact')).toBe(true);
-    expect(screen.getByText(`$${AUDIT_DEFENCE_RATE_USD}/hour`)).toBeInTheDocument();
+    expect(screen.getByText(`From $${AUDIT_DEFENCE_RATE_USD}/hour`)).toBeInTheDocument();
   });
 });

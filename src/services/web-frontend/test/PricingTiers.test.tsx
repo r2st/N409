@@ -27,9 +27,9 @@ describe('PricingPage tier cards', () => {
 
   it('displays tier names', () => {
     renderPricing();
-    expect(screen.getByText('Starter')).toBeTruthy();
-    expect(screen.getByText('Growth')).toBeTruthy();
-    expect(screen.getByText('Enterprise')).toBeTruthy();
+    expect(screen.getByText('Free')).toBeTruthy();
+    expect(screen.getByText('Per Report')).toBeTruthy();
+    expect(screen.getByText('Annual')).toBeTruthy();
   });
 
   it('shows the correct price for each tier', () => {
@@ -40,16 +40,19 @@ describe('PricingPage tier cards', () => {
     }
   });
 
-  it('marks Growth as most popular', () => {
+  it('marks Per Report as most popular', () => {
     renderPricing();
     expect(screen.getByText('Most popular')).toBeTruthy();
-    const growthTier = PRICING_TIERS.find((t) => t.tier === 'growth')!;
-    expect(growthTier.highlight).toBe(true);
+    const starter = PRICING_TIERS.find((t) => t.tier === 'starter')!;
+    expect(starter.highlight).toBe(true);
   });
 
-  it('shows CTA links pointing to /order with the tier', () => {
+  it('free tier CTA links to /register, paid tiers to /order', () => {
     renderPricing();
-    for (const tier of PRICING_TIERS) {
+    const freeTier = PRICING_TIERS.find((t) => t.priceCents === 0)!;
+    expect(screen.getByTestId(`cta-${freeTier.tier}`).getAttribute('href')).toBe('/register');
+
+    for (const tier of PRICING_TIERS.filter((t) => t.priceCents > 0)) {
       const link = screen.getByTestId(`cta-${tier.tier}`);
       expect(link.getAttribute('href')).toBe(`/order?tier=${tier.tier}`);
     }
@@ -71,16 +74,18 @@ describe('PricingPage tier cards', () => {
     const starterCard = screen.getByTestId('tier-starter');
     expect(within(starterCard).getByText('/valuation')).toBeTruthy();
 
-    const growthCard = screen.getByTestId('tier-growth');
-    expect(within(growthCard).getByText('/month')).toBeTruthy();
-
-    const enterpriseCard = screen.getByTestId('tier-enterprise_monthly');
-    expect(within(enterpriseCard).getByText('/month')).toBeTruthy();
+    const annualCard = screen.getByTestId('tier-annual');
+    expect(within(annualCard).getByText('/year')).toBeTruthy();
   });
 
   it('still renders the per-report calculator', () => {
     renderPricing();
     expect(screen.getByTestId('quote-total')).toBeTruthy();
+  });
+
+  it('renders the "Why we charge" section', () => {
+    renderPricing();
+    expect(screen.getByTestId('why-we-charge')).toBeTruthy();
   });
 });
 
@@ -89,29 +94,29 @@ describe('PRICING_TIERS data integrity', () => {
     expect(PRICING_TIERS).toHaveLength(3);
   });
 
-  it('starter is one-time at $299', () => {
+  it('free tier at $0', () => {
+    const free = PRICING_TIERS.find((t) => t.tier === 'free')!;
+    expect(free.priceCents).toBe(0);
+    expect(free.interval).toBe('one_time');
+    expect(free.valuationLimit).toBe(1);
+  });
+
+  it('starter is one-time at $49', () => {
     const starter = PRICING_TIERS.find((t) => t.tier === 'starter')!;
-    expect(starter.priceCents).toBe(29_900);
+    expect(starter.priceCents).toBe(4_900);
     expect(starter.interval).toBe('one_time');
     expect(starter.valuationLimit).toBe(1);
   });
 
-  it('growth is monthly at $199', () => {
-    const growth = PRICING_TIERS.find((t) => t.tier === 'growth')!;
-    expect(growth.priceCents).toBe(19_900);
-    expect(growth.interval).toBe('month');
-    expect(growth.valuationLimit).toBe(3);
+  it('annual is yearly at $99', () => {
+    const annual = PRICING_TIERS.find((t) => t.tier === 'annual')!;
+    expect(annual.priceCents).toBe(9_900);
+    expect(annual.interval).toBe('year');
+    expect(annual.valuationLimit).toBeNull();
   });
 
-  it('enterprise is monthly at $499', () => {
-    const enterprise = PRICING_TIERS.find((t) => t.tier === 'enterprise_monthly')!;
-    expect(enterprise.priceCents).toBe(49_900);
-    expect(enterprise.interval).toBe('month');
-    expect(enterprise.valuationLimit).toBeNull();
-  });
-
-  it('tier slugs match the migration', () => {
-    const expected = ['starter', 'growth', 'enterprise_monthly'];
+  it('tier slugs match the new plan structure', () => {
+    const expected = ['free', 'starter', 'annual'];
     expect(PRICING_TIERS.map((t) => t.tier)).toEqual(expected);
   });
 });

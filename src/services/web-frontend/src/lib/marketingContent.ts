@@ -619,8 +619,8 @@ export const PROCESS_STEPS: Array<{ step: string; title: string; body: string }>
 
 // ── Pricing calculator ────────────────────────────────────────────────────────
 
-export const EXPRESS_DELIVERY_CENTS = 50_000;
-export const QSBS_ADDON_CENTS = 50_000;
+export const EXPRESS_DELIVERY_CENTS = 2_900;
+export const QSBS_ADDON_CENTS = 0;
 export const EXPRESS_DELIVERY_DAYS = 1;
 
 /**
@@ -632,10 +632,10 @@ export const EXPRESS_DELIVERY_DAYS = 1;
  */
 export const RAISE_BANDS: Array<{ label: string; upliftCents: number }> = [
   { label: 'Under $1M', upliftCents: 0 },
-  { label: '$1M – $5M', upliftCents: 50_000 },
-  { label: '$5M – $10M', upliftCents: 110_000 },
-  { label: '$10M – $20M', upliftCents: 170_000 },
-  { label: '$20M+', upliftCents: 230_900 },
+  { label: '$1M – $5M', upliftCents: 0 },
+  { label: '$5M – $10M', upliftCents: 0 },
+  { label: '$10M – $20M', upliftCents: 0 },
+  { label: '$20M+', upliftCents: 0 },
 ];
 
 export function quote(

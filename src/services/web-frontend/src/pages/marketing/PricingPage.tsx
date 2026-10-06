@@ -37,10 +37,18 @@ function TierCard({ tier }: { tier: PricingTier }) {
           {formatUsd(tier.priceCents)}
         </span>
         <span className="ml-1 text-sm text-ink-500">
-          {tier.interval === 'one_time' ? '/valuation' : '/month'}
+          {tier.interval === 'one_time'
+            ? tier.priceCents === 0
+              ? ''
+              : '/valuation'
+            : tier.interval === 'year'
+              ? '/year'
+              : '/month'}
         </span>
       </div>
-      {tier.valuationLimit !== null ? (
+      {tier.priceCents === 0 ? (
+        <p className="mt-1 text-xs text-ink-400">Sample report, no card required</p>
+      ) : tier.valuationLimit !== null ? (
         <p className="mt-1 text-xs text-ink-400">
           {tier.interval === 'one_time'
             ? 'Single valuation report'
@@ -58,7 +66,7 @@ function TierCard({ tier }: { tier: PricingTier }) {
         ))}
       </ul>
       <Link
-        to={`/order?tier=${tier.tier}`}
+        to={tier.priceCents === 0 ? '/register' : `/order?tier=${tier.tier}`}
         className={`mt-6 block rounded-md px-5 py-2.5 text-center text-sm font-semibold shadow-card transition-colors ${
           highlighted
             ? 'bg-bond-600 text-bond-fg hover:bg-bond-700'
@@ -66,7 +74,11 @@ function TierCard({ tier }: { tier: PricingTier }) {
         }`}
         data-testid={`cta-${tier.tier}`}
       >
-        {tier.interval === 'one_time' ? 'Get started' : 'Subscribe'}
+        {tier.priceCents === 0
+          ? 'Try free'
+          : tier.interval === 'one_time'
+            ? 'Get started'
+            : 'Subscribe'}
       </Link>
     </div>
   );
@@ -100,6 +112,34 @@ export function PricingPage() {
           {PRICING_TIERS.map((t) => (
             <TierCard key={t.tier} tier={t} />
           ))}
+        </div>
+      </section>
+
+      {/* Why we charge */}
+      <section className="border-t border-paper-300 bg-paper-50" data-testid="why-we-charge">
+        <div className="mx-auto max-w-3xl px-5 py-12 text-center">
+          <div className="overline text-ink-400">Transparency</div>
+          <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">Why we charge</h2>
+          <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-ink-600">
+            Every valuation runs through AI models that cost real money in compute. Our price covers those costs
+            and nothing more — no markups, no margin padding. Competitors charge $990–$3,500 per report because
+            they rely on hours of manual analyst work. Our AI does the heavy lifting, so we can pass the savings
+            on to you.
+          </p>
+          <div className="mt-8 grid gap-6 sm:grid-cols-3">
+            <div className="rounded-lg border border-paper-300 bg-surface p-5">
+              <div className="font-display text-2xl font-semibold text-bond-600">$5–15</div>
+              <div className="mt-1 text-xs text-ink-500">AI compute per report</div>
+            </div>
+            <div className="rounded-lg border border-paper-300 bg-surface p-5">
+              <div className="font-display text-2xl font-semibold text-bond-600">$49</div>
+              <div className="mt-1 text-xs text-ink-500">What we charge (covers costs + infra)</div>
+            </div>
+            <div className="rounded-lg border border-paper-300 bg-surface p-5">
+              <div className="font-display text-2xl font-semibold text-bond-600">$990+</div>
+              <div className="mt-1 text-xs text-ink-500">What others charge</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -165,7 +205,7 @@ export function PricingPage() {
                     className="mt-0.5"
                   />
                   <span>
-                    <span className="font-semibold text-ink-900">Express delivery · +$500</span>
+                    <span className="font-semibold text-ink-900">Express delivery · +$29</span>
                     <span className="mt-0.5 block text-xs text-ink-500">
                       Receive your final report in 1 business day instead of {product.deliveryDays}.
                     </span>
@@ -180,7 +220,7 @@ export function PricingPage() {
                       className="mt-0.5"
                     />
                     <span>
-                      <span className="font-semibold text-ink-900">QSBS attestation letter · +$500</span>
+                      <span className="font-semibold text-ink-900">QSBS attestation letter · included</span>
                       <span className="mt-0.5 block text-xs text-ink-500">
                         Add documentation and support for QSBS tax status.
                       </span>
@@ -283,7 +323,7 @@ export function PricingPage() {
                   ['Report revisions', 'Included', 'Limited or extra fees', 'Varies'],
                   [
                     'Audit support',
-                    `$${AUDIT_DEFENCE_RATE_USD}/hour`,
+                    `From $${AUDIT_DEFENCE_RATE_USD}/hour`,
                     '$300–$500+/hour',
                     'Often unavailable',
                   ],

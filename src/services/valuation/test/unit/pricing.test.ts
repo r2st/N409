@@ -64,16 +64,15 @@ describe('quotePrice', () => {
     expect(q.delivery_days).toBe(STANDARD_DELIVERY_DAYS);
   });
 
-  it('lands the flagship 409A on the published $3,499 ceiling', () => {
-    // The top uplift is tuned to this figure; if either moves, this catches it.
-    expect(quotePrice({ kind: '409a', amountRaisedCents: M(25) }).amount_cents).toBe(349_900);
+  it('charges the same flat price regardless of capital raised', () => {
+    expect(quotePrice({ kind: '409a', amountRaisedCents: M(25) }).amount_cents).toBe(4_900);
   });
 
-  it('walks the whole 409A ladder', () => {
+  it('walks the whole 409A ladder — flat, no band uplift', () => {
     const ladder = [M(0.5), M(2), M(7), M(15), M(40)].map(
       (raised) => quotePrice({ kind: '409a', amountRaisedCents: raised }).amount_cents,
     );
-    expect(ladder).toEqual([119_000, 169_000, 229_000, 289_000, 349_900]);
+    expect(ladder).toEqual([4_900, 4_900, 4_900, 4_900, 4_900]);
   });
 
   it('applies one uplift ladder to every product kind', () => {
@@ -100,13 +99,15 @@ describe('quotePrice', () => {
     expect(addonFlags(q)).toEqual({ express: true, qsbs_letter: false });
   });
 
-  it('stacks the band and both add-ons', () => {
+  it('stacks the base and both add-ons (band uplift is zero)', () => {
     const q = quotePrice({
       kind: '409a',
       amountRaisedCents: M(12),
       addons: { express: true, qsbs_letter: true },
     });
-    expect(q.amount_cents).toBe(119_000 + 170_000 + EXPRESS_DELIVERY_CENTS + QSBS_LETTER_CENTS);
+    expect(q.amount_cents).toBe(
+      DEFAULT_PRICE_CENTS['409a']! + EXPRESS_DELIVERY_CENTS + QSBS_LETTER_CENTS,
+    );
     expect(addonFlags(q)).toEqual({ express: true, qsbs_letter: true });
   });
 
@@ -133,14 +134,14 @@ describe('quotePrice', () => {
 });
 
 describe('quoteLines', () => {
-  it('itemises entry price, band and add-ons, and sums to the total', () => {
+  it('itemises entry price and add-ons, and sums to the total', () => {
     const q = quotePrice({
       kind: '409a',
       amountRaisedCents: M(30),
       addons: { express: true, qsbs_letter: true },
     });
     const lines = quoteLines(q);
-    expect(lines.map((l) => l.key)).toEqual(['base', 'band', 'express', 'qsbs_letter']);
+    expect(lines.map((l) => l.key)).toEqual(['base', 'express', 'qsbs_letter']);
     expect(lines.reduce((sum, l) => sum + l.amount_cents, 0)).toBe(q.amount_cents);
   });
 

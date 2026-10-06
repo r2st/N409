@@ -40,7 +40,7 @@ export const PRODUCTS: Product[] = [
       'Board-ready PDF report with full methodology appendix',
     ],
     audience: 'Venture-backed startups granting stock options',
-    priceCents: P(119_000),
+    priceCents: P(4_900),
     deliveryDays: 7,
   },
   {
@@ -57,7 +57,7 @@ export const PRODUCTS: Product[] = [
       'Clear, plain-English report you can hand to a bank or a buyer',
     ],
     audience: 'Business owners, lenders, and brokers',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 7,
   },
   {
@@ -74,7 +74,7 @@ export const PRODUCTS: Product[] = [
       'Built to withstand Big-4 audit review',
     ],
     audience: 'Companies expensing equity compensation',
-    priceCents: P(149_000),
+    priceCents: P(4_900),
     deliveryDays: 7,
   },
   {
@@ -91,7 +91,7 @@ export const PRODUCTS: Product[] = [
       'Audit-ready schedules and methodology',
     ],
     audience: 'Funds and companies reporting fair value',
-    priceCents: P(149_000),
+    priceCents: P(4_900),
     deliveryDays: 7,
   },
   {
@@ -109,10 +109,7 @@ export const PRODUCTS: Product[] = [
       'NAV and an LP waterfall with preferred return, catch-up, carry and clawback',
     ],
     audience: 'Fund managers, fund admins, and LPs',
-    // The fallback price the checkout charges for the `fund` kind. Quoted here
-    // rather than assumed: a marketing figure the checkout does not honour is
-    // the one place on the site it is most expensive to be wrong.
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 10,
   },
   {
@@ -129,7 +126,7 @@ export const PRODUCTS: Product[] = [
       'Support through examination if the IRS asks questions',
     ],
     audience: 'Founders and families planning share transfers',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 7,
   },
   {
@@ -146,7 +143,7 @@ export const PRODUCTS: Product[] = [
       'Letter format your investors’ tax advisors expect',
     ],
     audience: 'Startups and their early shareholders',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 7,
   },
   {
@@ -159,7 +156,7 @@ export const PRODUCTS: Product[] = [
       'Share valuations for UK Company Share Option Plans, prepared for HMRC agreement and grant documentation.',
     bullets: ['UMV and AMV determinations', 'HMRC VAL231 support', 'UK market comparables and methodology'],
     audience: 'UK companies operating a CSOP',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 7,
   },
   {
@@ -176,7 +173,7 @@ export const PRODUCTS: Product[] = [
       'Fast turnaround to hit your grant window',
     ],
     audience: 'UK startups granting EMI options',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 7,
   },
   {
@@ -193,7 +190,7 @@ export const PRODUCTS: Product[] = [
       'Audit-ready methodology documentation',
     ],
     audience: 'IFRS reporters with equity compensation',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 7,
   },
   {
@@ -210,7 +207,7 @@ export const PRODUCTS: Product[] = [
       'Coordinated with your auditor’s review',
     ],
     audience: 'Acquirers closing a transaction',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 10,
   },
   {
@@ -227,7 +224,7 @@ export const PRODUCTS: Product[] = [
       'Clear documentation for audit review',
     ],
     audience: 'Companies carrying goodwill',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 10,
   },
   {
@@ -244,7 +241,7 @@ export const PRODUCTS: Product[] = [
       'DOL-aware methodology and documentation',
     ],
     audience: 'ESOP companies and trustees',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 10,
   },
   {
@@ -261,7 +258,7 @@ export const PRODUCTS: Product[] = [
       'Asset-level report for the specific IP',
     ],
     audience: 'IP owners, licensors, and counsel',
-    priceCents: P(99_000),
+    priceCents: P(2_900),
     deliveryDays: 10,
   },
 ];
@@ -302,7 +299,7 @@ export interface PricingTier {
   tier: string;
   name: string;
   priceCents: number;
-  interval: 'one_time' | 'month';
+  interval: 'one_time' | 'month' | 'year';
   tagline: string;
   features: string[];
   valuationLimit: number | null;
@@ -311,52 +308,49 @@ export interface PricingTier {
 
 export const PRICING_TIERS: PricingTier[] = [
   {
-    tier: 'starter',
-    name: 'Starter',
-    priceCents: 29_900,
+    tier: 'free',
+    name: 'Free',
+    priceCents: 0,
     interval: 'one_time',
-    tagline: 'One valuation, one price.',
+    tagline: 'Try it before you buy.',
     features: [
-      'Single 409A valuation report',
-      'AI-assisted intake',
-      'Analyst-signed, audit-defensible report',
-      'Draft review with revisions included',
-      'Basic email support',
-      '7-day delivery (Express available)',
+      'Sample valuation report',
+      'AI-assisted intake demo',
+      'See how the platform works',
+      'No credit card required',
     ],
     valuationLimit: 1,
   },
   {
-    tier: 'growth',
-    name: 'Growth',
-    priceCents: 19_900,
-    interval: 'month',
-    tagline: 'For growing teams that need regular valuations.',
+    tier: 'starter',
+    name: 'Per Report',
+    priceCents: 4_900,
+    interval: 'one_time',
+    tagline: 'Pay only when you need a valuation.',
     features: [
-      'Up to 3 valuations per year',
-      'Priority support',
-      'Compliance dashboard',
+      'Full 409A valuation report',
+      'AI-assisted intake',
+      'Analyst-signed, audit-defensible report',
       'Draft review with revisions included',
-      'Live status tracking',
-      'Roll-forward from prior valuation',
+      'Email support',
+      '7-day delivery (Express available)',
     ],
-    valuationLimit: 3,
+    valuationLimit: 1,
     highlight: true,
   },
   {
-    tier: 'enterprise_monthly',
-    name: 'Enterprise',
-    priceCents: 49_900,
-    interval: 'month',
-    tagline: 'For companies that never want to think about it.',
+    tier: 'annual',
+    name: 'Annual',
+    priceCents: 9_900,
+    interval: 'year',
+    tagline: 'Unlimited valuations, one flat rate.',
     features: [
       'Unlimited valuations',
-      'Dedicated support',
-      'Audit defense included',
-      'Custom branding on reports',
+      'All report types included',
+      'Priority support',
       'Compliance dashboard',
-      'Priority Express delivery',
-      'Partner API access',
+      'Roll-forward from prior valuation',
+      'Live status tracking',
     ],
     valuationLimit: null,
   },
@@ -506,7 +500,7 @@ export interface FaqEntry {
 export const PRICING_FAQ: FaqEntry[] = [
   {
     q: 'How much does a 409A valuation cost?',
-    a: 'From $1,190 with 7-day delivery. Express (1 day) is a $500 add-on. Other types priced on each product page.',
+    a: '$49 per report with 7-day delivery. Express (1 day) is a $29 add-on. Or $99/year for unlimited valuations of any type.',
   },
   {
     q: 'How is pricing structured across report types?',
@@ -514,7 +508,7 @@ export const PRICING_FAQ: FaqEntry[] = [
   },
   {
     q: 'Do you offer express delivery?',
-    a: 'Yes — 1 business day instead of 7, for $500. First draft still arrives within 24 hours either way.',
+    a: 'Yes — 1 business day instead of 7, for $29. First draft still arrives within 24 hours either way.',
   },
   {
     q: 'Do you offer bundles or discounts for multiple reports?',
@@ -566,7 +560,15 @@ export const PRICING_FAQ: FaqEntry[] = [
   },
   {
     q: 'What if I need help choosing the right report?',
-    a: 'Take our 30-second “Which valuation?” quiz, or book a call with our team. We’ll point you to the right product before you pay for anything.',
+    a: 'Take our 30-second "Which valuation?" quiz, or book a call with our team. We\'ll point you to the right product before you pay for anything.',
+  },
+  {
+    q: 'Why is DoAide so much cheaper than other 409A providers?',
+    a: 'Most of the work is done by our AI-powered engine, so the marginal cost of an additional report is just compute time. We pass that saving to you instead of charging traditional consulting rates.',
+  },
+  {
+    q: 'Can I try it before I pay?',
+    a: 'Yes. The Free tier gives you a sample valuation report with no credit card required, so you can see exactly what you get before committing.',
   },
 ];
 

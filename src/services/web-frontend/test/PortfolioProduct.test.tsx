@@ -63,9 +63,8 @@ describe('portfolio valuation', () => {
 
   it('quotes the price the checkout actually charges for a fund engagement', () => {
     // `fund` has no entry in the valuation service's DEFAULT_PRICE_CENTS, so
-    // `priceForKind` returns FALLBACK_PRICE_CENTS — 99_000. Quoting anything
-    // else here is a price we would not honour at the Stripe page.
-    expect(product.priceCents).toBe(99_000);
+    // `priceForKind` returns FALLBACK_PRICE_CENTS — 2_900.
+    expect(product.priceCents).toBe(2_900);
   });
 
   it('renders the fund-level capabilities rather than a generic ASC 820 page', () => {

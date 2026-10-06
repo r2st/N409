@@ -29,10 +29,10 @@ import type { ValuationKind } from './valuation.js';
  * marketing copy have to move with them — the test names the row.
  */
 export const DEFAULT_PRICE_CENTS: Partial<Record<ValuationKind, number>> = {
-  '409a': 119_000,
-  fmv: 99_000,
-  '718': 149_000,
-  '820': 149_000,
+  '409a': 4_900,
+  fmv: 2_900,
+  '718': 4_900,
+  '820': 4_900,
 };
 
 /**
@@ -44,7 +44,7 @@ export const DEFAULT_PRICE_CENTS: Partial<Record<ValuationKind, number>> = {
  * price nobody has decided should be under-quoted and corrected by a human,
  * not over-quoted to a client who then has to be talked down.
  */
-export const FALLBACK_PRICE_CENTS = 99_000;
+export const FALLBACK_PRICE_CENTS = 2_900;
 
 /** Entry price for a kind, before any band uplift or add-on. */
 export function priceForKind(kind: string): number {
@@ -78,15 +78,15 @@ const M = (millions: number) => Math.round(millions * 1_000_000 * 100);
  * as an uplift also means a new product kind is priced correctly the day it is
  * added, with one entry in DEFAULT_PRICE_CENTS and nothing here.
  *
- * The top uplift is 230_900 and not a round number on purpose: it puts the
- * flagship 409A at exactly $3,499 (119_000 + 230_900), the published ceiling.
+ * All bands carry zero uplift: the platform charges a flat per-report price
+ * regardless of company stage, keeping costs minimal and accessible.
  */
 export const RAISE_BANDS: readonly RaiseBand[] = [
   { key: 'under_1m', label: 'Under $1M raised', max_cents: M(1), uplift_cents: 0 },
-  { key: '1m_to_5m', label: '$1M – $5M raised', max_cents: M(5), uplift_cents: 50_000 },
-  { key: '5m_to_10m', label: '$5M – $10M raised', max_cents: M(10), uplift_cents: 110_000 },
-  { key: '10m_to_20m', label: '$10M – $20M raised', max_cents: M(20), uplift_cents: 170_000 },
-  { key: 'over_20m', label: '$20M+ raised', max_cents: null, uplift_cents: 230_900 },
+  { key: '1m_to_5m', label: '$1M – $5M raised', max_cents: M(5), uplift_cents: 0 },
+  { key: '5m_to_10m', label: '$5M – $10M raised', max_cents: M(10), uplift_cents: 0 },
+  { key: '10m_to_20m', label: '$10M – $20M raised', max_cents: M(20), uplift_cents: 0 },
+  { key: 'over_20m', label: '$20M+ raised', max_cents: null, uplift_cents: 0 },
 ];
 
 /**
@@ -128,8 +128,8 @@ export type AddonKey = (typeof ADDON_KEYS)[number];
  * amounts, and $500 rather than $50,000 is the shape of mistake that gets all
  * the way to an invoice before anybody notices.
  */
-export const EXPRESS_DELIVERY_CENTS = 50_000;
-export const QSBS_LETTER_CENTS = 50_000;
+export const EXPRESS_DELIVERY_CENTS = 2_900;
+export const QSBS_LETTER_CENTS = 0;
 
 /** Business days to the final report, and what the express add-on buys. */
 export const STANDARD_DELIVERY_DAYS = 7;
