@@ -163,21 +163,36 @@ function retryScheduleSql(status: string, made: string, max: string, ladder: str
   END`;
 }
 
+/**
+ * Records the outcome of the *initial* transport attempt.
+ *
+ * Called right after `enqueueEmail`, so the row should be 'queued'. The
+ * `status = 'queued'` guard prevents a late initial-send callback from
+ * overwriting a row the retry claim has already moved — without it, a
+ * transport call that outlived the claim lease could write 'failed' over a
+ * row `settleClaimedEmail` had already settled 'sent', putting a delivered
+ * message back on the retry ladder.
+ *
+ * Returns whether the UPDATE landed. A false return means the row was no
+ * longer queued — claimed by a retry sweep or already settled — and the
+ * caller should not treat its own outcome as authoritative for this message.
+ */
 export async function markEmail(
   db: pg.Pool | pg.PoolClient,
   id: string,
   status: Exclude<EmailStatus, 'queued'>,
   error?: string,
   opts: { maxAttempts?: number } = {},
-): Promise<void> {
-  await db.query(
+): Promise<boolean> {
+  const { rowCount } = await db.query(
     `UPDATE email_outbox
      SET status = $2::email_status, error = $3, attempts = attempts + 1,
          sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END,
          next_attempt_at = ${retryScheduleSql('$2', 'email_outbox.attempts + 1', '$4', '$5')}
-     WHERE id = $1`,
+     WHERE id = $1 AND status = 'queued'`,
     [id, status, error ?? null, opts.maxAttempts ?? EMAIL_MAX_ATTEMPTS, EMAIL_RETRY_BACKOFF_MINUTES],
   );
+  return (rowCount ?? 0) > 0;
 }
 
 /** Default lease: comfortably longer than any single transport attempt. */
