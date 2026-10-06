@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   REVIEW_TASK_STATUSES,
   TASK_TRANSITIONS,
@@ -65,5 +68,14 @@ describe('review task transition table', () => {
       expect(canTransitionTask('done', to), `done → ${to}`).toBe(false);
       expect(canTransitionTask('cancelled', to), `cancelled → ${to}`).toBe(false);
     }
+  });
+
+  it('patchTask enforces canTransitionTask at the repo level', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(here, '../../src/repos/tasks.ts'), 'utf8');
+    expect(src, 'patchTask must import canTransitionTask').toContain('canTransitionTask');
+    expect(src, 'patchTask must call canTransitionTask before writing').toMatch(
+      /canTransitionTask\(current\.status/,
+    );
   });
 });

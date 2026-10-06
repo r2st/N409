@@ -4,6 +4,7 @@ import { withTransaction } from '../db/pool.js';
 import {
   PIPELINE_EVENT_TYPES,
   TASK_STATUS_LABELS,
+  canTransitionTask,
   type ReviewTaskKind,
   type ReviewTaskStatus,
 } from '../domain/pipeline.js';
@@ -283,6 +284,12 @@ export async function patchTask(
     const newStatus = fields.status as ReviewTaskStatus | undefined;
     const moving = Boolean(newStatus && newStatus !== current.status);
     if (moving) {
+      if (!canTransitionTask(current.status, newStatus!)) {
+        throw problems.conflict(
+          `Cannot move a ${TASK_STATUS_LABELS[current.status]} task to ` +
+            `${TASK_STATUS_LABELS[newStatus!]} — that transition is not allowed.`,
+        );
+      }
       if (newStatus === 'in_progress') sets.push('started_at = COALESCE(started_at, now())');
       if (newStatus === 'done' || newStatus === 'cancelled') sets.push('completed_at = now()');
       else sets.push('completed_at = NULL');
