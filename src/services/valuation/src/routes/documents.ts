@@ -418,7 +418,17 @@ export function registerDocumentRoutes(
       let stored: Buffer;
       try {
         stored = await readFile(abs);
-      } catch {
+      } catch (err) {
+        req.log.error(
+          {
+            err,
+            valuationId: valuation.id,
+            documentId: doc.id,
+            storagePath: doc.storage_path,
+            alert: true,
+          },
+          'stored document file is missing from disk while its database row exists — possible storage integrity failure',
+        );
         throw problems.notFound('Stored file is missing');
       }
       const plain = readStoredBlob(doc, stored, req.log);

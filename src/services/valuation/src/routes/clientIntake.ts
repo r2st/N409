@@ -44,6 +44,7 @@ import { ulidField } from '../domain/ulidField.js';
 import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 import { tokenField } from '../domain/credentialFields.js';
 import { withPlanQuota } from '../domain/planQuota.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 
 /**
  * Firm-branded client intake.
@@ -155,6 +156,15 @@ export function registerClientIntakeRoutes(
     }
     const { link, token } = minted;
 
+    await recordAdminEvent(deps.pool, {
+      type: 'intake_link_created',
+      actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+      subjectType: 'intake_link',
+      subjectId: link.id,
+      subjectLabel: parsed.data.client_name ?? parsed.data.client_email ?? null,
+      payload: { partner_id: partnerId, expires_at: expiresAt.toISOString() },
+    });
+
     // The raw token and its URL are returned once and never again.
     return reply.status(201).send({
       link: { ...toPublicLink(link), ...summarizeIntakeLink(link, new Date()) },
@@ -253,6 +263,19 @@ export function registerClientIntakeRoutes(
       return outcome;
     });
 
+    await recordAdminEvent(deps.pool, {
+      type: 'intake_link_converted',
+      actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+      subjectType: 'intake_link',
+      subjectId: id,
+      subjectLabel: result.valuation.company_name ?? null,
+      payload: {
+        partner_id: partnerId,
+        valuation_id: result.valuation.id,
+        kind: parsed.data.kind,
+      },
+    });
+
     return reply.status(201).send({
       valuation: result.valuation,
       link: { ...toPublicLink(result.link), ...summarizeIntakeLink(result.link, new Date()) },
@@ -267,6 +290,15 @@ export function registerClientIntakeRoutes(
     const partnerId = resolveFirm(principal, query.data.partner_id);
 
     if (!(await revokeIntakeLink(deps.pool, partnerId, id))) throw problems.notFound();
+
+    await recordAdminEvent(deps.pool, {
+      type: 'intake_link_revoked',
+      actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+      subjectType: 'intake_link',
+      subjectId: id,
+      payload: { partner_id: partnerId },
+    });
+
     return reply.status(204).send();
   });
 

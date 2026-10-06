@@ -275,6 +275,7 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   app.get('/api/v1/admin/blog/posts/:slug', { preHandler: app.authenticate }, async (req) => {
     requireOps(req);
     const { slug } = req.params as { slug: string };
+    if (!Slug.safeParse(slug).success) throw problems.notFound();
     const post = await findPostBySlug(deps.pool, slug);
     if (!post) throw problems.notFound();
     return { post: toPublic(post) };

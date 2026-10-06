@@ -77,6 +77,8 @@ export function registerStreamRoutes(
       'cache-control': 'no-cache',
       connection: 'keep-alive',
       'x-accel-buffering': 'no', // disable proxy buffering (nginx) so events flush
+      'x-content-type-options': 'nosniff',
+      'cross-origin-resource-policy': 'same-site',
     });
     reply.raw.write(': connected\n\n');
 

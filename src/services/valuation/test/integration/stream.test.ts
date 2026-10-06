@@ -220,6 +220,19 @@ describe.skipIf(!dbUp)('improvement 4 — realtime presence + comment stream (SS
     }
   });
 
+  it('carries nosniff and CORP on the hijacked SSE response (R392)', async () => {
+    const res = await fetch(`${base}/api/v1/valuations/${valuationId}/stream`, {
+      headers: { authorization: `Bearer ${client.token}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cross-origin-resource-policy')).toBe('same-site');
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    // Close immediately — we only needed the headers.
+    const reader = res.body?.getReader();
+    await reader?.cancel();
+  });
+
   it('one presence badge per user, however many tabs they have open', async () => {
     const tab1 = await openStream(base, valuationId, client.token);
     const tab2 = await openStream(base, valuationId, client.token);

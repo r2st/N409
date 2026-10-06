@@ -724,6 +724,20 @@ export const ADMIN_EVENT_CATALOG = {
   contact_submission_handled: D('Contact submission handled', 'integration', 'info'),
   contact_submission_reopened: D('Contact submission reopened', 'integration', 'notice'),
 
+  // ── Client intake ───────────────────────────────────────────────────────
+  //
+  // The whole firm-side intake surface wrote nothing here. Minting a link,
+  // revoking one and converting one into an engagement are three operations
+  // that respectively issue a bearer credential, invalidate it, and create a
+  // billable engagement on behalf of a client — and the trail could describe
+  // an administrator editing a template and not any of them.
+  //
+  // `notice` for create and revoke (ordinary credential lifecycle), `critical`
+  // for convert (opens a billable engagement from external input).
+  intake_link_created: D('Intake link created', 'lifecycle', 'notice'),
+  intake_link_revoked: D('Intake link revoked', 'lifecycle', 'notice'),
+  intake_link_converted: D('Intake link converted', 'lifecycle', 'critical'),
+
   // ── Analyst actions on one engagement ───────────────────────────────────
   comparable_added: D('Comparable added', 'analysis', 'critical'),
   comparable_deleted: D('Comparable deleted', 'analysis', 'critical'),

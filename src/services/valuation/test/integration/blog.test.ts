@@ -281,6 +281,17 @@ describe.skipIf(!dbUp)('marketing blog', () => {
       expect(refused.statusCode).toBe(403);
     });
 
+    it('rejects a non-slug-shaped param on the admin preview just like the public route (R392)', async () => {
+      for (const bad of ['Not-Lowercase', '../../etc/passwd', 'has spaces']) {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/admin/blog/posts/${encodeURIComponent(bad)}`,
+          headers: authHeader(admin.token),
+        });
+        expect(res.statusCode, bad).toBe(404);
+      }
+    });
+
     it('appear the moment they are published, cache notwithstanding', async () => {
       // The public list is cached; a write has to clear it, or an author
       // refreshing the live page concludes publishing did not work.
