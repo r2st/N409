@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Seo } from '../../components/Seo';
+import { EmailSubscribe } from '../../components/EmailSubscribe';
 import { pageMeta } from '../../lib/pageMeta';
 import { useAuth } from '../../lib/auth';
 import { api, describeActionFailure } from '../../lib/api';
@@ -705,6 +706,11 @@ export function LandingPage() {
                 <span className="landing-trust-item">✓ Audit-ready reports</span>
                 <span className="landing-trust-item">✓ From $1,190 vs $5–15K traditional</span>
               </div>
+            </div>
+
+            {/* Email subscribe */}
+            <div className="landing-subscribe">
+              <EmailSubscribe />
             </div>
 
             {/* Animated value props */}

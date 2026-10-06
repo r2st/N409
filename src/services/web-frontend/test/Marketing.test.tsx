@@ -78,9 +78,9 @@ describe('marketing data (§22)', () => {
     expect(quote(qsbs, { express: false, qsbsLetter: true }).totalCents).toBe(qsbs.priceCents);
   });
 
-  it('has a product page for every valuation kind and 7 comparisons', () => {
+  it('has a product page for every valuation kind and 8 comparisons', () => {
     expect(new Set(PRODUCTS.map((p) => p.kind)).size).toBe(14);
-    expect(COMPARISONS).toHaveLength(7);
+    expect(COMPARISONS).toHaveLength(8);
   });
 
   it('sells one product per kind — no kind is listed twice', () => {

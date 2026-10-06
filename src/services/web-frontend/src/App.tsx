@@ -46,6 +46,7 @@ const CalculatorPage = named(() => import('./pages/marketing/CalculatorPage'), '
 const TaxCalculatorPage = named(() => import('./pages/marketing/TaxCalculatorPage'), 'TaxCalculatorPage');
 const ComplianceCheckerPage = named(() => import('./pages/marketing/ComplianceCheckerPage'), 'ComplianceCheckerPage');
 const ValuationEstimatorPage = named(() => import('./pages/marketing/ValuationEstimatorPage'), 'ValuationEstimatorPage');
+const FreeToolsPage = named(() => import('./pages/marketing/FreeToolsPage'), 'FreeToolsPage');
 const ResourcesPage = named(() => import('./pages/marketing/ResourcesPage'), 'ResourcesPage');
 const SampleReportPage = named(() => import('./pages/marketing/SampleReportPage'), 'SampleReportPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
@@ -243,6 +244,7 @@ export default function App() {
             <Route path="/tools/stock-option-tax-calculator" element={<TaxCalculatorPage />} />
             <Route path="/tools/409a-compliance-checker" element={<ComplianceCheckerPage />} />
             <Route path="/tools/startup-valuation-estimator" element={<ValuationEstimatorPage />} />
+            <Route path="/free-tools" element={<FreeToolsPage />} />
             <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/sample-report" element={<SampleReportPage />} />
             <Route path="/products/:slug" element={<ProductPage />} />
@@ -254,6 +256,8 @@ export default function App() {
             <Route path="/partners/:segment" element={<PartnerSegmentPage />} />
             <Route path="/developers" element={<DevelopersPage />} />
             <Route path="/blog" element={<BlogIndexPage />} />
+            <Route path="/blog/when-do-you-need-409a" element={<Navigate to="/when-do-you-need-a-409a" replace />} />
+            <Route path="/blog/409a-cost-breakdown" element={<Navigate to="/how-much-does-a-409a-cost" replace />} />
             <Route path="/blog/:slug" element={<BlogPostPage />} />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/contact" element={<ContactPage />} />

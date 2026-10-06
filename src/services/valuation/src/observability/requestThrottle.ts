@@ -89,7 +89,8 @@ export type ThrottledDoor =
   | 'invitation'
   | 'unsubscribe'
   | 'fmv-estimator'
-  | 'valuation-selector';
+  | 'valuation-selector'
+  | 'subscribe';
 
 export function registerRequestThrottleMetrics(registry: MetricsRegistry): void {
   refusals = registry.counter(

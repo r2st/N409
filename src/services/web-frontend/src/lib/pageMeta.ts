@@ -155,6 +155,13 @@ export function staticPages(): HeadInput[] {
       ]),
     },
     {
+      path: '/free-tools',
+      title: 'Free 409A tools for startups',
+      description:
+        'Free 409A valuation tools — calculator, safe harbor compliance checker, startup valuation estimator, and stock option tax calculator. No signup, no email required.',
+      jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'Free Tools', path: '/free-tools' }]),
+    },
+    {
       path: '/resources',
       title: '409A resources & tools',
       description:

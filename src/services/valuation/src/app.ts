@@ -113,6 +113,7 @@ import { registerJobRoutes } from './routes/jobs.js';
 import { registerSupportRoutes } from './routes/support.js';
 import { registerClientErrorRoutes } from './routes/clientErrors.js';
 import { registerContactRoutes } from './routes/contact.js';
+import { registerSubscribeRoutes } from './routes/subscribe.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerApiDocsRoutes } from './routes/apiDocs.js';
 import { deploymentRateLimits } from './domain/rateLimitPolicy.js';
@@ -1126,6 +1127,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSupportRoutes(app, { pool });
   // P3 gap #28 — public marketing contact form + ops triage queue
   registerContactRoutes(app, { pool });
+  registerSubscribeRoutes(app, { pool });
   registerClientErrorRoutes(app);
   // Remaining-gaps §selector — public "which valuation do I need?" quiz
   registerValuationSelectorRoutes(app);

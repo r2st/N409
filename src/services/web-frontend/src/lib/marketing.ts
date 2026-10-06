@@ -369,6 +369,7 @@ export interface ComparisonRef {
 /** Every published `/compare/:slug` page, in nav order. */
 export const COMPARISONS: ComparisonRef[] = [
   { slug: 'carta', competitor: 'Carta' },
+  { slug: 'eshares', competitor: 'eShares (Carta)' },
   { slug: 'pulley', competitor: 'Pulley' },
   { slug: 'eqvista', competitor: 'Eqvista' },
   { slug: 'kruze', competitor: 'Kruze Consulting' },

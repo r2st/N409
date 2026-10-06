@@ -1041,6 +1041,21 @@ html {
   white-space: nowrap;
 }
 
+.landing-subscribe {
+  margin-top: 20px;
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+.landing-subscribe label { color: rgba(255, 255, 255, 0.8); }
+.landing-subscribe input {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+.landing-subscribe input::placeholder { color: rgba(255, 255, 255, 0.35); }
+
 /* ── Auth card ── */
 
 .landing-auth-card {

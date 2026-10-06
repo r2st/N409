@@ -68,6 +68,19 @@ export const COMPARISON_DETAILS: Comparison[] = [
     }),
   },
   {
+    slug: 'eshares',
+    competitor: 'eShares (Carta)',
+    category: 'Cap table platform (now Carta)',
+    summary:
+      'eShares rebranded to Carta and bundles 409A with a cap-table subscription. DoAide 409A offers analyst sign-off without platform lock-in — from $49, transparent methodology, 24-hour drafts.',
+    rows: STANDARD_ROWS({
+      onboarding: 'Within their cap-table product; requires active subscription',
+      draft: 'Days to weeks',
+      final: '1–2 weeks, tier-dependent',
+      transparency: 'Report only; model internals not exposed',
+    }),
+  },
+  {
     slug: 'pulley',
     competitor: 'Pulley',
     category: 'Cap table platform',
@@ -751,6 +764,7 @@ export const PROVIDER_CATEGORIES: ProviderCategory[] = [
     tradeoff: 'Bundled with a subscription; methodology internals are rarely exposed.',
     providers: [
       { name: 'Carta', slug: 'carta' },
+      { name: 'eShares (Carta)', slug: 'eshares' },
       { name: 'Pulley', slug: 'pulley' },
       { name: 'Eqvista', slug: 'eqvista' },
     ],
