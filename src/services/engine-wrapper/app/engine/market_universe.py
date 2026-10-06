@@ -472,6 +472,7 @@ def _fetch_all(
             try:
                 fetched[ticker] = future.result(timeout=remaining)
             except Exception:  # timeout, or a provider error the client re-raised
+                _log.debug("universe fetch failed for %s", ticker, exc_info=True)
                 abandoned += 1
                 continue
     finally:

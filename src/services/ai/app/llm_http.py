@@ -20,7 +20,11 @@ import os
 import threading
 import time
 
+import logging
+
 import httpx
+
+_log = logging.getLogger(__name__)
 
 # One HTTP attempt's ceiling. `Deadline.attempt_timeout` never exceeds it.
 TIMEOUT_S = 90.0
@@ -119,8 +123,15 @@ def env_float(name: str, default: float, *, minimum: float = 0.0) -> float:
             value = float(raw)
             if value >= minimum:
                 return value
+            _log.warning(
+                "%s=%s is below the minimum (%s) — using default %s",
+                name, raw, minimum, default,
+            )
         except ValueError:
-            pass
+            _log.warning(
+                "%s=%r is not a valid float — using default %s",
+                name, raw, default,
+            )
     return default
 
 
@@ -134,8 +145,15 @@ def env_int(name: str, default: int, *, minimum: int = 1) -> int:
             value = int(raw)
             if value >= minimum:
                 return value
+            _log.warning(
+                "%s=%s is below the minimum (%s) — using default %s",
+                name, raw, minimum, default,
+            )
         except ValueError:
-            pass
+            _log.warning(
+                "%s=%r is not a valid integer — using default %s",
+                name, raw, default,
+            )
     return default
 
 

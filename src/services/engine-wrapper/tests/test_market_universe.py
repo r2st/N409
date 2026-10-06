@@ -541,6 +541,27 @@ def test_a_slow_source_does_not_hold_the_request_open(monkeypatch):
     assert resolution.source == "snapshot"
 
 
+def test_a_future_timeout_logs_the_ticker_at_debug(monkeypatch, caplog):
+    """R390, methodology M5: a future that timed out in ``_fetch_parallel``
+    incremented ``abandoned`` but logged nothing — no diagnostic anywhere."""
+
+    class SlowOnDDOG(StubProvider):
+        def info(self, ticker):
+            self.calls += 1
+            if ticker == "DDOG":
+                time.sleep(5.0)
+            return dict(self.infos.get(ticker, self.default))
+
+    monkeypatch.setattr(mu, "REFRESH_TIMEOUT_SECONDS", 0.1)
+    provider = SlowOnDDOG()
+    with caplog.at_level(logging.DEBUG, logger="market_universe"):
+        resolution = mu.resolve_universe(
+            live=True, client=feed(provider), snapshot=SNAP, use_cache=False
+        )
+    assert resolution.snapshot_count >= 1
+    assert any("universe fetch failed" in r.message for r in caplog.records)
+
+
 # ── the screen reads it ──────────────────────────────────────────────────────
 
 

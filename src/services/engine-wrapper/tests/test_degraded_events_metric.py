@@ -87,6 +87,19 @@ def test_a_broken_counter_never_costs_a_log_line():
     assert '"msg": "a line"' in _emit(logging.ERROR, event="unhandled_error")
 
 
+def test_a_broken_counter_logs_the_error_at_debug(caplog):
+    """R390, methodology M5: the bare ``except Exception: pass`` swallowed
+    every trace of a broken counter. Now a DEBUG line records it."""
+
+    def explode(_event, _level):
+        raise RuntimeError("counter exploded")
+
+    set_degraded_event_sink(explode)
+    with caplog.at_level(logging.DEBUG, logger="app.observability"):
+        _emit(logging.ERROR, event="unhandled_error")
+    assert any("degraded-event counter raised" in r.message for r in caplog.records)
+
+
 def test_is_inert_before_registration():
     set_degraded_event_sink(None)
     assert '"event": "market_feed_fallback"' in _emit(logging.WARNING, event="market_feed_fallback")

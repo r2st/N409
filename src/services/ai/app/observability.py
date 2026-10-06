@@ -327,7 +327,9 @@ def _count_degraded(record: logging.LogRecord) -> None:
     try:
         _degraded_sink(event, record.levelname.lower())
     except Exception:  # noqa: BLE001 - a broken counter must not cost a log line
-        pass
+        logging.getLogger(__name__).debug(
+            "degraded-event counter raised for event=%s", event, exc_info=True
+        )
 
 
 class JsonLogFormatter(logging.Formatter):

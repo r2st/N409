@@ -22,8 +22,11 @@ ever reached from behind that gate.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable
+
+_log = logging.getLogger(__name__)
 
 from . import bedrock, openrouter
 from .openrouter import (
@@ -101,7 +104,7 @@ def _report(
             completion_tokens=result.completion_tokens if result is not None else 0,
         )
     except Exception:  # noqa: BLE001 - a broken metrics sink must not cost a call
-        pass
+        _log.debug("LLM metrics sink raised", exc_info=True)
 
 
 def chat(

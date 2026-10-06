@@ -258,6 +258,18 @@ def test_a_broken_sink_does_not_cost_the_call_it_is_reporting_on(searched, monke
     assert research("2026 median EV/Revenue for public SaaS").grounded
 
 
+def test_a_broken_sink_logs_the_error_at_debug(searched, monkeypatch, caplog):
+    """R390, methodology M5: the bare ``except Exception: pass`` swallowed
+    every trace of a broken sink. Now a DEBUG line records it."""
+    import logging
+
+    set_research_metrics_sink(lambda **kwargs: (_ for _ in ()).throw(RuntimeError("sink exploded")))
+    _synthesis(monkeypatch, LlmResult(model="a/b", content=ANSWER, prompt_tokens=1, completion_tokens=1))
+    with caplog.at_level(logging.DEBUG, logger="research"):
+        research("2026 median EV/Revenue for public SaaS")
+    assert any("research metrics sink raised" in r.message for r in caplog.records)
+
+
 def test_a_broken_sink_does_not_swallow_the_original_failure(monkeypatch):
     set_research_metrics_sink(lambda **kwargs: (_ for _ in ()).throw(RuntimeError("sink is down")))
 

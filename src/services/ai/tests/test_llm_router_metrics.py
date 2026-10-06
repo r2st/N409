@@ -158,6 +158,20 @@ def test_a_broken_sink_does_not_cost_the_call_it_is_reporting_on(monkeypatch):
     assert result.content == '{"ok": true}'
 
 
+def test_a_broken_sink_logs_the_error_at_debug(monkeypatch, caplog):
+    """R390, methodology M5: the bare ``except Exception: pass`` swallowed
+    every trace of a broken sink. Now a DEBUG line records it."""
+    import logging
+
+    def _broken(**kwargs):
+        raise RuntimeError("sink exploded")
+
+    set_llm_metrics_sink(_broken)
+    with caplog.at_level(logging.DEBUG, logger="app.llm_router"):
+        chat("sys", "user", client=_Client([_Reply(GOOD_BODY)]))
+    assert any("LLM metrics sink raised" in r.message for r in caplog.records)
+
+
 def test_a_broken_sink_does_not_swallow_the_original_failure():
     set_llm_metrics_sink(lambda **kwargs: (_ for _ in ()).throw(RuntimeError("sink is down")))
     client = _Client([_Reply("no", status=429)] * 6)

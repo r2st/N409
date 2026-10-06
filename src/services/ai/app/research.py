@@ -272,7 +272,7 @@ def _report(
             completion_tokens=result.completion_tokens if result else 0,
         )
     except Exception:  # noqa: BLE001 - a broken metrics sink must not cost a call
-        pass
+        _log.debug("research metrics sink raised", exc_info=True)
 
 
 def is_configured() -> bool:
