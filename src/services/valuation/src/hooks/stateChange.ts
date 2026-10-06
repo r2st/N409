@@ -384,7 +384,7 @@ async function deliverTransitionMessages(
     await sendAndRecord(transport, email, {
       log: deps.log,
       context: { valuationId: valuation.id },
-      onSent: () => markEmail(deps.pool, email.id, 'sent'),
+      onSent: async () => { await markEmail(deps.pool, email.id, 'sent'); },
       onFailed: async (err) => {
         /*
          * The stamp is contained on its own, and the bounce record runs whether

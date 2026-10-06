@@ -109,7 +109,7 @@ export async function sendTransactionalEmail(
   // message. See email/sendAttempt.ts.
   await sendAndRecord(deps.transport, email, {
     log: deps.log,
-    onSent: () => markEmail(deps.pool, email.id, 'sent'),
+    onSent: async () => { await markEmail(deps.pool, email.id, 'sent'); },
     onFailed: async (err) => {
       // Losing the 'failed' stamp is a bookkeeping problem; a rejection
       // escaping this function is not — see below.

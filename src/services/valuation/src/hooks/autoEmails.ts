@@ -310,7 +310,7 @@ async function scan(
           await sendAndRecord(transport, email, {
             log: deps.log,
             context: { campaign: campaign.name, valuationId: candidate.valuation_id },
-            onSent: () => markEmail(db, email.id, 'sent'),
+            onSent: async () => { await markEmail(db, email.id, 'sent'); },
             onFailed: async (err) => {
               /*
                * Contained on its own, so the bounce record below runs whether or
