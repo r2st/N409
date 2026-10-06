@@ -7,7 +7,14 @@ import {
   formatUsd,
   productBySlug,
 } from './marketing';
-import { SITE_TAGLINE, faqJsonLd, organizationJsonLd } from './seo';
+import {
+  SITE_TAGLINE,
+  breadcrumbJsonLd,
+  faqJsonLd,
+  organizationJsonLd,
+  serviceJsonLd,
+  webApplicationJsonLd,
+} from './seo';
 import type { HeadInput } from './headTags';
 
 /**
@@ -50,113 +57,168 @@ export function staticPages(): HeadInput[] {
       path: '/',
       title: 'DoAide 409A',
       description: `${SITE_TAGLINE} AI-assisted intake, a transparent valuation engine, and analyst-signed reports across ${PRODUCTS.length} report types — first draft in 24 hours, from ${formatUsd(MIN_PRODUCT_PRICE_CENTS)}.`,
-      jsonLd: organizationJsonLd(),
+      jsonLd: [organizationJsonLd(), webApplicationJsonLd(), serviceJsonLd()],
     },
     {
       path: '/pricing',
       title: 'Pricing',
       description: `Transparent, per-report valuation pricing — one flat price, no subscriptions. 409A from ${formatUsd(MIN_PRODUCT_PRICE_CENTS)} with a 24-hour first draft and Express delivery available.`,
-      jsonLd: faqJsonLd(PRICING_FAQ),
+      jsonLd: [
+        faqJsonLd(PRICING_FAQ),
+        breadcrumbJsonLd([HOME_CRUMB, { name: 'Pricing', path: '/pricing' }]),
+      ],
     },
     {
       path: '/which-valuation',
       title: 'Which valuation do you need?',
       description:
         "Answer a couple of quick questions and we'll point you at the right valuation report for your situation.",
+      jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'Which Valuation', path: '/which-valuation' }]),
     },
     {
       path: '/409a-valuation-guide',
       title: 'The 409A valuation guide',
       description:
         'What a 409A valuation is, why the IRS safe harbor matters more than the number itself, how the value is derived across the market, income and asset approaches, and what a defensible report shows.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: '409A Valuation Guide', path: '/409a-valuation-guide' },
+      ]),
     },
     {
       path: '/when-do-you-need-a-409a',
       title: 'When do you need a 409A valuation?',
       description:
         'Four events require a 409A valuation: the first option grant, the 12-month expiry, a priced round, and any other material event — plus what a discounted strike price costs the option holder.',
-      // The trigger list is a genuine question-and-answer pair per entry, which
-      // is what `faqJsonLd` is for — the timing question is the one that gets
-      // asked as a question, so it is the one worth marking up.
-      jsonLd: faqJsonLd(VALUATION_TRIGGERS.map((t) => ({ q: t.title, a: t.body }))),
+      jsonLd: [
+        faqJsonLd(VALUATION_TRIGGERS.map((t) => ({ q: t.title, a: t.body }))),
+        breadcrumbJsonLd([
+          HOME_CRUMB,
+          { name: 'Resources', path: '/resources' },
+          { name: 'When Do You Need a 409A', path: '/when-do-you-need-a-409a' },
+        ]),
+      ],
     },
     {
       path: '/how-much-does-a-409a-cost',
       title: 'How much does a 409A valuation cost?',
       description: `What a 409A valuation costs and what drives the price — market bands from bundled cap-table platforms to advisory firms, DoAide 409A from ${formatUsd(NINE_A_PRICE_CENTS)}, and the audit-support rate that is not on the quote.`,
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: 'How Much Does a 409A Cost', path: '/how-much-does-a-409a-cost' },
+      ]),
     },
     {
       path: '/tools/409a-valuation-calculator',
       title: '409A valuation calculator',
       description:
         'Free 409A valuation calculator — estimate a range for your common stock from a priced round, capital raised, revenue or profit. No signup, no email required.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: '409A Calculator', path: '/tools/409a-valuation-calculator' },
+      ]),
     },
     {
       path: '/tools/stock-option-tax-calculator',
       title: 'Stock option tax calculator',
       description:
         'Free stock option tax calculator — estimate tax implications of exercising ISOs and NSOs, AMT exposure, and cost basis. No signup required.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: 'Stock Option Tax Calculator', path: '/tools/stock-option-tax-calculator' },
+      ]),
     },
     {
       path: '/tools/409a-compliance-checker',
       title: '409A compliance checker',
       description:
         'Free 409A compliance checker — answer five questions to check whether your 409A valuation is current and meets IRS safe harbor requirements. Instant results.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: '409A Compliance Checker', path: '/tools/409a-compliance-checker' },
+      ]),
     },
     {
       path: '/tools/startup-valuation-estimator',
       title: 'Startup valuation estimator — how much is my startup worth?',
       description:
         'Free startup valuation estimator — enter revenue, growth rate, industry, and funding stage to estimate your company\'s fair market value and 409A common stock range. No signup required.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: 'Startup Valuation Estimator', path: '/tools/startup-valuation-estimator' },
+      ]),
     },
     {
       path: '/resources',
       title: '409A resources & tools',
       description:
         'Free 409A tools, guides, and educational resources — valuation calculator, stock option tax calculator, compliance checker, and expert guides on 409A valuations.',
+      jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'Resources', path: '/resources' }]),
     },
     {
       path: '/sample-report',
       title: 'Sample 409A valuation report',
       description:
         'See what a defensible 409A valuation report contains — every chapter of the deliverable and the exhibits behind each figure, prepared for IRS safe-harbor reliance.',
+      jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'Sample Report', path: '/sample-report' }]),
     },
     {
       path: COMPARE_HUB_PATH,
       title: COMPARE_HUB_TITLE,
       description:
         'The five kinds of 409A valuation provider — AI-native platforms, cap-table products, bundled providers, startup CPAs and independent firms — and what founders should ask before choosing one.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Compare', path: COMPARE_HUB_PATH },
+      ]),
     },
     {
       path: '/partners',
       title: 'Partner programme',
       description:
         'Refer valuation clients, deliver them under your own brand on your own subdomain, or submit them over an API with signed webhooks — analyst-reviewed and dual-signed either way.',
-      jsonLd: faqJsonLd(PARTNER_FAQ),
+      jsonLd: [
+        faqJsonLd(PARTNER_FAQ),
+        breadcrumbJsonLd([HOME_CRUMB, { name: 'Partners', path: '/partners' }]),
+      ],
     },
     {
       path: '/developers',
       title: 'Partner API for developers',
       description:
         'The DoAide 409A partner API: bearer keys, idempotent submission, an OpenAPI 3.1 document you can generate a client from, and HMAC-signed webhooks on state changes and report-ready.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Partners', path: '/partners' },
+        { name: 'Developers', path: '/developers' },
+      ]),
     },
     {
       path: '/blog',
       title: 'Blog',
       description:
         'Notes on 409A and fair-value practice from the DoAide 409A team — methodology, audit defensibility, and what actually changes when valuation work is automated.',
+      jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'Blog', path: '/blog' }]),
     },
     {
       path: '/about',
       title: 'About DoAide 409A',
       description:
         'DoAide 409A is an AI-assisted valuation platform producing independent, defensible 409A and business valuations — AI intake, a transparent engine, and credentialed analyst sign-off.',
+      jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'About', path: '/about' }]),
     },
     {
       path: '/contact',
       title: 'Contact us',
       description:
         'Get in touch with the DoAide 409A team — questions about a valuation, pricing, partnerships, or support.',
+      jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'Contact', path: '/contact' }]),
     },
     {
       path: '/terms-of-service',

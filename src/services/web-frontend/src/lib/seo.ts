@@ -60,10 +60,67 @@ export function organizationJsonLd(origin: string = siteOrigin()): JsonLd {
   return {
     '@context': 'https://schema.org',
     '@type': 'Organization',
-    name: SITE_NAME,
-    url: `${origin}/`,
-    logo: `${origin}${DEFAULT_OG_IMAGE}`,
+    name: 'DoAide',
+    url: 'https://doaide.com',
+    logo: 'https://doaide.com/logo.png',
     description: SITE_TAGLINE,
+    brand: { '@type': 'Brand', name: SITE_NAME },
+  };
+}
+
+/** WebApplication schema for the 409A platform. */
+export function webApplicationJsonLd(origin: string = siteOrigin()): JsonLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebApplication',
+    name: 'DoAide 409A Valuation',
+    url: `${origin}/`,
+    applicationCategory: 'BusinessApplication',
+    operatingSystem: 'Web',
+    description: SITE_TAGLINE,
+    offers: {
+      '@type': 'AggregateOffer',
+      priceCurrency: 'USD',
+      lowPrice: '199',
+      highPrice: '799',
+      offerCount: '5',
+    },
+    author: {
+      '@type': 'Organization',
+      name: 'DoAide',
+      url: 'https://doaide.com',
+      logo: 'https://doaide.com/logo.png',
+    },
+  };
+}
+
+/** Service schema for the 409A valuation service. */
+export function serviceJsonLd(origin: string = siteOrigin()): JsonLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    name: '409A Valuation Service',
+    description:
+      'Independent, defensible 409A valuations for startups — AI-assisted intake, transparent valuation engine, and analyst-signed reports delivered in 24 hours.',
+    url: `${origin}/`,
+    provider: {
+      '@type': 'Organization',
+      name: 'DoAide',
+      url: 'https://doaide.com',
+      logo: 'https://doaide.com/logo.png',
+    },
+    serviceType: '409A Valuation',
+    areaServed: { '@type': 'Country', name: 'US' },
+    hasOfferCatalog: {
+      '@type': 'OfferCatalog',
+      name: 'Valuation Reports',
+      itemListElement: [
+        {
+          '@type': 'Offer',
+          itemOffered: { '@type': 'Service', name: '409A Valuation Report' },
+        },
+      ],
+    },
   };
 }
 
