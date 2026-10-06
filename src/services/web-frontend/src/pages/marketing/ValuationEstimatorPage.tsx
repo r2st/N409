@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { CrossProductLinks } from '../../components/CrossProductLinks';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 import { ShareResultBar } from '../../components/ShareResultBar';
@@ -576,6 +577,10 @@ export function ValuationEstimatorPage(): React.JSX.Element {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="mx-auto max-w-5xl px-5 pb-12">
+        <CrossProductLinks page="valuation" />
       </section>
     </div>
   );

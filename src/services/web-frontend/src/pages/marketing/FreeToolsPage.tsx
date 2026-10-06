@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { CrossProductLinks } from '../../components/CrossProductLinks';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 
@@ -115,6 +116,8 @@ export function FreeToolsPage() {
           </Link>
         </div>
       </div>
+
+      <CrossProductLinks page="free-tools" />
     </div>
   );
 }

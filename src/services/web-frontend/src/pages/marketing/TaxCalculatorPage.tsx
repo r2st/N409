@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { CrossProductLinks } from '../../components/CrossProductLinks';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 import { ShareResultBar } from '../../components/ShareResultBar';
@@ -330,6 +331,10 @@ export function TaxCalculatorPage() {
           </Link>
         </div>
       </section>
+
+      <div className="mx-auto max-w-3xl px-5 pb-12">
+        <CrossProductLinks page="tax" />
+      </div>
     </div>
   );
 }

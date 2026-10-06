@@ -9,6 +9,7 @@ import {
   type PricingTier,
 } from '../../lib/marketing';
 import { RAISE_BANDS, quote } from '../../lib/marketingContent';
+import { CrossProductLinks } from '../../components/CrossProductLinks';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 import { FaqAccordion } from '../../components/FaqAccordion';
@@ -414,6 +415,10 @@ export function PricingPage() {
             .
           </p>
         </div>
+      </section>
+
+      <section className="mx-auto max-w-5xl px-5 py-8">
+        <CrossProductLinks page="pricing" />
       </section>
     </div>
   );
