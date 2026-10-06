@@ -293,8 +293,8 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
         setTokensTruncated(truncated);
         setLoadError(null);
       }
-    } catch {
-      if (current()) setLoadError('Could not load API tokens.');
+    } catch (err) {
+      if (current()) setLoadError(describeLoadFailure(err, 'Could not load API tokens.'));
     }
     // `useRetry`'s token belongs on the *effect*, not here. `load` does not read
     // it, so `exhaustive-deps` calls it an unnecessary dependency — correctly,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, ApiError, ifMatch, describeActionFailure } from '../../lib/api';
+import { api, ApiError, ifMatch, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import type { EngineInputs, ShareClassInput } from '../../lib/pipeline';
 import {
@@ -271,8 +271,8 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
       );
       setForm(fromInputs(engine_inputs ?? {}));
       setVersion(version);
-    } catch {
-      setError('Could not load the financial model.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load the financial model.'));
     }
   }, [valuationId, setVersion]);
 

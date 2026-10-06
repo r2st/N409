@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
@@ -165,8 +165,8 @@ function TaskQueue({
       const res = await api<{ tasks: ReviewTask[]; total: number }>(`/tasks?${params}`);
       setTasks(res.tasks);
       setTotal(res.total);
-    } catch {
-      setError('Could not load tasks.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load tasks.'));
     }
   }, [scope, status]);
 
@@ -358,8 +358,8 @@ function ReviewQueue({ options, rosterFailed }: { options: UserOption[]; rosterF
       const res = await api<{ reviews: ReviewQueueItem[]; total: number }>(`/reviews?${params}`);
       setReviews(res.reviews);
       setTotal(res.total);
-    } catch {
-      setError('Could not load the review queue.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load the review queue.'));
     }
   }, [mine]);
 

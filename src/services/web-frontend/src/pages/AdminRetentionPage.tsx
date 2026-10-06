@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, describeActionFailure } from '../lib/api';
+import { api, ApiError, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime, kindLabel } from '../lib/format';
 import {
@@ -146,8 +146,8 @@ export function AdminRetentionPage() {
       setHoldsTruncated(h.truncated);
       setActions(a.actions);
       setRetired({ valuations: r.valuations, total: r.total });
-    } catch {
-      setError('Could not load retention settings.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load retention settings.'));
     }
   }, []);
 

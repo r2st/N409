@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeLoadFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
@@ -151,10 +151,8 @@ function DeliveryTrail({ email }: { email: OutboxEmail }) {
     try {
       const res = await api<{ events: DeliveryEvent[] }>(`/admin/email-outbox/${email.id}/delivery-events`);
       setEvents(res.events);
-    } catch {
-      // Not swallowed: an empty ledger and an unreadable one are the same
-      // picture, and the first is the one an operator would wrongly conclude.
-      setError('Could not load the delivery trail.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load the delivery trail.'));
     } finally {
       setLoading(false);
     }
@@ -269,8 +267,8 @@ export function EmailOutboxPage() {
       }
       setStats(res);
       setStatsError(null);
-    } catch {
-      setStatsError('Could not load delivery statistics.');
+    } catch (err) {
+      setStatsError(describeLoadFailure(err, 'Could not load delivery statistics.'));
     }
   }, []);
 

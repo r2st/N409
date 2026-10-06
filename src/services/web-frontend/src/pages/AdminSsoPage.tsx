@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { hasPassword } from '../lib/rbac';
 import { HelpIcon } from '../components/HelpIcon';
@@ -85,8 +85,8 @@ export function AdminSsoPage() {
       // A credential that is in force and not on this screen is one nobody
       // will think to revoke.
       setTokensTruncated(truncated);
-    } catch {
-      setError('Could not load SSO settings.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load SSO settings.'));
     }
   }, []);
 

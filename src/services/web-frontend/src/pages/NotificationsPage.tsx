@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, describeActionFailure } from '../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import type { AppNotification } from '../lib/types';
 import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton } from '../components/ui';
@@ -79,8 +79,8 @@ export function NotificationsPage() {
       const data = await api<{ notifications: AppNotification[]; unread_count: number }>('/notifications');
       setNotifications(data.notifications);
       setUnread(data.unread_count);
-    } catch {
-      setError('Could not load notifications.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load notifications.'));
     }
   }, []);
 

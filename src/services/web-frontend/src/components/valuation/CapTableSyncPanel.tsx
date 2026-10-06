@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, describeActionFailure } from '../../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import {
   CONNECTOR_HEALTH_LABEL,
   SCHEDULE_PAUSED_NOTE,
@@ -99,8 +99,8 @@ export function CapTableSyncPanel({
       // An older server sends neither field, and reads as scheduled — which is
       // what this panel assumed before they existed.
       setPaused(r.scheduled === false ? (r.unscheduled_reason ?? 'closed') : null);
-    } catch {
-      setError('Could not load sync providers.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load sync providers.'));
     }
   }, [valuationId]);
 

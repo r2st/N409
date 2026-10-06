@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, describeActionFailure } from '../../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import {
   all,
   integer,
@@ -70,8 +70,8 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
     try {
       const { tasks: items } = await api<{ tasks: ReviewTask[] }>(`/valuations/${valuationId}/tasks`);
       setTasks(items);
-    } catch {
-      setError('Could not load tasks.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load tasks.'));
     }
   }, [valuationId]);
 

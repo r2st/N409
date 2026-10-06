@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, describeActionFailure } from '../../lib/api';
+import { api, ApiError, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { formatDateTime, formatExactPercent, formatPerShare } from '../../lib/format';
 import {
   fieldLabel,
@@ -118,8 +118,8 @@ export function CalculationPanel({
       }>(`/valuations/${valuationId}/calculations`);
       setCalculations(items);
       setCapped(truncated);
-    } catch {
-      setError('Could not load calculations.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load calculations.'));
     }
   }, [valuationId]);
 

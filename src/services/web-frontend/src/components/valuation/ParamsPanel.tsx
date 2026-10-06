@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, ifMatch, describeActionFailure } from '../../lib/api';
+import { api, ApiError, ifMatch, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { numberRange, optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
@@ -475,8 +475,8 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           );
         }
       }
-    } catch {
-      setError('Could not load valuation params.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load valuation params.'));
     }
   }, [valuationId, setVersion]);
 

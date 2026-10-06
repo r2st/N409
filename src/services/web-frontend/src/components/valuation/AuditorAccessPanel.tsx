@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, describeActionFailure } from '../../lib/api';
+import { api, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { Button, ErrorNote, Field, ListTruncationNote, Select, TextInput } from '../ui';
 
@@ -34,8 +34,8 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
       );
       setLinks(r.access);
       setTruncated(r.truncated);
-    } catch {
-      setError('Could not load auditor links.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load auditor links.'));
     }
   }, [valuationId]);
 

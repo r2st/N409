@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, ApiError, describeRequestFailure, describeActionFailure } from '../../lib/api';
+import { api, ApiError, describeRequestFailure, describeActionFailure, describeLoadFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { describeCallbackOutcome, providerLabel } from '../../lib/integrationCallback';
 import { Button, ErrorNote, SuccessNote } from '../ui';
@@ -64,8 +64,8 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
         `/valuations/${valuationId}/accounting`,
       );
       setProviders(items);
-    } catch {
-      setError('Could not load accounting connections.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load accounting connections.'));
     }
   }, [valuationId]);
 

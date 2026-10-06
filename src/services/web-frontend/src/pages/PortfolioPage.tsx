@@ -152,8 +152,8 @@ export function PortfolioPage() {
       // truncation this page already reports for the entities *within* one.
       setOrgsTruncated(r.truncated);
       if (r.organizations.length > 0 && !selected) setSelected(r.organizations[0]!.id);
-    } catch {
-      setError('Could not load organizations.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load organizations.'));
     }
   }, [selected]);
 

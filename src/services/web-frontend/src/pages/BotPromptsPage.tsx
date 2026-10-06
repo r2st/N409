@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, describeActionFailure } from '../lib/api';
+import { api, ApiError, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { diffLines } from '../lib/diff';
 import { formatDateTime } from '../lib/format';
@@ -124,8 +124,8 @@ function VersionHistory({
       // The revert control only reaches what is listed, so a cap here is the
       // difference between "that wording is gone" and "we did not show it".
       setTruncated(capped);
-    } catch {
-      setError('Could not load the version history.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load the version history.'));
     }
   }, [prompt.id]);
 
