@@ -7,6 +7,7 @@ import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { Wordmark } from './Logo';
 import { COMPARISONS, FUNDING_STAGES, PARTNER_SEGMENTS, PRODUCTS } from '../lib/marketing';
 import { siteConfig } from '../lib/siteConfig';
+import { DoAideFooter } from './DoAideFooter';
 
 /** Brand glyph for a social link (gap #29). */
 function SocialIcon({ label }: { label: string }) {
@@ -472,6 +473,7 @@ export function MarketingLayout({ children }: { children?: ReactNode }) {
           {children ?? <Outlet />}
         </ErrorBoundary>
       </main>
+      <DoAideFooter />
       <MarketingFooter />
     </div>
   );
