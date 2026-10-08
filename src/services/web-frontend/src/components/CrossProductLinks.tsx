@@ -6,6 +6,11 @@ const LINKS: Record<string, { href: string; label: string; text: string }[]> = {
       text: 'Need legal documents for your startup? Generate NDAs, SAFEs, and employment agreements',
     },
     {
+      href: 'https://docs.doaide.com',
+      label: 'Document Generator',
+      text: 'Create salary slips, experience letters, invoices and other business documents for free',
+    },
+    {
       href: 'https://fincalc.doaide.com',
       label: 'Financial Calculators',
       text: "Calculate your startup's runway, burn rate, and dilution scenarios",
@@ -23,21 +28,26 @@ const LINKS: Record<string, { href: string; label: string; text: string }[]> = {
       text: 'Model cap table scenarios and calculate dilution from your next round',
     },
     {
-      href: 'https://comply.doaide.com',
-      label: 'Compliance Tracker',
-      text: 'Track 409A renewal deadlines alongside your other compliance obligations',
+      href: 'https://docs.doaide.com',
+      label: 'Document Generator',
+      text: 'Generate board resolutions, offer letters, and other startup documents',
     },
   ],
   tax: [
+    {
+      href: 'https://gst.doaide.com',
+      label: 'GST Bot',
+      text: 'Free GST calculator, GSTIN verification, and HSN code lookup',
+    },
     {
       href: 'https://fincalc.doaide.com',
       label: 'Financial Calculators',
       text: 'Run more financial scenarios — EMI, investment returns, and retirement planning',
     },
     {
-      href: 'https://salary.doaide.com',
-      label: 'Salary Calculator',
-      text: 'Calculate take-home pay including stock option compensation',
+      href: 'https://docs.doaide.com',
+      label: 'Document Generator',
+      text: 'Generate salary slips, invoices, and tax-related documents',
     },
   ],
   'free-tools': [
@@ -47,14 +57,19 @@ const LINKS: Record<string, { href: string; label: string; text: string }[]> = {
       text: 'Free GST calculator, GSTIN verification, and HSN code lookup for Indian businesses',
     },
     {
-      href: 'https://contracts.doaide.com',
-      label: 'Contract Generator',
-      text: 'AI-powered contract drafting — NDAs, service agreements, and employment contracts',
+      href: 'https://docs.doaide.com',
+      label: 'Document Generator',
+      text: 'Free rent receipts, rental agreements, salary slips, and invoices — no login required',
     },
     {
       href: 'https://resume.doaide.com',
       label: 'Resume Builder',
-      text: 'Build a professional resume with AI-powered suggestions',
+      text: 'Build ATS-friendly resumes with AI-powered suggestions and professional templates',
+    },
+    {
+      href: 'https://contracts.doaide.com',
+      label: 'Contract Generator',
+      text: 'AI-powered contract drafting — NDAs, service agreements, and employment contracts',
     },
   ],
 };

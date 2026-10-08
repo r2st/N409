@@ -1,9 +1,9 @@
 const TOOLS = [
-  { icon: '\u{1F4DD}', name: 'Contracts', url: 'https://contracts.doaide.com', desc: 'Draft & manage business contracts' },
-  { icon: '✅', name: 'Comply', url: 'https://comply.doaide.com', desc: 'Track all compliance deadlines' },
+  { icon: '\u{1F4C4}', name: 'Docs', url: 'https://docs.doaide.com', desc: 'Free document generator for India' },
+  { icon: '\u{1F4DD}', name: 'Resume', url: 'https://resume.doaide.com', desc: 'AI resume builder with ATS optimization' },
   { icon: '\u{1F3F7}️', name: 'GST Bot', url: 'https://gst.doaide.com', desc: 'GST filing, lookup & compliance' },
+  { icon: '\u{1F4DD}', name: 'Contracts', url: 'https://contracts.doaide.com', desc: 'Draft & manage business contracts' },
   { icon: '\u{1F9FE}', name: 'Invoicer', url: 'https://invoicer.doaide.com', desc: 'Create GST invoices in seconds' },
-  { icon: '\u{1F4CA}', name: 'Proposals', url: 'https://proposals.doaide.com', desc: 'Create winning proposals fast' },
 ];
 
 export function DoAideFooter() {
