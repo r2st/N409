@@ -17,9 +17,9 @@ import {
 import { PASSWORD_HINT } from '../../lib/passwordPolicy';
 import { SignedInHandoff, handOffAfterSignIn } from '../../components/SignedInHandoff';
 
-const GOLD = '#F0B429';
-const GOLD_LIGHT = '#F7CC5F';
-const GOLD_DARK = '#D4A017';
+const GOLD = '#D4AF37';
+const GOLD_LIGHT = '#E8C65A';
+const GOLD_DARK = '#B8962E';
 
 const VALUE_PROPS = [
   'AI-powered valuations',
@@ -47,11 +47,11 @@ function RobotFace({ size = 32 }: { size?: number }) {
       <line x1="16" y1="6" x2="16" y2="2" stroke={GOLD} strokeWidth="1.5" strokeLinecap="round" />
       <circle cx="16" cy="1.5" r="1.5" fill={GOLD} />
       <rect x="5" y="6" width="22" height="17" rx="5" fill={GOLD} />
-      <ellipse cx="11" cy="13" rx="2.5" ry="3" fill="#0A0A0B" />
-      <ellipse cx="21" cy="13" rx="2.5" ry="3" fill="#0A0A0B" />
+      <ellipse cx="11" cy="13" rx="2.5" ry="3" fill="#1A1A1D" />
+      <ellipse cx="21" cy="13" rx="2.5" ry="3" fill="#1A1A1D" />
       <circle cx="11.5" cy="12.5" r="1" fill={GOLD_LIGHT} />
       <circle cx="21.5" cy="12.5" r="1" fill={GOLD_LIGHT} />
-      <path d="M12 19Q16 22 20 19" stroke="#0A0A0B" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+      <path d="M12 19Q16 22 20 19" stroke="#1A1A1D" strokeWidth="1.2" fill="none" strokeLinecap="round" />
       <rect x="1" y="10" width="4" height="5" rx="2" fill={GOLD_DARK} />
       <rect x="27" y="10" width="4" height="5" rx="2" fill={GOLD_DARK} />
     </svg>
@@ -70,11 +70,11 @@ function HeroRobot() {
       <line x1="60" y1="18" x2="60" y2="6" stroke={GOLD} strokeWidth="2.5" strokeLinecap="round" />
       <circle cx="60" cy="4" r="3" fill={GOLD_LIGHT} className="landing-antenna-glow" />
       <rect x="25" y="18" width="70" height="55" rx="16" fill="url(#robot-gold)" />
-      <ellipse cx="42" cy="40" rx="8" ry="10" fill="#0A0A0B" />
-      <ellipse cx="78" cy="40" rx="8" ry="10" fill="#0A0A0B" />
+      <ellipse cx="42" cy="40" rx="8" ry="10" fill="#1A1A1D" />
+      <ellipse cx="78" cy="40" rx="8" ry="10" fill="#1A1A1D" />
       <circle cx="44" cy="38" r="3" fill={GOLD_LIGHT} opacity="0.7" />
       <circle cx="80" cy="38" r="3" fill={GOLD_LIGHT} opacity="0.7" />
-      <path d="M45 60 Q60 72 75 60" stroke="#0A0A0B" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+      <path d="M45 60 Q60 72 75 60" stroke="#1A1A1D" strokeWidth="2.5" fill="none" strokeLinecap="round" />
       <rect x="5" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
       <rect x="99" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
     </svg>
@@ -133,7 +133,7 @@ function PipelineGraphic() {
 
         {/* Stage 1: Intake */}
         <g className="landing-pipeline-stage">
-          <rect x="20" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="20" y="8" width="80" height="72" rx="10" fill="rgba(26,26,29,0.85)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
           <rect x="20" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* Document icon */}
           <rect x="45" y="18" width="20" height="26" rx="3" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
@@ -145,7 +145,7 @@ function PipelineGraphic() {
 
         {/* Stage 2: Compute */}
         <g className="landing-pipeline-stage">
-          <rect x="130" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="130" y="8" width="80" height="72" rx="10" fill="rgba(26,26,29,0.85)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
           <rect x="130" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* AI/Gear icon */}
           <circle cx="170" cy="32" r="11" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
@@ -168,7 +168,7 @@ function PipelineGraphic() {
 
         {/* Stage 3: Review */}
         <g className="landing-pipeline-stage">
-          <rect x="240" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="240" y="8" width="80" height="72" rx="10" fill="rgba(26,26,29,0.85)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
           <rect x="240" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* Checkmark icon */}
           <circle cx="280" cy="32" r="11" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
@@ -178,7 +178,7 @@ function PipelineGraphic() {
 
         {/* Stage 4: Report */}
         <g className="landing-pipeline-stage">
-          <rect x="350" y="8" width="80" height="72" rx="10" fill="rgba(16,16,18,0.8)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
+          <rect x="350" y="8" width="80" height="72" rx="10" fill="rgba(26,26,29,0.85)" stroke={GOLD} strokeWidth="0.8" strokeOpacity="0.4" />
           <rect x="350" y="8" width="80" height="72" rx="10" fill="none" className="landing-pipeline-stage-glow" />
           {/* Chart/report icon */}
           <rect x="375" y="18" width="20" height="26" rx="3" fill="none" stroke={GOLD_LIGHT} strokeWidth="1.5" />
@@ -699,7 +699,7 @@ export function LandingPage() {
             {/* Free tool CTA */}
             <div className="landing-free-cta">
               <Link to="/tools/409a-valuation-calculator" className="landing-free-cta-btn">
-                Estimate your 409A in 60 seconds — free →
+                Estimate your 409A — free →
               </Link>
               <div className="landing-trust-signals">
                 <span className="landing-trust-item">✓ IRS safe-harbor compliant</span>

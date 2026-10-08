@@ -54,16 +54,16 @@ export function AuthShell({
       </div>
 
       {/* Form panel */}
-      <div className="flex flex-1 items-center justify-center px-5 py-10 sm:px-10">
+      <div className="flex flex-1 items-center justify-center px-5 py-8 sm:px-10 sm:py-10">
         <div className="w-full max-w-sm">
-          <div className="mb-8 lg:hidden">
+          <div className="mb-6 lg:hidden">
             <span className="flex items-center gap-2.5">
               <LogoMark size={34} />
               <span className="text-2xl font-semibold text-ink-900">DoAide{' '}<em className="font-display italic text-bond-500">409A</em></span>
             </span>
           </div>
           <h1 className="font-display text-2xl font-semibold text-ink-900">{title}</h1>
-          <p className="mt-1.5 mb-8 text-sm text-ink-400">{subtitle}</p>
+          <p className="mt-1.5 mb-6 text-sm text-ink-400">{subtitle}</p>
           {children}
         </div>
       </div>

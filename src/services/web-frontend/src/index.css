@@ -541,17 +541,18 @@ html {
 /* ── DoAide Landing Page (split template — golden/black theme) ────────────── */
 
 .landing-root {
-  --gold: #F0B429;
-  --gold-light: #F7CC5F;
-  --gold-dark: #D4A01F;
-  --gold-dim: #A87C1C;
-  --bg: rgb(10, 10, 11);
-  --bg-card: rgba(16, 16, 18, 0.85);
-  --bg-card-hover: rgba(22, 22, 25, 0.9);
+  --gold: #D4AF37;
+  --gold-light: #E8C65A;
+  --gold-dark: #B8962E;
+  --gold-dim: #8B7023;
+  --bg: #1A1A1D;
+  --bg-card: rgba(26, 26, 29, 0.92);
+  --bg-card-hover: rgba(32, 32, 36, 0.95);
   --text: rgb(229, 231, 235);
   --text-white: rgb(255, 255, 255);
-  --text-muted: rgba(255, 255, 255, 0.4);
+  --text-muted: rgba(255, 255, 255, 0.45);
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg);
   color: var(--text);
   font-family: 'Schibsted Grotesk', var(--font-sans);
@@ -675,8 +676,8 @@ html {
 }
 
 @keyframes landing-glow-pulse {
-  0%, 100% { filter: drop-shadow(0 0 24px rgba(240, 180, 41, 0.25)); }
-  50% { filter: drop-shadow(0 0 40px rgba(240, 180, 41, 0.45)); }
+  0%, 100% { filter: drop-shadow(0 0 24px rgba(212, 175, 55, 0.25)); }
+  50% { filter: drop-shadow(0 0 40px rgba(212, 175, 55, 0.45)); }
 }
 
 @keyframes landing-pulse {
@@ -785,7 +786,7 @@ html {
   width: 180px;
   height: 140px;
   border-radius: 50%;
-  background: radial-gradient(ellipse, rgba(240, 180, 41, 0.15) 0%, transparent 70%);
+  background: radial-gradient(ellipse, rgba(212, 175, 55, 0.15) 0%, transparent 70%);
   filter: blur(25px);
   top: 50%;
   left: 50%;
@@ -835,7 +836,7 @@ html {
 }
 
 .landing-pipeline-stage-glow {
-  stroke: rgba(240, 180, 41, 0.15);
+  stroke: rgba(212, 175, 55, 0.15);
   stroke-width: 6;
   filter: blur(4px);
   animation: landing-pipeline-glow 3s ease-in-out infinite;
@@ -943,7 +944,7 @@ html {
 
 .landing-value-dot-active {
   background: var(--gold);
-  box-shadow: 0 0 10px rgba(240, 180, 41, 0.5);
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
   transform: scale(1.3);
 }
 
@@ -1009,21 +1010,25 @@ html {
 
 .landing-free-cta-btn {
   display: inline-block;
-  padding: 12px 28px;
+  padding: 14px 32px;
   background: var(--gold);
-  color: #0A0A0B;
+  color: #1A1A1D;
   font-size: 15px;
   font-weight: 700;
-  border-radius: 8px;
+  border-radius: 10px;
   text-decoration: none;
-  transition: background 0.2s, transform 0.15s;
-  box-shadow: 0 2px 12px rgba(240, 180, 41, 0.3);
+  transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+  box-shadow: 0 2px 12px rgba(212, 175, 55, 0.3);
+  min-height: 48px;
+  line-height: 48px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .landing-free-cta-btn:hover {
   background: var(--gold-light);
   transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(240, 180, 41, 0.4);
+  box-shadow: 0 4px 20px rgba(212, 175, 55, 0.4);
 }
 
 .landing-trust-signals {
@@ -1066,7 +1071,7 @@ html {
   border-radius: 24px;
   padding: 36px 32px;
   box-shadow:
-    0 0 80px rgba(240, 180, 41, 0.03),
+    0 0 80px rgba(212, 175, 55, 0.04),
     0 4px 24px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(16px);
 }
@@ -1118,15 +1123,15 @@ html {
 /* Override the default Button primary styling — golden background */
 .landing-submit-btn {
   background: var(--gold) !important;
-  color: #0A0A0B !important;
+  color: #1A1A1D !important;
   border-radius: 12px !important;
   font-weight: 700 !important;
-  min-height: 44px !important;
+  min-height: 48px !important;
   transition: all 0.25s ease !important;
 }
 .landing-submit-btn:hover:not(:disabled) {
   background: var(--gold-dark) !important;
-  box-shadow: 0 4px 20px rgba(240, 180, 41, 0.3) !important;
+  box-shadow: 0 4px 20px rgba(212, 175, 55, 0.3) !important;
   transform: translateY(-1px) !important;
 }
 .landing-submit-btn:active:not(:disabled) {
@@ -1155,8 +1160,8 @@ html {
 }
 
 .landing-social-btn:hover {
-  border-color: rgba(240, 180, 41, 0.3);
-  background: rgba(240, 180, 41, 0.04);
+  border-color: rgba(212, 175, 55, 0.3);
+  background: rgba(212, 175, 55, 0.04);
 }
 
 /* ── Divider ── */
@@ -1201,7 +1206,7 @@ html {
 .landing-auth-card input[type="email"]:focus,
 .landing-auth-card input[type="password"]:focus {
   border-color: var(--gold);
-  box-shadow: 0 0 0 3px rgba(240, 180, 41, 0.1);
+  box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.12);
 }
 .landing-auth-card input::placeholder {
   color: rgba(255, 255, 255, 0.15);
@@ -1210,20 +1215,24 @@ html {
 /* ── Responsive: mobile stacks vertically at 768px ── */
 
 @media (max-width: 768px) {
+  .landing-root {
+    min-height: 100dvh;
+  }
+
   .landing-split {
     flex-direction: column;
     max-width: 100%;
     padding: 0;
     gap: 0;
-    min-height: auto;
+    min-height: 100dvh;
   }
 
   .landing-left {
-    flex: none;
+    flex: 0 0 auto;
   }
 
   .landing-left-inner {
-    padding: 28px 16px 12px;
+    padding: 24px 20px 8px;
   }
 
   .landing-brand {
@@ -1267,10 +1276,18 @@ html {
     display: none;
   }
 
+  .landing-free-cta {
+    display: none;
+  }
+
+  .landing-subscribe {
+    display: none;
+  }
+
   .landing-right {
-    flex: 1;
+    flex: 1 1 auto;
     width: 100%;
-    padding: 4px 16px 24px;
+    padding: 8px 20px 32px;
     align-items: flex-start;
   }
 
@@ -1285,7 +1302,29 @@ html {
   .landing-auth-card {
     max-width: 100%;
     border-radius: 16px;
-    padding: 24px 16px;
+    padding: 24px 20px;
+  }
+
+  .landing-auth-card input[type="text"],
+  .landing-auth-card input[type="email"],
+  .landing-auth-card input[type="password"] {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  .landing-submit-btn {
+    min-height: 48px !important;
+    font-size: 16px !important;
+  }
+
+  .landing-social-btn {
+    min-height: 48px;
+    font-size: 14px;
+  }
+
+  .landing-tab {
+    min-height: 48px;
+    font-size: 15px;
   }
 }
 
