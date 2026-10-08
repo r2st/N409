@@ -859,7 +859,7 @@ export function PartnerDetailPage() {
           <div className="overline text-ink-400">Partner</div>
           <h1 className="mt-1 flex items-center gap-3 font-display text-3xl font-semibold text-ink-900">
             {partner.logo_url && (
-              <img src={partner.logo_url} alt="" className="h-9 w-9 rounded object-contain" />
+              <img src={partner.logo_url} alt={`${partner.name} logo`} className="h-9 w-9 rounded object-contain" loading="lazy" />
             )}
             {partner.name}
             {partner.archived_at && (

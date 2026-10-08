@@ -275,7 +275,7 @@ export function BrandingPage() {
           <div className="flex flex-wrap items-center gap-5">
             <div className="flex items-center gap-3 rounded-md bg-chrome-900 px-4 py-3">
               {preview.logo_dark_url ? (
-                <img src={preview.logo_dark_url} alt="" className="h-7 object-contain" />
+                <img src={preview.logo_dark_url} alt={`${preview.name} logo dark preview`} className="h-7 object-contain" loading="lazy" />
               ) : null}
               <span className="font-display text-lg font-semibold text-chrome-fg">{preview.name}</span>
               {preview.tagline && (

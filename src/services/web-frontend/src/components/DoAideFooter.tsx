@@ -1,9 +1,13 @@
 const TOOLS = [
-  { icon: '\u{1F4C4}', name: 'Docs', url: 'https://docs.doaide.com', desc: 'Free document generator for India' },
-  { icon: '\u{1F4DD}', name: 'Resume', url: 'https://resume.doaide.com', desc: 'AI resume builder with ATS optimization' },
-  { icon: '\u{1F3F7}️', name: 'GST Bot', url: 'https://gst.doaide.com', desc: 'GST filing, lookup & compliance' },
-  { icon: '\u{1F4DD}', name: 'Contracts', url: 'https://contracts.doaide.com', desc: 'Draft & manage business contracts' },
-  { icon: '\u{1F9FE}', name: 'Invoicer', url: 'https://invoicer.doaide.com', desc: 'Create GST invoices in seconds' },
+  { icon: '\u{1F4C4}', name: 'Docs', url: 'https://docs.doaide.com', desc: 'Free document generators' },
+  { icon: '\u{1F4DD}', name: 'Resume', url: 'https://resume.doaide.com', desc: 'AI resume builder' },
+  { icon: '\u{1F3F7}️', name: 'GST Bot', url: 'https://gst.doaide.com', desc: 'GST filing & compliance' },
+  { icon: '\u{1F6E1}️', name: 'InsureKit', url: 'https://insure.doaide.com', desc: 'Insurance calculators' },
+  { icon: '\u{1F4B0}', name: 'TaxFile', url: 'https://tax.doaide.com', desc: 'Tax & financial calculators' },
+  { icon: '\u{1F4C8}', name: 'Pulse', url: 'https://pulse.doaide.com', desc: 'Newsletter growth tools' },
+  { icon: '\u{1F9FE}', name: 'Invoicer', url: 'https://invoicer.doaide.com', desc: 'GST invoices in seconds' },
+  { icon: '\u{1F4DD}', name: 'Contracts', url: 'https://contracts.doaide.com', desc: 'Business contracts' },
+  { icon: '\u{1F3E0}', name: 'HomeNex', url: 'https://homenex.aiknol.com', desc: 'AI CRM for real estate' },
 ];
 
 export function DoAideFooter() {
