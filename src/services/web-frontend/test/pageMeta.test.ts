@@ -17,6 +17,9 @@ describe('page metadata registry (§24)', () => {
     const covered = new Set(allPageMeta().map((p) => p.path));
     const missing = marketingRoutes()
       .map((r) => r.path)
+      // Blog posts are CMS-driven database rows; their metadata comes from
+      // the API at runtime, not from this build-time registry.
+      .filter((path) => !path.startsWith('/blog/'))
       .filter((path) => !covered.has(path));
     expect(missing).toEqual([]);
   });
@@ -35,16 +38,16 @@ describe('page metadata registry (§24)', () => {
   });
 
   it('covers all products and comparisons', () => {
-    // Twenty static pages: home, pricing, which-valuation, the four
+    // Twenty-three static pages: home, pricing, which-valuation, the four
     // tool pages (409A calculator, stock option tax calculator, compliance
-    // checker, startup valuation estimator), free-tools, resources, the three
-    // educational guides (409A guide, when do you need one, what does it cost),
-    // the sample report, the compare hub, the partner hub, developers, blog,
-    // about, contact, terms, privacy.
+    // checker, startup valuation estimator), free-tools, resources, the five
+    // educational guides (409A guide, when do you need one, what does it cost,
+    // valuation methods, cost comparison), the sample report, the compare hub,
+    // the partner hub, developers, blog, about, contact, terms, privacy.
     // Individual blog posts are database rows and are deliberately absent —
     // this registry is build-time data.
     expect(allPageMeta()).toHaveLength(
-      21 + PRODUCTS.length + FUNDING_STAGES.length + PARTNER_SEGMENTS.length + COMPARISONS.length,
+      23 + PRODUCTS.length + FUNDING_STAGES.length + PARTNER_SEGMENTS.length + COMPARISONS.length,
     );
     for (const product of PRODUCTS) {
       expect(productPageMeta(product.slug)?.path).toBe(`/products/${product.slug}`);

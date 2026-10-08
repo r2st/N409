@@ -105,7 +105,7 @@ export function staticPages(): HeadInput[] {
       path: '/409a-valuation-methods',
       title: '409A valuation methods explained: market, income, asset approach',
       description:
-        'The three valuation approaches used in a 409A — market (comparable companies), income (discounted cash flow), and asset (net asset value) — how they are applied, weighted, and reconciled into a defensible fair market value.',
+        'The three valuation approaches used in a 409A — market, income, and asset — how they are applied, weighted, and reconciled into a defensible fair market value.',
       jsonLd: breadcrumbJsonLd([
         HOME_CRUMB,
         { name: 'Resources', path: '/resources' },
@@ -116,7 +116,7 @@ export function staticPages(): HeadInput[] {
       path: '/409a-valuation-cost-comparison',
       title: '409A valuation cost comparison: Big 4 vs boutique vs automated',
       description:
-        'How much a 409A valuation costs across provider types — Big 4 firms ($10K–$30K+), boutiques ($3K–$10K), cap-table add-ons, and AI-native platforms (from $49) — and what drives the real cost including audit support.',
+        'How much a 409A costs across provider types — Big 4, boutique, cap-table add-ons, and AI-native — pricing, turnaround, and what drives the real cost including audit support.',
       jsonLd: breadcrumbJsonLd([
         HOME_CRUMB,
         { name: 'Resources', path: '/resources' },
