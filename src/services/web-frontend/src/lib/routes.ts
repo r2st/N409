@@ -13,6 +13,60 @@ export interface SitemapRoute {
   priority: number;
 }
 
+const BLOG_SLUGS = [
+  'what-is-a-409a-valuation',
+  'how-often-do-you-need-a-409a-valuation',
+  'why-your-409a-is-lower-than-your-post-money',
+  '409a-valuations-explained-for-employees',
+  'what-an-irs-409a-audit-asks-for',
+  'opm-pwerm-and-the-hybrid-method',
+  'dlom-finnerty-chaffe-and-what-auditors-check',
+  'the-three-valuation-approaches',
+  'liquidation-preferences-and-the-allocation-waterfall',
+  'how-safes-and-convertible-notes-affect-your-409a',
+  'iso-vs-nso-how-stock-options-are-taxed',
+  'the-83b-election-explained',
+  'section-83i-qualified-equity-grant-deferral',
+  'qsbs-section-1202-what-founders-need-to-know',
+  'section-1244-ordinary-loss-on-failed-startup-stock',
+  'rule-701-and-equity-compensation-disclosure',
+  'down-rounds-underwater-options-and-repricing',
+  'double-trigger-rsus-and-the-ipo-tax-bill',
+  'profits-interests-and-the-llc-hurdle',
+  'tender-offers-secondary-sales-and-your-409a',
+  'asc-718-stock-based-compensation-for-startups',
+  'ifrs-2-vs-asc-718',
+  'asc-820-level-3-fair-value-for-fund-portfolios',
+  'asc-805-purchase-price-allocation',
+  'goodwill-impairment-for-private-companies',
+  'emi-share-options-uk-hmrc-valuation',
+  'csop-share-options-uk-hmrc-valuation',
+  'esop-valuation-and-adequate-consideration',
+  'cheap-stock-and-the-pre-ipo-409a',
+  'inside-the-409a-valuation-process',
+  'post-money-and-pre-money-safes-the-conversion-arithmetic',
+  'caps-discounts-and-accrued-interest-how-a-note-converts',
+  'the-option-pool-shuffle',
+  'bridge-rounds-and-the-valuation-in-between',
+  'structured-rounds-and-the-price-behind-the-headline',
+  'founder-secondaries-and-what-they-do-to-your-409a',
+  'pay-to-play-recapitalizations-and-the-common-stock',
+  'venture-debt-warrants-and-how-they-are-valued',
+  'ipo-readiness-the-valuation-work-that-starts-early',
+  'secondary-market-prices-and-what-a-409a-does-with-them',
+  'qsbs-stacking-packing-and-non-grantor-trusts',
+  'qsbs-the-active-business-and-asset-tests-in-detail',
+  'qsbs-redemptions-and-how-eligibility-is-quietly-lost',
+  '409a-valuations-for-non-us-companies-with-us-employees',
+  'hmrc-share-and-assets-valuation-how-agreement-works',
+  'canadian-employee-stock-options-and-fair-market-value',
+  'what-a-409a-valuation-actually-defends',
+  'indian-esop-valuations-and-the-merchant-banker-requirement',
+  'israeli-section-102-options-and-the-trustee-route',
+  'what-a-valuation-provider-needs-from-your-cap-table',
+  'board-approval-and-the-409a-paper-trail',
+];
+
 /** Marketing/public routes only — auth and app routes are intentionally excluded. */
 export function marketingRoutes(): SitemapRoute[] {
   const routes: SitemapRoute[] = [
@@ -36,9 +90,6 @@ export function marketingRoutes(): SitemapRoute[] {
     // cap-table platform is worth a lot of individual signups.
     { path: '/partners', changefreq: 'monthly', priority: 0.8 },
     { path: '/developers', changefreq: 'monthly', priority: 0.7 },
-    // The blog index only. Individual posts live in the database and are
-    // authored after this file is built, so listing them here would either be
-    // a stale list or a build that has to reach the database.
     { path: '/blog', changefreq: 'weekly', priority: 0.6 },
     { path: '/about', changefreq: 'monthly', priority: 0.5 },
     { path: '/contact', changefreq: 'monthly', priority: 0.5 },
@@ -59,6 +110,9 @@ export function marketingRoutes(): SitemapRoute[] {
   }
   for (const comparison of COMPARISONS) {
     routes.push({ path: `/compare/${comparison.slug}`, changefreq: 'monthly', priority: 0.6 });
+  }
+  for (const slug of BLOG_SLUGS) {
+    routes.push({ path: `/blog/${slug}`, changefreq: 'monthly', priority: 0.6 });
   }
   return routes;
 }

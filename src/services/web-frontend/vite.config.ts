@@ -69,7 +69,7 @@ function seoFilesPlugin(baseUrl: string): Plugin {
       server.middlewares.use((req, res, next) => {
         if (req.url === '/sitemap.xml') {
           res.setHeader('Content-Type', 'application/xml');
-          res.end(buildSitemapXml(baseUrl));
+          res.end(buildSitemapXml(baseUrl, undefined, new Date().toISOString().slice(0, 10)));
           return;
         }
         if (req.url === '/robots.txt') {
@@ -81,7 +81,7 @@ function seoFilesPlugin(baseUrl: string): Plugin {
       });
     },
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: buildSitemapXml(baseUrl) });
+      this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: buildSitemapXml(baseUrl, undefined, new Date().toISOString().slice(0, 10)) });
       this.emitFile({ type: 'asset', fileName: 'robots.txt', source: buildRobotsTxt(baseUrl) });
     },
   };
