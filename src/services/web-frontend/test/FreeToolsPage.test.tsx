@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { FreeToolsPage } from '../src/pages/marketing/FreeToolsPage';
 
 describe('FreeToolsPage', () => {
-  it('renders the heading and all four tool cards', () => {
+  it('renders the heading and all six tool cards', () => {
     render(
       <MemoryRouter initialEntries={['/free-tools']}>
         <FreeToolsPage />
@@ -15,6 +15,8 @@ describe('FreeToolsPage', () => {
     expect(screen.getByText(/Safe Harbor Compliance Checker/)).toBeInTheDocument();
     expect(screen.getByText(/Startup Valuation Estimator/)).toBeInTheDocument();
     expect(screen.getByText(/Stock Option Tax Calculator/)).toBeInTheDocument();
+    expect(screen.getByText(/Valuation Readiness Checker/)).toBeInTheDocument();
+    expect(screen.getByText(/409A Cost Comparison Calculator/)).toBeInTheDocument();
   });
 
   it('links each tool to its page', () => {
@@ -29,5 +31,7 @@ describe('FreeToolsPage', () => {
     expect(toolPaths).toContain('/tools/409a-compliance-checker');
     expect(toolPaths).toContain('/tools/startup-valuation-estimator');
     expect(toolPaths).toContain('/tools/stock-option-tax-calculator');
+    expect(toolPaths).toContain('/tools/readiness-checker');
+    expect(toolPaths).toContain('/tools/cost-comparison');
   });
 });

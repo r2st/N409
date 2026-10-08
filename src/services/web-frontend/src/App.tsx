@@ -49,6 +49,8 @@ const TaxCalculatorPage = named(() => import('./pages/marketing/TaxCalculatorPag
 const ComplianceCheckerPage = named(() => import('./pages/marketing/ComplianceCheckerPage'), 'ComplianceCheckerPage');
 const ValuationEstimatorPage = named(() => import('./pages/marketing/ValuationEstimatorPage'), 'ValuationEstimatorPage');
 const FreeToolsPage = named(() => import('./pages/marketing/FreeToolsPage'), 'FreeToolsPage');
+const ReadinessCheckerPage = named(() => import('./pages/marketing/ReadinessCheckerPage'), 'ReadinessCheckerPage');
+const CostComparisonPage = named(() => import('./pages/marketing/CostComparisonPage'), 'CostComparisonPage');
 const ResourcesPage = named(() => import('./pages/marketing/ResourcesPage'), 'ResourcesPage');
 const SampleReportPage = named(() => import('./pages/marketing/SampleReportPage'), 'SampleReportPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
@@ -248,6 +250,8 @@ export default function App() {
             <Route path="/tools/stock-option-tax-calculator" element={<TaxCalculatorPage />} />
             <Route path="/tools/409a-compliance-checker" element={<ComplianceCheckerPage />} />
             <Route path="/tools/startup-valuation-estimator" element={<ValuationEstimatorPage />} />
+            <Route path="/tools/readiness-checker" element={<ReadinessCheckerPage />} />
+            <Route path="/tools/cost-comparison" element={<CostComparisonPage />} />
             <Route path="/free-tools" element={<FreeToolsPage />} />
             <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/sample-report" element={<SampleReportPage />} />

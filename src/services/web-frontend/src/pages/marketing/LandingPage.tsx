@@ -6,6 +6,7 @@ import { FaqAccordion } from '../../components/FaqAccordion';
 import { EmailSubscribe } from '../../components/EmailSubscribe';
 import { pageMeta } from '../../lib/pageMeta';
 import { LANDING_FAQ, PROOF_POINTS } from '../../lib/marketing';
+import { ValuationTimeline } from '../../components/ValuationTimeline';
 import { useAuth } from '../../lib/auth';
 import { api, describeActionFailure } from '../../lib/api';
 import type { AuthProviders, PublicSystemSettings } from '../../lib/types';
@@ -719,6 +720,9 @@ export function LandingPage() {
                 </div>
               ))}
             </div>
+
+            {/* Valuation timeline */}
+            <ValuationTimeline />
 
             {/* FAQ section */}
             <div className="landing-faq">

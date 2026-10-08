@@ -1097,6 +1097,166 @@ html {
 .landing-faq .text-ink-400 { color: rgba(255, 255, 255, 0.5); }
 .landing-faq .text-ink-600 { color: rgba(255, 255, 255, 0.6); }
 
+/* ── Valuation timeline ── */
+
+.landing-timeline {
+  margin-top: 28px;
+}
+
+.landing-timeline-heading {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.landing-timeline-subhead {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0 0 16px;
+}
+
+.landing-timeline-track {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.landing-timeline-step {
+  position: relative;
+}
+
+.landing-timeline-connector {
+  position: absolute;
+  left: 15px;
+  top: 36px;
+  bottom: -4px;
+  width: 2px;
+  background: linear-gradient(to bottom, rgba(212, 175, 55, 0.4), rgba(212, 175, 55, 0.1));
+}
+
+.landing-timeline-node {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: left;
+  min-height: 44px;
+}
+
+.landing-timeline-node:hover {
+  color: #fff;
+}
+
+.landing-timeline-dot {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid;
+  background: rgba(26, 26, 29, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.landing-timeline-dot-num {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #D4AF37;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.landing-timeline-label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.landing-timeline-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.landing-timeline-duration {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.landing-timeline-chevron {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.35);
+  transition: transform 0.2s;
+}
+
+.landing-timeline-chevron-open {
+  transform: rotate(180deg);
+}
+
+.landing-timeline-detail {
+  margin-left: 44px;
+  padding: 0 0 12px;
+}
+
+.landing-timeline-desc {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.landing-timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.landing-timeline-list li {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.5;
+}
+
+.landing-timeline-progress {
+  margin-top: 16px;
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.landing-timeline-progress-bar {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #D4AF37, #E8C65A);
+  border-radius: 3px;
+  animation: timeline-fill 3s ease-out forwards;
+}
+
+.landing-timeline-progress-label {
+  position: absolute;
+  right: 0;
+  top: 10px;
+  font-size: 0.7rem;
+  color: rgba(212, 175, 55, 0.7);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+@keyframes timeline-fill {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
 .landing-subscribe {
   margin-top: 20px;
   padding: 16px 20px;

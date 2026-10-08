@@ -58,6 +58,32 @@ const FREE_TOOLS = [
       </svg>
     ),
   },
+  {
+    title: 'Valuation Readiness Checker',
+    description:
+      'Answer 10 questions about your startup to get a readiness score, missing-items checklist, and estimated timeline. No signup required.',
+    path: '/tools/readiness-checker',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+        <rect x="9" y="3" width="6" height="4" rx="1" />
+        <path d="M9 14l2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    title: '409A Cost Comparison Calculator',
+    description:
+      'Compare cost and timeline of Big 4 firms, boutique providers, and AI-powered platforms for your company stage. Free, instant.',
+    path: '/tools/cost-comparison',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <rect x="3" y="12" width="4" height="9" rx="1" />
+        <rect x="10" y="8" width="4" height="13" rx="1" />
+        <rect x="17" y="3" width="4" height="18" rx="1" />
+      </svg>
+    ),
+  },
 ];
 
 export function FreeToolsPage() {

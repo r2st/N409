@@ -261,6 +261,20 @@ export function MarketingHeader() {
               Compliance checker
             </Link>
             <Link
+              to="/tools/readiness-checker"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
+              Readiness checker
+            </Link>
+            <Link
+              to="/tools/cost-comparison"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
+              Cost comparison
+            </Link>
+            <Link
               to="/login"
               onClick={() => setMobileOpen(false)}
               className="text-sm font-semibold text-ink-700"
@@ -365,6 +379,12 @@ export function MarketingFooter() {
             </Link>
             <Link to="/tools/409a-compliance-checker" className="hover:text-chrome-fg">
               Compliance checker
+            </Link>
+            <Link to="/tools/readiness-checker" className="hover:text-chrome-fg">
+              Readiness checker
+            </Link>
+            <Link to="/tools/cost-comparison" className="hover:text-chrome-fg">
+              Cost comparison
             </Link>
             <Link to="/resources" className="hover:text-chrome-fg">
               Resources

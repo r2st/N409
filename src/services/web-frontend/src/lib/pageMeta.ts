@@ -178,10 +178,32 @@ export function staticPages(): HeadInput[] {
       ]),
     },
     {
+      path: '/tools/readiness-checker',
+      title: '409A valuation readiness checker — is your startup ready?',
+      description:
+        'Free 409A readiness checker — answer 10 questions about your startup to get a readiness score, missing-items checklist, and estimated timeline. No signup required.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: 'Readiness Checker', path: '/tools/readiness-checker' },
+      ]),
+    },
+    {
+      path: '/tools/cost-comparison',
+      title: '409A valuation cost comparison — Big 4 vs boutique vs AI-powered',
+      description:
+        'Free 409A cost comparison — see how Big 4 firms, boutique providers, and AI-powered platforms compare on price, timeline, and features for your company stage.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: 'Cost Comparison', path: '/tools/cost-comparison' },
+      ]),
+    },
+    {
       path: '/free-tools',
       title: 'Free 409A tools for startups',
       description:
-        'Free 409A valuation tools — calculator, safe harbor compliance checker, startup valuation estimator, and stock option tax calculator. No signup, no email required.',
+        'Free 409A valuation tools — calculator, compliance checker, readiness checker, cost comparison, valuation estimator, and tax calculator. No signup, no email required.',
       jsonLd: breadcrumbJsonLd([HOME_CRUMB, { name: 'Free Tools', path: '/free-tools' }]),
     },
     {
