@@ -10,8 +10,7 @@ build/
 out/
 
 # Environment & secrets
-.env
-.env.*
+.env*
 !.env.example
 keys/
 *.pem
