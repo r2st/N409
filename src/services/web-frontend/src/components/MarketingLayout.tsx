@@ -410,7 +410,7 @@ export function MarketingFooter() {
           <div className="flex flex-col items-center gap-3 sm:items-start">
             <nav className="flex flex-wrap justify-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-[0.14em] sm:justify-start" aria-label="DoAide products">
               <a href="https://desk.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">Desk</a>
-              <a href="https://herald.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">Herald</a>
+              <a href="https://pulse.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">Pulse</a>
               <span className="text-brass-400">409A</span>
               <a href="https://job.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">AutoApply</a>
               <a href="https://homenex.doaide.com" target="_blank" rel="noopener noreferrer" className="text-chrome-faint transition-colors hover:text-chrome-fg">Realty</a>
