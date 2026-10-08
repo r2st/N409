@@ -82,6 +82,8 @@ export function marketingRoutes(): SitemapRoute[] {
     // The three educational pages. High priority because they are the top of
     // the funnel — a founder reads these before they know what to buy.
     { path: '/409a-valuation-guide', changefreq: 'monthly', priority: 0.8 },
+    { path: '/409a-valuation-methods', changefreq: 'monthly', priority: 0.7 },
+    { path: '/409a-valuation-cost-comparison', changefreq: 'monthly', priority: 0.7 },
     { path: '/when-do-you-need-a-409a', changefreq: 'monthly', priority: 0.7 },
     { path: '/how-much-does-a-409a-cost', changefreq: 'monthly', priority: 0.7 },
     { path: '/sample-report', changefreq: 'monthly', priority: 0.8 },

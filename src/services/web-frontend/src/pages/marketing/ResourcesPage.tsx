@@ -67,9 +67,19 @@ const GUIDES = [
     path: '/when-do-you-need-a-409a',
   },
   {
+    title: '409A Valuation Methods Explained',
+    description: 'The market, income, and asset approaches — how they work and when each applies.',
+    path: '/409a-valuation-methods',
+  },
+  {
     title: 'How Much Does a 409A Cost?',
     description: 'Market price bands, what drives cost, and how DoAide 409A compares.',
     path: '/how-much-does-a-409a-cost',
+  },
+  {
+    title: '409A Cost Comparison: Big 4 vs Boutique vs Automated',
+    description: 'Side-by-side comparison of 409A providers — pricing, turnaround, and trade-offs.',
+    path: '/409a-valuation-cost-comparison',
   },
   {
     title: 'Which Valuation Do You Need?',

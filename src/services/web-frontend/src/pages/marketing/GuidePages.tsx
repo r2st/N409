@@ -2,12 +2,15 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { VALUATION_TRIGGERS, AUDIT_DEFENCE_RATE_USD, formatUsd, productBySlug } from '../../lib/marketing';
 import {
+  COST_COMPARISON_SECTIONS,
   COST_DRIVERS,
   EXPRESS_DELIVERY_CENTS,
   EXPRESS_DELIVERY_DAYS,
   GUIDE_SECTIONS,
   MARKET_PRICE_BANDS,
+  METHODS_SECTIONS,
   NONCOMPLIANCE_CONSEQUENCES,
+  PROVIDER_TYPES,
 } from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
@@ -254,6 +257,91 @@ export function ValuationCostPage() {
           revisions during the draft cycle are included.
         </p>
       </section>
+    </GuideShell>
+  );
+}
+
+/** `/409a-valuation-methods` */
+export function ValuationMethodsPage() {
+  return (
+    <GuideShell
+      path="/409a-valuation-methods"
+      overline="Methods"
+      title="409A valuation methods explained"
+      standfirst="The market, income, and asset approaches — how they work, when each one applies, and how they are reconciled into a defensible fair market value for your common stock."
+    >
+      {METHODS_SECTIONS.map((section) => (
+        <section key={section.heading} data-testid="guide-section">
+          <h2 className="font-display text-2xl font-semibold text-ink-900">{section.heading}</h2>
+          <p className="mt-3 text-[0.95rem] leading-relaxed text-ink-700">{section.body}</p>
+          {section.bullets && <Bullets items={section.bullets} />}
+        </section>
+      ))}
+    </GuideShell>
+  );
+}
+
+/** `/409a-valuation-cost-comparison` */
+export function ValuationCostComparisonPage() {
+  return (
+    <GuideShell
+      path="/409a-valuation-cost-comparison"
+      overline="Cost comparison"
+      title="409A valuation cost: Big 4 vs boutique vs automated"
+      standfirst="What a 409A valuation costs across four provider types, what is included, what is not, and how to choose."
+    >
+      {/* Provider comparison cards */}
+      <section>
+        <h2 className="font-display text-2xl font-semibold text-ink-900">Four kinds of 409A provider</h2>
+        <div className="mt-5 space-y-5">
+          {PROVIDER_TYPES.map((provider) => (
+            <div
+              key={provider.name}
+              data-testid="provider-type"
+              className="rounded-lg border border-paper-300 bg-surface p-5"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-sm font-semibold text-ink-900">{provider.name}</h3>
+                <span className="tnum text-sm font-semibold text-bond-700">{provider.priceRange}</span>
+              </div>
+              <p className="mt-1 text-xs text-ink-500">Typical turnaround: {provider.turnaround}</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs font-semibold text-ink-600">Strengths</p>
+                  <ul className="mt-1 space-y-1">
+                    {provider.strengths.map((s) => (
+                      <li key={s} className="flex gap-2 text-[0.85rem] leading-relaxed text-ink-600">
+                        <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                        <span>{s}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-ink-600">Trade-offs</p>
+                  <ul className="mt-1 space-y-1">
+                    {provider.tradeoffs.map((t) => (
+                      <li key={t} className="flex gap-2 text-[0.85rem] leading-relaxed text-ink-600">
+                        <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                        <span>{t}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* General cost analysis sections */}
+      {COST_COMPARISON_SECTIONS.map((section) => (
+        <section key={section.heading} data-testid="guide-section">
+          <h2 className="font-display text-2xl font-semibold text-ink-900">{section.heading}</h2>
+          <p className="mt-3 text-[0.95rem] leading-relaxed text-ink-700">{section.body}</p>
+          {section.bullets && <Bullets items={section.bullets} />}
+        </section>
+      ))}
     </GuideShell>
   );
 }

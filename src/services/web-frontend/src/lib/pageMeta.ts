@@ -102,6 +102,28 @@ export function staticPages(): HeadInput[] {
       ],
     },
     {
+      path: '/409a-valuation-methods',
+      title: '409A valuation methods explained: market, income, asset approach',
+      description:
+        'The three valuation approaches used in a 409A — market (comparable companies), income (discounted cash flow), and asset (net asset value) — how they are applied, weighted, and reconciled into a defensible fair market value.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: '409A Valuation Methods', path: '/409a-valuation-methods' },
+      ]),
+    },
+    {
+      path: '/409a-valuation-cost-comparison',
+      title: '409A valuation cost comparison: Big 4 vs boutique vs automated',
+      description:
+        'How much a 409A valuation costs across provider types — Big 4 firms ($10K–$30K+), boutiques ($3K–$10K), cap-table add-ons, and AI-native platforms (from $49) — and what drives the real cost including audit support.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: '409A Cost Comparison', path: '/409a-valuation-cost-comparison' },
+      ]),
+    },
+    {
       path: '/how-much-does-a-409a-cost',
       title: 'How much does a 409A valuation cost?',
       description: `What a 409A valuation costs and what drives the price — market bands from bundled cap-table platforms to advisory firms, DoAide 409A from ${formatUsd(NINE_A_PRICE_CENTS)}, and the audit-support rate that is not on the quote.`,

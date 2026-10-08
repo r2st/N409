@@ -42,6 +42,8 @@ const WhichValuationPage = named(() => import('./pages/marketing/WhichValuationP
 const ValuationGuidePage = named(() => import('./pages/marketing/GuidePages'), 'ValuationGuidePage');
 const WhenDoYouNeedPage = named(() => import('./pages/marketing/GuidePages'), 'WhenDoYouNeedPage');
 const ValuationCostPage = named(() => import('./pages/marketing/GuidePages'), 'ValuationCostPage');
+const ValuationMethodsPage = named(() => import('./pages/marketing/GuidePages'), 'ValuationMethodsPage');
+const ValuationCostComparisonPage = named(() => import('./pages/marketing/GuidePages'), 'ValuationCostComparisonPage');
 const CalculatorPage = named(() => import('./pages/marketing/CalculatorPage'), 'CalculatorPage');
 const TaxCalculatorPage = named(() => import('./pages/marketing/TaxCalculatorPage'), 'TaxCalculatorPage');
 const ComplianceCheckerPage = named(() => import('./pages/marketing/ComplianceCheckerPage'), 'ComplianceCheckerPage');
@@ -238,6 +240,8 @@ export default function App() {
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/which-valuation" element={<WhichValuationPage />} />
             <Route path="/409a-valuation-guide" element={<ValuationGuidePage />} />
+            <Route path="/409a-valuation-methods" element={<ValuationMethodsPage />} />
+            <Route path="/409a-valuation-cost-comparison" element={<ValuationCostComparisonPage />} />
             <Route path="/when-do-you-need-a-409a" element={<WhenDoYouNeedPage />} />
             <Route path="/how-much-does-a-409a-cost" element={<ValuationCostPage />} />
             <Route path="/tools/409a-valuation-calculator" element={<CalculatorPage />} />

@@ -966,6 +966,167 @@ export const MARKET_PRICE_BANDS: Array<{ tier: string; range: string; note: stri
   },
 ];
 
+// ── 409A methods guide (`/409a-valuation-methods`) ──────────────────────────
+// Long-tail SEO page targeting "409A valuation methods", "market income asset
+// approach valuation". Follows the same GuideSection structure as the main guide.
+
+export const METHODS_SECTIONS: GuideSection[] = [
+  {
+    heading: 'The three standard valuation approaches',
+    body: 'Every 409A valuation draws on one or more of three recognised approaches: the market approach, the income approach, and the asset approach. A defensible report applies the approaches that are appropriate to the company\'s stage and data, weights them with a stated rationale, and shows how they were reconciled — rather than picking one and ignoring the rest.',
+  },
+  {
+    heading: 'Market approach — comparable company analysis',
+    body: 'The market approach estimates value by reference to what similar companies are worth. The two common methods are Guideline Public Company (GPC) analysis, which applies multiples from a screened set of public peers, and Guideline Transaction Method (GTM), which draws on M&A transactions in the same sector. At early stages, the most directly comparable "transaction" is often the company\'s own most recent priced round.',
+    bullets: [
+      'Best suited when a meaningful set of public or private comparables exists',
+      'Revenue and EBITDA multiples are the most common metrics, adjusted for growth and margin',
+      'Peer selection must be documented and defensible — a hand-picked set draws audit scrutiny',
+      'For pre-revenue companies, user-based or gross-merchandise-value multiples may substitute',
+    ],
+  },
+  {
+    heading: 'Income approach — discounted cash flow',
+    body: 'The income approach values the business by discounting its expected future cash flows to today at a rate that reflects the risk of achieving them. The weighted average cost of capital (WACC) is built from observable inputs — risk-free rate, equity risk premium, size premium, and a company-specific premium — so the discount rate can be reconstructed by a reviewer rather than asserted.',
+    bullets: [
+      'Requires a credible financial forecast, typically three to five years',
+      'Terminal value captures cash flows beyond the explicit forecast period',
+      'Most useful from Series A onward, when a revenue plan someone has underwritten exists',
+      'A DCF that agrees with the backsolve is strong corroboration; one that disagrees is worth explaining',
+    ],
+  },
+  {
+    heading: 'Asset approach — net asset value',
+    body: 'The asset approach values the company at the fair value of its assets minus its liabilities. For operating businesses with significant tangible assets — real estate, equipment, inventory — this can be the primary method. For most startups it is a floor: the value of the intellectual property, the team, and the early-customer relationships the company has assembled, estimated as the cost to recreate them.',
+    bullets: [
+      'Primary method for pre-revenue companies where no round exists to backsolve against',
+      'Serves as a floor or a cross-check for later-stage companies',
+      'Cost-to-recreate is the most common form: what would it take to rebuild what exists today?',
+      'Intangible assets — technology, trade secrets, assembled workforce — are included',
+    ],
+  },
+  {
+    heading: 'How approaches are allocated and reconciled',
+    body: 'Enterprise value from the approaches above must be allocated across the capital structure to reach a per-share value for common stock. The option-pricing model (OPM) and the backsolve method are the workhorses: the OPM treats each class as a call option on equity value, and the backsolve calibrates the model so the most recent round reprices correctly. For later-stage companies, a probability-weighted expected return method (PWERM) models discrete exit scenarios — IPO, sale, continuation — each with its own probability and payoff.',
+    bullets: [
+      'OPM backsolve: the primary allocation method from seed onward',
+      'PWERM: used when the exit scenarios are distinguishable and supportable',
+      'Hybrid: an OPM run inside each PWERM scenario, for late-stage companies',
+      'Approach weighting is a stated judgment, not a hidden average',
+    ],
+  },
+  {
+    heading: 'Discount for lack of marketability (DLOM)',
+    body: 'Common stock in a private company cannot be freely sold, and that illiquidity is worth a discount. The DLOM is supported by put-option models — Chaffee (European protective put) and Finnerty (average-strike Asian put) are the most widely accepted — which produce a figure from the company\'s volatility, the expected time to a liquidity event, and the risk-free rate. Early-stage companies carry a wider discount; as an exit approaches, the discount narrows.',
+  },
+];
+
+// ── Cost comparison guide (`/409a-valuation-cost-comparison`) ────────────────
+// Long-tail SEO page targeting "409A cost Big 4 vs boutique vs automated" and
+// "how much does a 409A valuation cost comparison". Distinct from the existing
+// `/how-much-does-a-409a-cost` page, which covers what drives the price in
+// general; this one directly compares the provider types.
+
+export interface ProviderType {
+  name: string;
+  priceRange: string;
+  turnaround: string;
+  strengths: string[];
+  tradeoffs: string[];
+}
+
+export const PROVIDER_TYPES: ProviderType[] = [
+  {
+    name: 'Big 4 and large advisory firms',
+    priceRange: '$10,000 – $30,000+',
+    turnaround: '4–8 weeks',
+    strengths: [
+      'Recognised brand that auditors and boards accept without question',
+      'Deep bench of specialists across complex instrument types',
+      'Integrated with the firm\'s broader audit and advisory practice',
+    ],
+    tradeoffs: [
+      'Highest price point, typically billed by the hour rather than per report',
+      'Longest turnaround, with limited visibility into progress',
+      'Audit support billed at partner rates ($400–$600+/hr)',
+      'Engagement overhead: MSA, annual renewal, minimum commitments',
+    ],
+  },
+  {
+    name: 'Boutique valuation firms',
+    priceRange: '$3,000 – $10,000',
+    turnaround: '2–4 weeks',
+    strengths: [
+      'Specialised in 409A work; deep familiarity with startup capital structures',
+      'More accessible team — direct contact with the analyst on your report',
+      'Competitive pricing on renewals and roll-forwards',
+    ],
+    tradeoffs: [
+      'Quality varies: credentials, methodology transparency, and audit track record differ widely',
+      'Most still rely on manual spreadsheet models with limited client visibility',
+      'Turnaround can stretch during year-end valuation season',
+    ],
+  },
+  {
+    name: 'Cap-table platform add-ons',
+    priceRange: '$0 – $3,000 (bundled)',
+    turnaround: '1–3 weeks',
+    strengths: [
+      'Bundled with the cap-table product you may already use',
+      'Data ingestion is streamlined because they hold the cap table',
+      'Convenient for companies already on the platform',
+    ],
+    tradeoffs: [
+      'Cost is recovered through the platform subscription, not actually free',
+      'Methodology is typically opaque — a report without a workbook',
+      'Valuation history is locked to the vendor; switching means starting over',
+      'The provider\'s incentive is retention, not the valuation\'s quality',
+    ],
+  },
+  {
+    name: 'AI-native platforms (DoAide 409A)',
+    priceRange: 'From $49 per report',
+    turnaround: '24-hour draft, 7-day final (1-day Express)',
+    strengths: [
+      'Fastest turnaround: first draft in 24 hours, not weeks',
+      'Transparent methodology: every number traces to its source in an auditable workbook',
+      'Credentialed analyst review and dual sign-off on every report',
+      'No subscription, no lock-in — pay per report',
+      'Audit defence at a fraction of traditional rates',
+    ],
+    tradeoffs: [
+      'Newer entrant; the brand is less recognised than established firms',
+      'Best suited for standard 409A structures; highly bespoke instruments may require consultation',
+    ],
+  },
+];
+
+export const COST_COMPARISON_SECTIONS: GuideSection[] = [
+  {
+    heading: 'What actually drives the price of a 409A',
+    body: 'The cost of a 409A valuation is not driven by the company\'s revenue or valuation — it is driven by the complexity of the capital structure and by who does the work. A pre-seed company with one class of stock is fundamentally less work than a Series D with four preference stacks, warrants, and a secondary market. The provider you choose determines whether that work is done by a team billing hours, a software platform, or a hybrid of both.',
+  },
+  {
+    heading: 'Why the sticker price is not the whole cost',
+    body: 'The quoted price gets you a report. But when your auditor asks questions, somebody has to answer them — and that time is usually billed separately, at rates that vary from $150/hr to $600+/hr depending on the provider. A $3,000 valuation with $5,000 in audit support is more expensive than a $5,000 one that includes it. Ask about audit defence before you compare headline prices.',
+    bullets: [
+      'Traditional firms: audit support at $300–$600/hr, billed by the hour',
+      'Boutique firms: $150–$300/hr, sometimes included for a limited scope',
+      'AI-native platforms: typically a fraction of traditional rates, with revisions included in the draft cycle',
+    ],
+  },
+  {
+    heading: 'When to choose which provider',
+    body: 'There is no single right answer. A pre-IPO company going through a Big 4 audit may need a Big 4 valuation to match. A seed-stage startup granting its first options needs a defensible report, not a brand — and should not pay $10,000 for one. The right question is not "which is cheapest" but "what does my situation actually require?"',
+    bullets: [
+      'Pre-seed to Series A: an AI-native platform or a boutique firm delivers the same safe-harbor protection at a fraction of the cost',
+      'Series B and beyond: evaluate whether your auditor has a preference, and whether the capital structure requires specialist attention',
+      'Pre-IPO: brand recognition may matter for your S-1; talk to your underwriter',
+      'Annual renewals and roll-forwards: the cheapest option is whichever provider can reuse prior work without starting over',
+    ],
+  },
+];
+
 // ── Funding-stage landing pages ───────────────────────────────────────────────
 //
 // The light half of `/409a-valuation/:stage` — see the note above `COMPARISONS`
