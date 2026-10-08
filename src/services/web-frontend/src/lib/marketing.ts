@@ -694,6 +694,46 @@ export const PARTNER_FAQ: FaqItem[] = [
   },
 ];
 
+// ── Landing-page FAQ (409A basics for anonymous visitors) ────────────────────
+// Shown below the hero; doubles as FAQPage structured data so the questions
+// can surface in Google's rich results. The answers are self-contained,
+// factual, and reference no prices that could drift from /pricing.
+
+export const LANDING_FAQ: FaqEntry[] = [
+  {
+    q: 'What is a 409A valuation and why do you need one?',
+    a: 'A 409A valuation is an independent appraisal of your company\'s common stock fair market value, required under IRC §409A before you grant stock options. It establishes a defensible strike price and qualifies for the IRS safe harbor, protecting both the company and option holders from penalties.',
+  },
+  {
+    q: 'How long does a 409A valuation take?',
+    a: 'With DoAide 409A, you receive a first draft within 24 hours and an analyst-reviewed, dual-signed final report in 7 business days. Express delivery brings the final report to 1 business day.',
+  },
+  {
+    q: 'How often do startups need a 409A valuation?',
+    a: 'At least every 12 months, and again after any material event — a new funding round, an acquisition offer, or a significant business change. The 12-month rule is well known; the material-event rule is the one that creates exposure.',
+  },
+  {
+    q: 'What valuation methods are used in a 409A?',
+    a: 'The three standard approaches are the market approach (comparable company analysis), the income approach (discounted cash flow), and the asset approach (net asset value). Most startups use an OPM backsolve against their latest priced round, cross-checked with one or more of these methods.',
+  },
+  {
+    q: 'How much does a 409A valuation cost?',
+    a: 'Traditional firms charge $5,000–$15,000+. DoAide 409A starts at a fraction of that — one flat price per report, no subscriptions, no platform lock-in. See our pricing page for the exact number.',
+  },
+  {
+    q: 'Is an automated 409A valuation audit-defensible?',
+    a: 'Yes. Every DoAide 409A report is prepared by an AI-powered engine and then reviewed and dual-signed by credentialed analysts. The report ships with a full methodology appendix, evidence bundle, and auditable calculation trail.',
+  },
+  {
+    q: 'What happens if my auditor questions the valuation?',
+    a: 'Our analysts support the valuation directly, working with your auditor to answer their questions. Audit defence is available at a fraction of the rates traditional firms charge.',
+  },
+  {
+    q: 'Do I need a 409A before my first option grant?',
+    a: 'Yes. A strike price must be supported on the day it is set — not retroactively. Granting options without a current 409A valuation means the strike price has no safe-harbor protection.',
+  },
+];
+
 // ── Partner API facts, for the public /developers page ────────────────────────
 // The endpoint table on that page is fetched live from GET /api/partner/v1/docs
 // so it cannot drift. These are the surrounding facts a crawler and a

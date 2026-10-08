@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Seo } from '../../components/Seo';
+import { FaqAccordion } from '../../components/FaqAccordion';
 import { EmailSubscribe } from '../../components/EmailSubscribe';
 import { pageMeta } from '../../lib/pageMeta';
+import { LANDING_FAQ, PROOF_POINTS } from '../../lib/marketing';
 import { useAuth } from '../../lib/auth';
 import { api, describeActionFailure } from '../../lib/api';
 import type { AuthProviders, PublicSystemSettings } from '../../lib/types';
@@ -688,24 +690,40 @@ export function LandingPage() {
             {/* Hero */}
             <div className="landing-hero-area">
               <h1 className="landing-title">
-                <span className="landing-title-gold">409A</span> valuations,<br />simplified.
+                <span className="landing-title-gold">409A</span> valuations<br />in hours, not weeks.
               </h1>
               <p className="landing-subtitle">
-                AI-assisted intake, engine-computed, analyst-reviewed.
+                Automated, analyst-reviewed, audit-defensible — from $49 per report.
               </p>
               <PipelineGraphic />
             </div>
 
             {/* Free tool CTA */}
             <div className="landing-free-cta">
-              <Link to="/tools/409a-valuation-calculator" className="landing-free-cta-btn">
-                Estimate your 409A — free →
+              <Link to="/tools/startup-valuation-estimator" className="landing-free-cta-btn">
+                Try the free valuation estimator →
               </Link>
               <div className="landing-trust-signals">
                 <span className="landing-trust-item">✓ IRS safe-harbor compliant</span>
                 <span className="landing-trust-item">✓ Audit-ready reports</span>
-                <span className="landing-trust-item">✓ From $1,190 vs $5–15K traditional</span>
+                <span className="landing-trust-item">✓ 24-hour first draft</span>
               </div>
+            </div>
+
+            {/* Social proof — verifiable product facts */}
+            <div className="landing-proof">
+              {PROOF_POINTS.map((point) => (
+                <div key={point.title} className="landing-proof-card">
+                  <h3 className="landing-proof-title">{point.title}</h3>
+                  <p className="landing-proof-body">{point.body}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* FAQ section */}
+            <div className="landing-faq">
+              <h2 className="landing-faq-heading">Frequently asked questions</h2>
+              <FaqAccordion items={LANDING_FAQ} />
             </div>
 
             {/* Email subscribe */}

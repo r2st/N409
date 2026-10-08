@@ -1046,6 +1046,57 @@ html {
   white-space: nowrap;
 }
 
+/* ── Social proof cards ── */
+
+.landing-proof {
+  margin-top: 24px;
+  display: grid;
+  gap: 10px;
+}
+
+.landing-proof-card {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(212, 175, 55, 0.15);
+  border-radius: 10px;
+}
+
+.landing-proof-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #D4AF37;
+  margin: 0 0 4px;
+}
+
+.landing-proof-body {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.65);
+  margin: 0;
+}
+
+/* ── FAQ section ── */
+
+.landing-faq {
+  margin-top: 24px;
+}
+
+.landing-faq-heading {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  margin: 0 0 12px;
+}
+
+.landing-faq .divide-y { border-color: rgba(255, 255, 255, 0.1); }
+.landing-faq .border { border-color: rgba(255, 255, 255, 0.1); }
+.landing-faq .bg-surface { background: rgba(255, 255, 255, 0.04); }
+.landing-faq .shadow-card { box-shadow: none; }
+.landing-faq summary { color: rgba(255, 255, 255, 0.9); font-size: 0.8rem; }
+.landing-faq summary:hover { background: rgba(255, 255, 255, 0.04); }
+.landing-faq .text-ink-400 { color: rgba(255, 255, 255, 0.5); }
+.landing-faq .text-ink-600 { color: rgba(255, 255, 255, 0.6); }
+
 .landing-subscribe {
   margin-top: 20px;
   padding: 16px 20px;
@@ -1277,6 +1328,14 @@ html {
   }
 
   .landing-free-cta {
+    display: none;
+  }
+
+  .landing-proof {
+    display: none;
+  }
+
+  .landing-faq {
     display: none;
   }
 

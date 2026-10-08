@@ -1,4 +1,5 @@
 import {
+  LANDING_FAQ,
   MIN_PRODUCT_PRICE_CENTS,
   PARTNER_FAQ,
   PRICING_FAQ,
@@ -57,7 +58,7 @@ export function staticPages(): HeadInput[] {
       path: '/',
       title: 'DoAide 409A',
       description: `${SITE_TAGLINE} AI-assisted intake, a transparent valuation engine, and analyst-signed reports across ${PRODUCTS.length} report types — first draft in 24 hours, from ${formatUsd(MIN_PRODUCT_PRICE_CENTS)}.`,
-      jsonLd: [organizationJsonLd(), webApplicationJsonLd(), serviceJsonLd()],
+      jsonLd: [organizationJsonLd(), webApplicationJsonLd(), serviceJsonLd(), faqJsonLd(LANDING_FAQ)],
     },
     {
       path: '/pricing',
