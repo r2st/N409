@@ -78,7 +78,9 @@ export function marketingRoutes(): SitemapRoute[] {
     { path: '/tools/409a-compliance-checker', changefreq: 'monthly', priority: 0.8 },
     { path: '/tools/startup-valuation-estimator', changefreq: 'monthly', priority: 0.8 },
     { path: '/tools/readiness-checker', changefreq: 'monthly', priority: 0.8 },
+    { path: '/tools/deadline-widget', changefreq: 'monthly', priority: 0.7 },
     { path: '/tools/cost-comparison', changefreq: 'monthly', priority: 0.8 },
+    { path: '/referral', changefreq: 'monthly', priority: 0.8 },
     { path: '/free-tools', changefreq: 'monthly', priority: 0.8 },
     { path: '/resources', changefreq: 'weekly', priority: 0.7 },
     // The three educational pages. High priority because they are the top of

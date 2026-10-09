@@ -51,6 +51,8 @@ export const ROUTE_TITLES: Readonly<Record<string, string | null>> = {
   '/tools/startup-valuation-estimator': null,
   '/tools/readiness-checker': null,
   '/tools/cost-comparison': null,
+  '/tools/deadline-widget': null,
+  '/tools/deadline-widget/embed': null,
   '/free-tools': null,
   '/resources': null,
   '/sample-report': null,
@@ -67,6 +69,8 @@ export const ROUTE_TITLES: Readonly<Record<string, string | null>> = {
   '/contact': null,
   '/terms-of-service': null,
   '/privacy-policy': null,
+  '/referral': null,
+  '/share/:token': null,
 
   // ── Unauthenticated application surfaces ──────────────────────────────────
   '/login': 'Sign in',

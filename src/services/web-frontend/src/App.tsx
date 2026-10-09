@@ -50,7 +50,10 @@ const ComplianceCheckerPage = named(() => import('./pages/marketing/ComplianceCh
 const ValuationEstimatorPage = named(() => import('./pages/marketing/ValuationEstimatorPage'), 'ValuationEstimatorPage');
 const FreeToolsPage = named(() => import('./pages/marketing/FreeToolsPage'), 'FreeToolsPage');
 const ReadinessCheckerPage = named(() => import('./pages/marketing/ReadinessCheckerPage'), 'ReadinessCheckerPage');
+const DeadlineWidgetPage = named(() => import('./pages/marketing/DeadlineWidgetPage'), 'DeadlineWidgetPage');
+const DeadlineWidgetEmbed = named(() => import('./pages/marketing/DeadlineWidgetPage'), 'DeadlineWidgetEmbed');
 const CostComparisonPage = named(() => import('./pages/marketing/CostComparisonPage'), 'CostComparisonPage');
+const ReferralPage = named(() => import('./pages/marketing/ReferralPage'), 'ReferralPage');
 const ResourcesPage = named(() => import('./pages/marketing/ResourcesPage'), 'ResourcesPage');
 const SampleReportPage = named(() => import('./pages/marketing/SampleReportPage'), 'SampleReportPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
@@ -64,6 +67,7 @@ const AboutPage = named(() => import('./pages/marketing/StaticPages'), 'AboutPag
 const ContactPage = named(() => import('./pages/marketing/StaticPages'), 'ContactPage');
 const PrivacyPage = named(() => import('./pages/marketing/StaticPages'), 'PrivacyPage');
 const TermsPage = named(() => import('./pages/marketing/StaticPages'), 'TermsPage');
+const ShareSummaryPage = named(() => import('./pages/ShareSummaryPage'), 'ShareSummaryPage');
 const NotFoundPage = named(() => import('./pages/NotFoundPage'), 'NotFoundPage');
 
 // ── Authentication ────────────────────────────────────────────────────────────
@@ -251,7 +255,9 @@ export default function App() {
             <Route path="/tools/409a-compliance-checker" element={<ComplianceCheckerPage />} />
             <Route path="/tools/startup-valuation-estimator" element={<ValuationEstimatorPage />} />
             <Route path="/tools/readiness-checker" element={<ReadinessCheckerPage />} />
+            <Route path="/tools/deadline-widget" element={<DeadlineWidgetPage />} />
             <Route path="/tools/cost-comparison" element={<CostComparisonPage />} />
+            <Route path="/referral" element={<ReferralPage />} />
             <Route path="/free-tools" element={<FreeToolsPage />} />
             <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/sample-report" element={<SampleReportPage />} />
@@ -285,6 +291,10 @@ export default function App() {
             <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
             <Route path="/auth/github/complete" element={<GitHubCompletePage />} />
             <Route path="/auth/microsoft/complete" element={<MicrosoftCompletePage />} />
+            {/* Shareable valuation summary (viral sharing) */}
+            <Route path="/share/:token" element={<ShareSummaryPage />} />
+            {/* Embeddable deadline widget (no nav chrome) */}
+            <Route path="/tools/deadline-widget/embed" element={<DeadlineWidgetEmbed />} />
             {/* Public board-member resolution signing (feature 5) */}
             <Route path="/board-sign" element={<BoardSignPage />} />
             {/* Public external auditor portal (feature 8), token from link fragment */}

@@ -200,6 +200,29 @@ export function staticPages(): HeadInput[] {
       ]),
     },
     {
+      path: '/tools/deadline-widget',
+      title: '409A valuation deadline tracker — embeddable widget',
+      description:
+        'Free 409A deadline tracker showing key compliance dates for startups. Embed on your accelerator site, law firm blog, or startup resource page. No signup required.',
+      jsonLd: breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Resources', path: '/resources' },
+        { name: 'Deadline Widget', path: '/tools/deadline-widget' },
+      ]),
+    },
+    {
+      path: '/referral',
+      title: 'Refer 409A valuations — earn revenue share',
+      description:
+        'Startup lawyers, CFOs, and accelerators — refer your clients for 409A valuations with DoAide and earn a revenue share on every completed valuation. No minimum referrals.',
+      jsonLd: [
+        breadcrumbJsonLd([
+          HOME_CRUMB,
+          { name: 'Referral Programme', path: '/referral' },
+        ]),
+      ],
+    },
+    {
       path: '/free-tools',
       title: 'Free 409A tools for startups',
       description:

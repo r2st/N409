@@ -263,6 +263,11 @@ export function ReadinessCheckerPage() {
     ? `409A Readiness Score: ${result.score}% — ${result.label}. ${result.summary}`
     : undefined;
 
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const whatsappShareText = result
+    ? `\u{1F4CA} My 409A Readiness Score: ${result.score}% (${result.label})\n\n${result.summary}\n\nCheck yours free \u{2192} ${origin}/tools/readiness-checker`
+    : undefined;
+
   return (
     <div className="mx-auto max-w-4xl px-5 py-16">
       <Seo {...pageMeta('/tools/readiness-checker')!} />
@@ -386,6 +391,7 @@ export function ReadinessCheckerPage() {
                 text={shareText!}
                 emailSubject="409A Readiness Score"
                 emailLabel="Share with your team"
+                whatsappText={whatsappShareText}
                 className="mt-2"
               />
 

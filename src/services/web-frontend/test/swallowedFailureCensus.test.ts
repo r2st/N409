@@ -95,6 +95,8 @@ const SILENT_BY_DESIGN: Record<string, string> = {
     'Marks the parallel engine-inputs read handled while the params read is still in flight. The real handling is the inner await beside it, which sets scenarioLoadError.',
   'src/pages/PaymentRedirectPages.tsx\t/valuations/${valuationId}/payments':
     'The post-checkout poll. A failed poll is transient by assumption and the loop keeps going; the budget running out is reported, by `setTimedOut`.',
+  'src/pages/marketing/ReferralPage.tsx\t/api/referral-signup':
+    'Best-effort signup POST on a marketing landing page. The confirmation is shown regardless; the endpoint may not be wired yet.',
 };
 
 /** Each reason says what the user is told that is not true. */

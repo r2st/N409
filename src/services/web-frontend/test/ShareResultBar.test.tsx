@@ -17,11 +17,12 @@ function renderBar(props?: Partial<React.ComponentProps<typeof ShareResultBar>>)
 }
 
 describe('ShareResultBar', () => {
-  it('renders email, LinkedIn, and copy buttons', () => {
+  it('renders WhatsApp, email, LinkedIn, and copy buttons', () => {
     renderBar();
+    expect(screen.getByText('WhatsApp')).toBeTruthy();
     expect(screen.getByText('Email result')).toBeTruthy();
-    expect(screen.getByText('Share on LinkedIn')).toBeTruthy();
-    expect(screen.getByText('Copy result')).toBeTruthy();
+    expect(screen.getByText('LinkedIn')).toBeTruthy();
+    expect(screen.getByText('Copy')).toBeTruthy();
   });
 
   it('uses custom email label', () => {
@@ -38,14 +39,21 @@ describe('ShareResultBar', () => {
 
   it('builds a LinkedIn share link', () => {
     renderBar();
-    const link = screen.getByText('Share on LinkedIn').closest('a');
+    const link = screen.getByText('LinkedIn').closest('a');
     expect(link?.getAttribute('href')).toContain('linkedin.com/sharing');
     expect(link?.getAttribute('target')).toBe('_blank');
   });
 
   it('renders the copy button', () => {
     renderBar();
-    const btn = screen.getByText('Copy result');
+    const btn = screen.getByText('Copy');
     expect(btn.tagName).toBe('BUTTON');
+  });
+
+  it('builds a WhatsApp share link', () => {
+    renderBar({ whatsappText: 'Check this out!' });
+    const link = screen.getByText('WhatsApp').closest('a');
+    expect(link?.getAttribute('href')).toContain('wa.me');
+    expect(link?.getAttribute('target')).toBe('_blank');
   });
 });
