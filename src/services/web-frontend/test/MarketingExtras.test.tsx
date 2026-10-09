@@ -193,6 +193,10 @@ describe('footer social links (gap #29)', () => {
         <MarketingFooter />
       </MemoryRouter>,
     );
-    expect(screen.getByText(new RegExp(`©\\s*${new Date().getFullYear()}\\s+DoAide`))).toBeInTheDocument();
+    expect(screen.getByText((_content, el) => {
+      if (!el || el.tagName !== 'SPAN') return false;
+      const text = el.textContent ?? '';
+      return new RegExp(`©\\s*${new Date().getFullYear()}\\s+DoAide`).test(text);
+    })).toBeInTheDocument();
   });
 });

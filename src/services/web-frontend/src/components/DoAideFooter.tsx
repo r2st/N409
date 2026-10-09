@@ -12,9 +12,9 @@ const TOOLS = [
 
 export function DoAideFooter() {
   return (
-    <section className="border-t border-chrome-200 bg-chrome-50 px-5 py-8 dark:border-chrome-800 dark:bg-chrome-900/50" aria-label="More free tools from DoAide">
+    <section className="border-t border-paper-300 bg-paper-100 px-5 py-8" aria-label="More free tools from DoAide">
       <div className="mx-auto max-w-5xl">
-        <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-chrome-500">
+        <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-ink-500">
           More free tools from DoAide
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -24,12 +24,12 @@ export function DoAideFooter() {
               href={t.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-start gap-2 rounded-lg border border-chrome-200 bg-white px-3 py-3 text-left no-underline transition-colors hover:border-brass-400 dark:border-chrome-700 dark:bg-chrome-800 dark:hover:border-brass-500"
+              className="flex items-start gap-2 rounded-lg border border-paper-300 bg-surface px-3 py-3 text-left no-underline transition-colors hover:border-brass-400"
             >
               <span className="text-lg leading-none">{t.icon}</span>
               <span>
-                <strong className="block text-sm text-ink-900 dark:text-chrome-fg">{t.name}</strong>
-                <span className="text-xs text-chrome-500">{t.desc}</span>
+                <strong className="block text-sm text-ink-900">{t.name}</strong>
+                <span className="text-xs text-ink-500">{t.desc}</span>
               </span>
             </a>
           ))}

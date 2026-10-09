@@ -1,39 +1,54 @@
 import { Link, useLocation } from 'react-router-dom';
-import { mainContentTargetProps } from '../components/SkipLink';
+import { Seo } from '../components/Seo';
+import { MarketingHeader, MarketingFooter } from '../components/MarketingLayout';
+import { SkipLink, mainContentTargetProps } from '../components/SkipLink';
 
 /**
- * Real 404 page (audit F-1 P2). Previously any unknown URL silently redirected
- * to "/", which hid broken links and disoriented users mid-workflow. This states
- * what happened and offers a way back without guessing the user's role.
+ * Real 404 page (audit F-1 P2). Wraps itself in the marketing shell so an
+ * anonymous visitor who hits a bad URL still has a header with navigation and a
+ * way to explore the site. The shell is rendered inline rather than as a layout
+ * route because the catch-all lives inside StandaloneLayout (which cannot be
+ * MarketingLayout without shadowing the auth and app routes above it).
  */
 export function NotFoundPage() {
   const location = useLocation();
   return (
-    <main
-      {...mainContentTargetProps}
-      className={`flex min-h-[60vh] flex-col items-center justify-center px-6 py-16 text-center ${mainContentTargetProps.className}`}
-    >
-      <p className="font-mono text-sm font-semibold tracking-wide text-bond-600 uppercase">404</p>
-      <h1 className="mt-3 font-display text-3xl font-semibold text-ink-900">Page not found</h1>
-      <p className="mt-3 max-w-md text-sm text-ink-500">
-        We couldn't find{' '}
-        <code className="rounded bg-paper-200 px-1.5 py-0.5 text-ink-700">{location.pathname}</code>. The link
-        may be broken or the page may have moved.
-      </p>
-      <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-        <Link
-          to="/"
-          className="inline-flex items-center rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg transition-colors hover:bg-bond-700"
-        >
-          Back to home
-        </Link>
-        <Link
-          to="/help"
-          className="inline-flex items-center rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-400"
-        >
-          Visit help
-        </Link>
-      </div>
-    </main>
+    <div className="flex min-h-screen flex-col bg-paper-50">
+      <Seo
+        path={location.pathname}
+        title="Page not found"
+        description="The page you are looking for does not exist or has been moved."
+        noindex
+      />
+      <SkipLink />
+      <MarketingHeader />
+      <main
+        {...mainContentTargetProps}
+        className={`flex flex-1 flex-col items-center justify-center px-6 py-16 text-center ${mainContentTargetProps.className}`}
+      >
+        <p className="font-mono text-sm font-semibold tracking-wide text-bond-600 uppercase">404</p>
+        <h1 className="mt-3 font-display text-3xl font-semibold text-ink-900">Page not found</h1>
+        <p className="mt-3 max-w-md text-sm text-ink-500">
+          We couldn't find{' '}
+          <code className="rounded bg-paper-200 px-1.5 py-0.5 text-ink-700">{location.pathname}</code>. The link
+          may be broken or the page may have moved.
+        </p>
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <Link
+            to="/"
+            className="inline-flex items-center rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg transition-colors hover:bg-bond-700"
+          >
+            Back to home
+          </Link>
+          <Link
+            to="/pricing"
+            className="inline-flex items-center rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-400"
+          >
+            See pricing
+          </Link>
+        </div>
+      </main>
+      <MarketingFooter />
+    </div>
   );
 }

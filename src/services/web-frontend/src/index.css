@@ -814,7 +814,6 @@ html {
 }
 
 .landing-subtitle {
-  display: none;
   font-family: 'IBM Plex Mono', var(--font-mono);
   font-size: 13px;
   line-height: 1.7;
@@ -1488,14 +1487,26 @@ html {
   }
 
   .landing-free-cta {
-    display: none;
+    margin-top: 12px;
+  }
+
+  .landing-free-cta-btn {
+    font-size: 14px;
+    padding: 0 24px;
+    min-height: 44px;
+    line-height: 44px;
   }
 
   .landing-proof {
-    display: none;
+    margin-top: 16px;
+    grid-template-columns: 1fr;
   }
 
   .landing-faq {
+    display: none;
+  }
+
+  .landing-timeline {
     display: none;
   }
 

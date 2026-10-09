@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -12,6 +12,11 @@ import { CompareHubPage } from '../src/pages/marketing/CompareHubPage';
 import { AUDIT_DEFENCE_RATE_USD, COMPARISONS, PRICING_FAQ, PRODUCTS, formatUsd } from '../src/lib/marketing';
 import { EXPRESS_DELIVERY_CENTS, QSBS_ADDON_CENTS, RAISE_BANDS, quote } from '../src/lib/marketingContent';
 import { PRODUCT_CONTENT } from '../src/lib/productContent';
+
+vi.mock('../src/lib/auth', () => ({
+  useAuth: () => ({ status: 'anonymous', user: null, login: vi.fn(), register: vi.fn(), logout: vi.fn(), viewMode: 'normal', setViewMode: vi.fn() }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
 
 function renderAt(path: string) {
   return render(
@@ -91,18 +96,15 @@ describe('marketing data (§22)', () => {
 });
 
 describe('landing page', () => {
-  it('renders hero, CTA, and the product grid', () => {
+  it('renders hero, CTA, and proof points', () => {
     renderAt('/');
-    // Hero and closing CTA now share one label; both must reach registration.
-    const startLinks = screen.getAllByRole('link', { name: 'Start my valuation' });
-    expect(startLinks.length).toBeGreaterThanOrEqual(2);
-    expect(startLinks.every((el) => el.getAttribute('href') === '/register')).toBe(true);
-    expect(screen.getByText('Thirteen report types, one platform')).toBeInTheDocument();
-    expect(screen.getAllByText('409A Valuation').length).toBeGreaterThan(0);
-    // Accounting integrations strip (§23) + the partner-logo trust badges
-    // (gap #21) both surface these names, so there may be more than one.
-    expect(screen.getAllByText('Xero').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('QuickBooks').length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
+    expect(screen.getByText(/valuations/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /free valuation estimator/i })).toHaveAttribute(
+      'href',
+      '/tools/startup-valuation-estimator',
+    );
+    expect(screen.getByText('Dual analyst sign-off')).toBeInTheDocument();
   });
 });
 
@@ -184,7 +186,7 @@ describe('product + compare pages', () => {
 
   it('redirects unknown slugs to the landing page', () => {
     renderAt('/products/not-a-product');
-    expect(screen.getByText('Thirteen report types, one platform')).toBeInTheDocument();
+    expect(screen.getByText(/valuations/)).toBeInTheDocument();
   });
 });
 

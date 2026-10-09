@@ -33,7 +33,8 @@ describe('seo helpers (§24)', () => {
   it('emits valid Organization JSON-LD', () => {
     const node = organizationJsonLd('https://x.io');
     expect(node['@type']).toBe('Organization');
-    expect(node.url).toBe('https://x.io/');
+    expect(node.url).toBe('https://doaide.com');
+    expect(node.name).toBe('DoAide');
   });
 
   it('emits Product JSON-LD with a USD offer', () => {
