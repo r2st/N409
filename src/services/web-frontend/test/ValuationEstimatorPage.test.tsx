@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
+
+vi.mock('../src/lib/auth', () => ({
+  useAuth: () => ({ status: 'anonymous', user: null }),
+}));
+
 import { ValuationEstimatorPage } from '../src/pages/marketing/ValuationEstimatorPage';
 
 function renderPage() {
@@ -240,5 +245,40 @@ describe('ValuationEstimatorPage', () => {
 
     const button = screen.getByTestId('estimate-button');
     expect(button).not.toBeDisabled();
+  });
+
+  it('works without login — no auth wall or redirect', () => {
+    renderPage();
+    expect(screen.queryByText(/sign in/i)).toBeNull();
+    expect(screen.queryByText(/log in/i)).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Startup Valuation Estimator');
+    expect(screen.getByTestId('estimator-inputs')).toBeTruthy();
+  });
+
+  it('shows optional signup prompt after estimation', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText(/Annual Revenue/), '2000000');
+    await user.selectOptions(screen.getByLabelText(/Industry/), 'saas');
+    await user.selectOptions(screen.getByLabelText(/Funding Stage/), 'series_a');
+    await user.click(screen.getByTestId('estimate-button'));
+
+    expect(screen.getByTestId('save-results-prompt')).toBeTruthy();
+    expect(screen.getByTestId('fmv-mid')).toBeTruthy();
+  });
+
+  it('signup prompt can be dismissed without losing results', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText(/Annual Revenue/), '2000000');
+    await user.selectOptions(screen.getByLabelText(/Industry/), 'saas');
+    await user.selectOptions(screen.getByLabelText(/Funding Stage/), 'series_a');
+    await user.click(screen.getByTestId('estimate-button'));
+
+    await user.click(screen.getByTestId('dismiss-prompt'));
+    expect(screen.queryByTestId('save-results-prompt')).toBeNull();
+    expect(screen.getByTestId('fmv-mid')).toBeTruthy();
   });
 });

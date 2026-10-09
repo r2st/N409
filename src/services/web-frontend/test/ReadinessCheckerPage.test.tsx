@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
+
+vi.mock('../src/lib/auth', () => ({
+  useAuth: () => ({ status: 'anonymous', user: null }),
+}));
+
 import { ReadinessCheckerPage } from '../src/pages/marketing/ReadinessCheckerPage';
 
 function renderPage() {
@@ -100,5 +105,65 @@ describe('ReadinessCheckerPage', () => {
     renderPage();
     expect(screen.getByRole('progressbar')).toBeTruthy();
     expect(screen.getByText('0 of 10 answered')).toBeTruthy();
+  });
+
+  it('works without login — no auth wall or redirect', () => {
+    renderPage();
+    expect(screen.queryByText(/sign in/i)).toBeNull();
+    expect(screen.queryByText(/log in/i)).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Readiness Checker');
+    expect(screen.getByTestId('question-incorporation')).toBeTruthy();
+  });
+
+  it('shows optional signup prompt after all questions are answered', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const bestOptions = [
+      '1–3 years ago',
+      'Less than 6 months ago',
+      'Series A or B',
+      'No triggering events',
+      '$1M–$10M',
+      '11–50',
+      'Yes — 10–20%',
+      'Current in cap table software',
+      'Current (last quarter)',
+      'Not immediately',
+    ];
+
+    for (const label of bestOptions) {
+      await user.click(screen.getByRole('button', { name: label }));
+    }
+
+    expect(screen.getByTestId('save-results-prompt')).toBeTruthy();
+    expect(screen.getByTestId('readiness-score')).toBeTruthy();
+  });
+
+  it('signup prompt can be dismissed without losing results', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const bestOptions = [
+      '1–3 years ago',
+      'Less than 6 months ago',
+      'Series A or B',
+      'No triggering events',
+      '$1M–$10M',
+      '11–50',
+      'Yes — 10–20%',
+      'Current in cap table software',
+      'Current (last quarter)',
+      'Not immediately',
+    ];
+
+    for (const label of bestOptions) {
+      await user.click(screen.getByRole('button', { name: label }));
+    }
+
+    await user.click(screen.getByTestId('dismiss-prompt'));
+    expect(screen.queryByTestId('save-results-prompt')).toBeNull();
+    expect(screen.getByTestId('readiness-score')).toBeTruthy();
+    expect(screen.getByTestId('readiness-result')).toHaveTextContent('Ready');
   });
 });

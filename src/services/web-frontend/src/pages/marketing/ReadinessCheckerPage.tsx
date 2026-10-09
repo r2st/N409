@@ -4,6 +4,7 @@ import { Seo } from '../../components/Seo';
 import { FaqAccordion } from '../../components/FaqAccordion';
 import { pageMeta } from '../../lib/pageMeta';
 import { ShareResultBar } from '../../components/ShareResultBar';
+import { SaveResultsPrompt } from '../../components/SaveResultsPrompt';
 import type { FaqItem } from '../../lib/marketing';
 
 interface Question {
@@ -394,6 +395,8 @@ export function ReadinessCheckerPage() {
                 whatsappText={whatsappShareText}
                 className="mt-2"
               />
+
+              <SaveResultsPrompt toolName="readiness check" className="mt-2" />
 
               <div className="flex flex-wrap items-center gap-3">
                 <Link

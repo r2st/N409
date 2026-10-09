@@ -4,6 +4,7 @@ import { CrossProductLinks } from '../../components/CrossProductLinks';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 import { ShareResultBar } from '../../components/ShareResultBar';
+import { SaveResultsPrompt } from '../../components/SaveResultsPrompt';
 
 /**
  * Free, no-signup Startup Valuation Estimator (`/tools/startup-valuation-estimator`).
@@ -456,6 +457,8 @@ export function ValuationEstimatorPage(): React.JSX.Element {
                 emailLabel="Share with your co-founder"
                 className="mt-2"
               />
+
+              <SaveResultsPrompt toolName="valuation estimate" className="mt-2" />
 
               {/* CTA */}
               <div className="rounded-lg border border-bond-200 bg-bond-50 p-5">

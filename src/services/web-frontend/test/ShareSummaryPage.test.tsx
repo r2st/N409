@@ -122,4 +122,29 @@ describe('ShareSummaryPage', () => {
       expect(screen.getByRole('link', { name: 'Start your valuation' })).toBeTruthy();
     });
   });
+
+  it('works without login — no auth required to view shared summary', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        company_name: 'SharedCo',
+        valuation_date: '2026-06-15',
+        fmv_per_share_cents: 200,
+        methodology: 'DCF',
+        state: 'delivered',
+        kind: '409a',
+        powered_by: 'DoAide 409A',
+      }),
+    } as Response);
+
+    renderPage('share-token-xyz');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('share-summary-card')).toBeTruthy();
+    });
+
+    expect(screen.getByText('SharedCo')).toBeTruthy();
+    expect(screen.queryByText(/sign in/i)).toBeNull();
+    expect(screen.queryByText(/log in/i)).toBeNull();
+  });
 });
