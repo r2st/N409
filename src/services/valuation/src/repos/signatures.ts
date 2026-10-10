@@ -142,10 +142,12 @@ async function upsertSignatureIn(
   return rows[0]!;
 }
 
+const SIGNATURE_LIST_LIMIT = 20;
+
 export async function listSignatures(pool: pg.Pool, valuationId: string): Promise<SignatureRow[]> {
   const { rows } = await pool.query<SignatureRow>(
-    'SELECT * FROM valuation_signatures WHERE valuation_id = $1 ORDER BY role',
-    [valuationId],
+    'SELECT * FROM valuation_signatures WHERE valuation_id = $1 ORDER BY role LIMIT $2',
+    [valuationId, SIGNATURE_LIST_LIMIT],
   );
   return rows;
 }

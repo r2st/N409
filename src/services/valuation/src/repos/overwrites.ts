@@ -20,10 +20,12 @@ export interface OverwriteRow {
   updated_at: Date;
 }
 
+const OVERWRITE_LIST_LIMIT = 200;
+
 export async function listOverwrites(pool: pg.Pool, valuationId: string): Promise<OverwriteRow[]> {
   const { rows } = await pool.query<OverwriteRow>(
-    'SELECT * FROM overwrites WHERE valuation_id = $1 ORDER BY category, field_key',
-    [valuationId],
+    'SELECT * FROM overwrites WHERE valuation_id = $1 ORDER BY category, field_key LIMIT $2',
+    [valuationId, OVERWRITE_LIST_LIMIT],
   );
   return rows;
 }

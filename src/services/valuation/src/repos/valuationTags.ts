@@ -96,6 +96,8 @@ export async function lockTagCategories(client: pg.PoolClient, valuationId: stri
  * suggestion list is where attention goes and a null confidence (every manual
  * tag) belongs below a model's 0.9 rather than above it.
  */
+const TAG_LIST_LIMIT = 200;
+
 export async function listValuationTags(
   pool: pg.Pool | pg.PoolClient,
   valuationId: string,
@@ -105,8 +107,9 @@ export async function listValuationTags(
       WHERE valuation_id = $1
       ORDER BY array_position(ARRAY['accepted','suggested','rejected']::valuation_tag_status[], status),
                confidence DESC NULLS LAST,
-               slug`,
-    [valuationId],
+               slug
+      LIMIT $2`,
+    [valuationId, TAG_LIST_LIMIT],
   );
   return rows.map(hydrate);
 }

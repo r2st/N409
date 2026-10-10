@@ -114,10 +114,12 @@ export async function createScenario(
   });
 }
 
+const SCENARIO_LIST_LIMIT = 24;
+
 export async function listScenarios(pool: pg.Pool, valuationId: string): Promise<ScenarioRow[]> {
   const { rows } = await pool.query<ScenarioRow>(
-    'SELECT * FROM valuation_scenarios WHERE valuation_id = $1 ORDER BY created_at DESC',
-    [valuationId],
+    'SELECT * FROM valuation_scenarios WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [valuationId, SCENARIO_LIST_LIMIT],
   );
   return rows;
 }
