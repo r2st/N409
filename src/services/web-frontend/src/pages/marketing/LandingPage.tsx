@@ -61,29 +61,6 @@ function RobotFace({ size = 32 }: { size?: number }) {
   );
 }
 
-function HeroRobot() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100" width="120" height="100" className="landing-hero-robot" aria-hidden="true">
-      <defs>
-        <linearGradient id="robot-gold" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor={GOLD} />
-          <stop offset="100%" stopColor={GOLD_LIGHT} />
-        </linearGradient>
-      </defs>
-      <line x1="60" y1="18" x2="60" y2="6" stroke={GOLD} strokeWidth="2.5" strokeLinecap="round" />
-      <circle cx="60" cy="4" r="3" fill={GOLD_LIGHT} className="landing-antenna-glow" />
-      <rect x="25" y="18" width="70" height="55" rx="16" fill="url(#robot-gold)" />
-      <ellipse cx="42" cy="40" rx="8" ry="10" fill="#1A1A1D" />
-      <ellipse cx="78" cy="40" rx="8" ry="10" fill="#1A1A1D" />
-      <circle cx="44" cy="38" r="3" fill={GOLD_LIGHT} opacity="0.7" />
-      <circle cx="80" cy="38" r="3" fill={GOLD_LIGHT} opacity="0.7" />
-      <path d="M45 60 Q60 72 75 60" stroke="#1A1A1D" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-      <rect x="5" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
-      <rect x="99" y="30" width="16" height="18" rx="6" fill={GOLD_DARK} />
-    </svg>
-  );
-}
-
 function PipelineGraphic() {
   return (
     <div className="landing-pipeline" aria-hidden="true">

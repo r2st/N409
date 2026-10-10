@@ -56,7 +56,7 @@ export function pageTitle(title: string): string {
 export type JsonLd = Record<string, unknown>;
 
 /** Organization schema for the homepage. */
-export function organizationJsonLd(origin: string = siteOrigin()): JsonLd {
+export function organizationJsonLd(): JsonLd {
   return {
     '@context': 'https://schema.org',
     '@type': 'Organization',

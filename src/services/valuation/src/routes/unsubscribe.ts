@@ -1,12 +1,11 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { problems } from '@n409/shared';
+import { logFailure, logUnretried } from '@n409/shared';
 import { MARKETING_PREFERENCE_KEY } from '../domain/communications.js';
 import { verifyUnsubscribeToken } from '../domain/unsubscribeToken.js';
 import { upsertPreference } from '../repos/notificationPreferences.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
-import { logFailure, logUnretried } from '@n409/shared';
 import { recordThrottleRefusal } from '../observability/requestThrottle.js';
 
 /**
@@ -111,7 +110,7 @@ export function registerUnsubscribeRoutes(
     );
 
     scope.post('/api/v1/unsubscribe', async (req, reply) => {
-      const { allowed, resetAt } = limiter.check(req.ip);
+      const { allowed } = limiter.check(req.ip);
       if (!allowed) {
         recordThrottleRefusal('unsubscribe');
         // Still 200: a provider that gets 429 may stop showing the button.

@@ -31,7 +31,7 @@ describe('seo helpers (§24)', () => {
   });
 
   it('emits valid Organization JSON-LD', () => {
-    const node = organizationJsonLd('https://x.io');
+    const node = organizationJsonLd();
     expect(node['@type']).toBe('Organization');
     expect(node.url).toBe('https://doaide.com');
     expect(node.name).toBe('DoAide');
@@ -61,7 +61,7 @@ describe('<Seo>', () => {
           title="Pricing"
           description="Flat per-report pricing."
           path="/pricing"
-          jsonLd={organizationJsonLd('https://x.io')}
+          jsonLd={organizationJsonLd()}
         />
       </HelmetProvider>,
     );

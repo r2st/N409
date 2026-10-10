@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
+import type * as CapTableModule from '../../src/domain/capTable.js';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -19,7 +20,7 @@ import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.j
  */
 const validateCalls = { count: 0 };
 vi.mock('../../src/domain/capTable.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/domain/capTable.js')>();
+  const actual = await importOriginal<typeof CapTableModule>();
   return {
     ...actual,
     validateCapTable: (...args: Parameters<typeof actual.validateCapTable>) => {

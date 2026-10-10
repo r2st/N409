@@ -65,7 +65,7 @@ describe('the attribute reader compiles a pattern per name, not per cell', () =>
     // A fresh module registry, so the cache starts empty and this measures the
     // ceiling rather than the steady state. Ten names appear in the file.
     vi.resetModules();
-    const fresh = (await import('../../src/domain/xlsxRead.js')) as typeof import('../../src/domain/xlsxRead.js');
+    const fresh = await import('../../src/domain/xlsxRead.js');
     const buf = await sheetOf(400);
     const built = countRegExpConstructions(() => void fresh.readXlsx(buf));
     expect(built).toBeLessThanOrEqual(12);

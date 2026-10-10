@@ -165,7 +165,7 @@ describe('EngineInputsBody', () => {
 
     it('still bounds the magnitude of both subtotals', () => {
       expect(
-        EngineInputsBody.safeParse({ asset: { total_liabilities: -1e999 } }).success,
+        EngineInputsBody.safeParse({ asset: { total_liabilities: -Infinity } }).success,
       ).toBe(false);
       expect(
         EngineInputsBody.safeParse({ asset: { total_assets: Number.MAX_SAFE_INTEGER * 10 } })

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as ZlibModule from 'node:zlib';
 
 /**
  * zlib refusing to compress must not fail the download (R332, methodology M5).
@@ -26,7 +27,7 @@ const deflateRaw = vi.hoisted(() =>
   ),
 );
 vi.mock('node:zlib', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:zlib')>();
+  const actual = await importOriginal<typeof ZlibModule>();
   return { ...actual, deflateRaw };
 });
 

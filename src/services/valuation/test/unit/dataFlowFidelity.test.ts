@@ -553,7 +553,7 @@ describe('exercise scenarios: grossValue from unrounded spread', () => {
     expect(s.spreadPerShare).toBe(Math.round(rawSpread * 10000) / 10000);
     expect(s.grossValue).toBe(Math.round(rawSpread * 10_000 * 100) / 100);
     // The two should NOT be derivable from each other due to intermediate rounding
-    const fromRoundedSpread = Math.round(s.spreadPerShare * 10_000 * 100) / 100;
+    const _fromRoundedSpread = Math.round(s.spreadPerShare * 10_000 * 100) / 100;
     // They may or may not differ depending on the specific values; the important
     // thing is grossValue comes from the full-precision spread
     expect(s.grossValue).toBe(Math.round(rawSpread * 10_000 * 100) / 100);

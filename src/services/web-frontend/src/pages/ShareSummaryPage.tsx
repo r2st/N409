@@ -57,7 +57,7 @@ export function ShareSummaryPage() {
         }
         setSummary(await res.json());
       })
-      .catch((err) => {
+      .catch(() => {
         if (!controller.signal.aborted) setError('Unable to load valuation summary.');
       })
       .finally(() => {
@@ -67,7 +67,6 @@ export function ShareSummaryPage() {
   }, [token]);
 
   const origin = siteOrigin();
-  const pageUrl = `${origin}/share/${token ?? ''}`;
   const shareText = summary
     ? `${summary.company_name} completed their ${KIND_LABELS[summary.kind] ?? summary.kind}${summary.fmv_per_share ? ` — ${formatDollars(summary.fmv_per_share)}/share` : ''} | Powered by DoAide 409A`
     : '';

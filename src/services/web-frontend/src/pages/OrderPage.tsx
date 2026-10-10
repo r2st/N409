@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError, describeLoadFailure, describeRequestFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { PRICING_TIERS, formatUsd, type PricingTier } from '../lib/marketing';
@@ -265,7 +265,6 @@ function OrderHistory() {
 export function OrderPage() {
   const { status } = useAuth();
   const [params] = useSearchParams();
-  const navigate = useNavigate();
   const initialTier = params.get('tier');
 
   const [step, setStep] = useState<Step>(initialTier ? 'details' : 'plan');

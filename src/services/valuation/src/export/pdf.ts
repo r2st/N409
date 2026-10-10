@@ -24,6 +24,7 @@ const ROW_H = 14;
  * `.length` a byte count everywhere below. Nothing else in the file is
  * non-ASCII, so a code unit is a byte for the whole document.
  */
+// eslint-disable-next-line no-control-regex
 const ESCAPE_OR_WIDE = /[\\()]|[^\u0000-\u00FF]/gu;
 
 function escapePdfText(s: string): string {

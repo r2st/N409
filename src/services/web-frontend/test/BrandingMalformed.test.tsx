@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { BrandingProvider, PLATFORM_BRANDING, type Branding } from '../src/lib/branding';
+import { BrandingProvider, type Branding } from '../src/lib/branding';
 import { Wordmark } from '../src/components/Logo';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 

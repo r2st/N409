@@ -110,9 +110,11 @@ export const CLIENT_BODY_KEYS: ReadonlySet<string> = new Set(['content_base64', 
  */
 function storable(value: string): string {
   // Fast path: almost nothing carries either character.
+  // eslint-disable-next-line no-control-regex
   if (!/[\uD800-\uDFFF\u0000]/.test(value)) return value;
   return value
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD')
+    // eslint-disable-next-line no-control-regex
     .replace(/\u0000/g, '\uFFFD');
 }
 
