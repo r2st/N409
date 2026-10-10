@@ -342,7 +342,17 @@ describe('IntakeTab', () => {
       const user = userEvent.setup();
       // No `detail`, which is when the operation half is what gets shown:
       // `describeActionFailure` prefers the server's own sentence.
-      mockApi({ save: () => json({ status: 500, title: 'Internal Server Error' }, 500) });
+      // The first save (triggered by “Next”) succeeds so the wizard advances;
+      // the second save (explicit “Save section” on Financials) fails.
+      let saveCount = 0;
+      mockApi({
+        save: () => {
+          saveCount += 1;
+          if (saveCount === 1)
+            return json({ ...QUESTIONNAIRE, completion: { ...COMPLETION, percentComplete: 100 } });
+          return json({ status: 500, title: 'Internal Server Error' }, 500);
+        },
+      });
       renderTab();
       await ready();
       await user.click(next());

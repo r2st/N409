@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -17,7 +17,17 @@ function renderPage() {
   );
 }
 
+async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText('Full name'), 'Jane Doe');
+  await user.type(screen.getByLabelText('Work email'), 'jane@lawfirm.com');
+  await user.type(screen.getByLabelText('Company / Firm'), 'Startup Law LLP');
+  await user.selectOptions(screen.getByLabelText('Your role'), 'lawyer');
+  await user.click(screen.getByRole('button', { name: 'Apply to join' }));
+}
+
 describe('ReferralPage', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('renders the heading', () => {
     renderPage();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
@@ -57,17 +67,35 @@ describe('ReferralPage', () => {
   });
 
   it('shows success state after form submission', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
     const user = userEvent.setup();
     renderPage();
 
-    await user.type(screen.getByLabelText('Full name'), 'Jane Doe');
-    await user.type(screen.getByLabelText('Work email'), 'jane@lawfirm.com');
-    await user.type(screen.getByLabelText('Company / Firm'), 'Startup Law LLP');
-    await user.selectOptions(screen.getByLabelText('Your role'), 'lawyer');
-    await user.click(screen.getByRole('button', { name: 'Apply to join' }));
+    await fillAndSubmit(user);
 
     expect(await screen.findByTestId('referral-success')).toBeTruthy();
     expect(screen.getByText('Application received')).toBeTruthy();
+  });
+
+  it('shows error when submission fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 500 }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText(/could not submit/i)).toBeTruthy();
+    expect(screen.queryByTestId('referral-success')).toBeNull();
+  });
+
+  it('shows error on network failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText(/could not submit/i)).toBeTruthy();
   });
 
   it('renders FAQ section', () => {

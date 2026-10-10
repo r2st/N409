@@ -296,7 +296,7 @@ export function IntakeTab() {
                 <Button
                   disabled={busy}
                   onClick={async () => {
-                    if (canEdit) await saveSection(section);
+                    if (canEdit && !(await saveSection(section))) return;
                     setStep((s) => Math.min(schema.length - 1, s + 1));
                   }}
                 >

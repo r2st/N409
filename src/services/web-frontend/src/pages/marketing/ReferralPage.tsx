@@ -101,6 +101,8 @@ const REFERRAL_FAQ: FaqItem[] = [
 
 export function ReferralPage() {
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: '', email: '', company: '', role: '' });
 
   const origin = siteOrigin();
@@ -109,17 +111,21 @@ export function ReferralPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
+    setSubmitError(null);
     try {
-      await fetch('/api/referral-signup', {
+      const res = await fetch('/api/referral-signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
+      if (!res.ok) throw new Error('submission failed');
+      setSubmitted(true);
     } catch {
-      // Best-effort — the confirmation is shown regardless since the server
-      // may not have the endpoint wired yet.
+      setSubmitError('Could not submit your application — please try again.');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitted(true);
   };
 
   return (
@@ -266,11 +272,15 @@ export function ReferralPage() {
                   <option value="other">Other</option>
                 </select>
               </div>
+              {submitError && (
+                <p className="text-sm text-red-600" role="alert">{submitError}</p>
+              )}
               <button
                 type="submit"
-                className="mt-2 w-full cursor-pointer rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700"
+                disabled={submitting}
+                className="mt-2 w-full cursor-pointer rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700 disabled:opacity-60"
               >
-                Apply to join
+                {submitting ? 'Submitting…' : 'Apply to join'}
               </button>
               <p className="text-center text-xs text-ink-400">
                 Already a partner?{' '}

@@ -59,8 +59,8 @@ describe('GettingStarted — progress from the account', () => {
     wrap(<GettingStarted />);
 
     await waitFor(() => expect(screen.getByText('1/8')).toBeInTheDocument());
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(String(fetchSpy.mock.calls[0]![0])).toContain('/onboarding/progress');
+    const progressCalls = fetchSpy.mock.calls.filter((c) => String(c[0]).includes('/onboarding/progress'));
+    expect(progressCalls).toHaveLength(1);
   });
 
   it('unions server progress with steps the user ticked by hand', async () => {
@@ -131,6 +131,7 @@ describe('GettingStarted — progress from the account', () => {
     // Renders rather than erroring, showing what the user ticked themselves.
     expect(await screen.findByText('1/8')).toBeInTheDocument();
     expect(screen.getByText(/step by step/)).toBeInTheDocument();
+    expect(screen.getByText(/progress could not be checked/i)).toBeInTheDocument();
   });
 
   it('does not leave focus on the floor when the panel dismisses itself', async () => {

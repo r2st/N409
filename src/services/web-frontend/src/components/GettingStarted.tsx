@@ -118,14 +118,20 @@ export function GettingStarted() {
   const [done, setDone] = useState<Set<string>>(loadDone);
   const [earned, setEarned] = useState<Set<string>>(() => new Set());
   const [latestValuationId, setLatestValuationId] = useState<string | null>(null);
+  const [progressFailed, setProgressFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
     api<OnboardingProgress>('/onboarding/progress')
       .then((p) => {
-        if (live) setEarned(new Set(p.steps));
+        if (live) {
+          setEarned(new Set(p.steps));
+          setProgressFailed(false);
+        }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (live) setProgressFailed(true);
+      });
     api<{ valuations: Array<{ id: string }> }>('/valuations?per_page=1')
       .then((d) => {
         const first = d.valuations[0];
@@ -201,6 +207,11 @@ export function GettingStarted() {
           {completed}/{steps.length}
         </span>
       </div>
+      {progressFailed && (
+        <p className="mt-1 text-xs text-ink-400">
+          Progress could not be checked — some steps may already be complete.
+        </p>
+      )}
 
       <ol className="mt-5 space-y-2">
         {steps.map((step, i) => {
