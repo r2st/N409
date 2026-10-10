@@ -98,10 +98,14 @@ export class ErrorBoundary extends Component<Props, State> {
         role="alert"
         className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center gap-4 px-6 text-center"
       >
-        <h1 className="text-xl font-semibold text-ink-900">Something went wrong</h1>
+        <h1 className="text-xl font-semibold text-ink-900">
+          {this.props.label
+            ? `The ${this.props.label} hit an unexpected error`
+            : 'This page hit an unexpected error'}
+        </h1>
         <p className="text-sm text-ink-600">
-          An unexpected error interrupted {this.props.label ?? 'the page'}. Your data is safe — try again, and
-          if it keeps happening, reload.
+          Your data is safe — this is a display problem, not a data problem. Try again, and
+          if it keeps happening, reload the page.
         </p>
         <div className="flex gap-3">
           <button

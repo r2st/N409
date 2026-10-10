@@ -26,7 +26,7 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     );
     expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByText(/hit an unexpected error/)).toBeInTheDocument();
     expect(onError).toHaveBeenCalledOnce();
     expect(onError.mock.calls[0]![0]).toBeInstanceOf(Error);
   });
@@ -93,7 +93,7 @@ describe('a chunk that would not load', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.getByText(/didn’t finish loading/)).toBeInTheDocument();
     expect(screen.getByText(/a new version was released/)).toBeInTheDocument();
-    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
+    expect(screen.queryByText(/hit an unexpected error/)).not.toBeInTheDocument();
   });
 
   it('offers only Reload, because Try again cannot clear a cached rejection', () => {
@@ -124,7 +124,7 @@ describe('a chunk that would not load', () => {
         <Boom />
       </ErrorBoundary>,
     );
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByText(/hit an unexpected error/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });

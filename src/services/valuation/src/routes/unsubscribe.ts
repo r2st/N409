@@ -166,8 +166,8 @@ export function registerUnsubscribeRoutes(
       return html(
         reply,
         500,
-        'Something went wrong',
-        'We could not update your preferences just now. Please try again, or change them in your account settings.',
+        'Could not update your preferences',
+        'We were not able to process the unsubscribe just now — the error has been recorded. Please try again in a moment, or change your email preferences directly in your account settings.',
       );
     }
     return ok

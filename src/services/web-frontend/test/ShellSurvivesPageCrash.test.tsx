@@ -85,7 +85,7 @@ function renderApp(initial = '/broken') {
 describe('AppLayout keeps the shell when a page throws', () => {
   it('shows the error where the page was', () => {
     renderApp();
-    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(screen.getByRole('alert')).toHaveTextContent(/hit an unexpected error/);
   });
 
   it('leaves the navigation standing', () => {
@@ -148,7 +148,7 @@ describe('MarketingLayout keeps its chrome when a page throws', () => {
 
   it('keeps the header navigation', () => {
     renderMarketing();
-    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(screen.getByRole('alert')).toHaveTextContent(/hit an unexpected error/);
     expect(screen.getByRole('navigation', { name: 'Marketing' })).toBeInTheDocument();
   });
 
@@ -185,7 +185,7 @@ describe('StandaloneLayout catches the pages that have no shell at all', () => {
 
   it('shows the error instead of a blank document', () => {
     renderStandalone();
-    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(screen.getByRole('alert')).toHaveTextContent(/hit an unexpected error/);
   });
 
   it('clears the error when the location changes', async () => {
