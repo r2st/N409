@@ -4,7 +4,7 @@ import { api, ApiError, describeLoadFailure, describeRequestFailure } from '../l
 import { useAuth } from '../lib/auth';
 import { PRICING_TIERS, formatUsd, type PricingTier } from '../lib/marketing';
 import { formatChargedCents, formatDate } from '../lib/format';
-import { Button, ErrorNote, Spinner } from '../components/ui';
+import { Button, ErrorNote, LoadError, Spinner } from '../components/ui';
 
 type Step = 'plan' | 'details' | 'confirm';
 
@@ -197,18 +197,19 @@ function ConfirmStep({
 function OrderHistory() {
   const [orders, setOrders] = useState<OrderHistoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     api<{ orders: OrderHistoryItem[] }>('/me/orders')
       .then((d) => setOrders(d.orders))
       .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load order history.')));
-  }, []);
+  }, [retryToken]);
 
   if (error) {
     return (
       <section className="mt-10" data-testid="order-history">
         <h2 className="overline mb-3 text-ink-400">Order history</h2>
-        <ErrorNote>{error}</ErrorNote>
+        <LoadError message={error} onRetry={() => { setError(null); setRetryToken((n) => n + 1); }} />
       </section>
     );
   }
