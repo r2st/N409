@@ -515,6 +515,11 @@ export async function expireCheckoutSession(secretKey: string, sessionId: string
       },
     },
   );
+  // The other four call sites read the body through `stripeBody`; this one
+  // only needs the status. Cancelling the stream releases the underlying
+  // connection immediately rather than holding it until the 20-second abort
+  // signal fires or the garbage collector collects the Response.
+  await res.body?.cancel();
   return res.ok;
 }
 

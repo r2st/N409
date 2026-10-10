@@ -152,6 +152,27 @@ describe('Stripe unreachable', () => {
     expect(err.message).toMatch(/did not respond/);
   });
 
+  it('drains the body on the call that only checks the status', async () => {
+    // `expireCheckoutSession` reads `res.ok` and nothing else. Without
+    // draining the body the underlying TCP connection is held open until the
+    // 20-second abort signal fires or the GC collects the Response — up to
+    // 20 seconds of a connection to Stripe that nobody needs.
+    let bodyCancelled = false;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        cancel: () => {
+          bodyCancelled = true;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as Response);
+    const ok = await expireCheckoutSession('sk_test', 'cs_1');
+    expect(ok).toBe(true);
+    expect(bodyCancelled, 'body stream was not drained').toBe(true);
+  });
+
   it('still reads a non-JSON error body as the status it carried', async () => {
     // The behaviour the `{}` fallback was written for, unchanged: an HTML page
     // under a 4xx/5xx is answered by its status, not by a parse error.
