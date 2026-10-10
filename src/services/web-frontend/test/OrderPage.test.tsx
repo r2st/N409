@@ -69,7 +69,7 @@ describe('OrderPage', () => {
     await userEvent.type(screen.getByTestId('company-name-input'), 'Acme Corp');
     await userEvent.click(screen.getByTestId('continue-to-confirm'));
     expect(screen.getByTestId('order-confirm')).toBeTruthy();
-    expect(screen.getByText('Starter')).toBeTruthy();
+    expect(screen.getByText('Per Report')).toBeTruthy();
     expect(screen.getByText('Acme Corp')).toBeTruthy();
   });
 
