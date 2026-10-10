@@ -1,5 +1,5 @@
 # Build from the repo root: docker build -f src/services/web/Dockerfile .
-FROM node:22-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /repo
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY src/packages/shared/package.json src/packages/shared/
@@ -11,7 +11,7 @@ COPY src/services/web src/services/web
 COPY src/services/web-frontend src/services/web-frontend
 RUN npx tsc -b src/services/web && npm run build -w @n409/web-frontend
 
-FROM node:22-alpine
+FROM node:25-alpine
 ENV NODE_ENV=production
 WORKDIR /repo
 COPY --from=build /repo/package.json /repo/package-lock.json ./
