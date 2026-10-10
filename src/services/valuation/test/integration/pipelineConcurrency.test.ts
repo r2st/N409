@@ -112,7 +112,9 @@ describe.skipIf(!dbUp)('auto-pipeline run exclusivity', () => {
       { valuationId, trigger: 'upload', triggeredBy: ops.id },
       SYSTEM,
     );
-    await setPipelineRunStatus(ctx.pool, first!, 'ready', { actor: SYSTEM });
+    let r = (await setPipelineRunStatus(ctx.pool, first!, 'extracting'))!;
+    r = (await setPipelineRunStatus(ctx.pool, r, 'calculating'))!;
+    await setPipelineRunStatus(ctx.pool, r, 'ready', { actor: SYSTEM });
 
     const second = await createPipelineRun(
       ctx.pool,
@@ -210,11 +212,13 @@ describe.skipIf(!dbUp)('auto-pipeline run status finality', () => {
     await reapStalePipelineRuns(ctx.pool, { olderThanMs: 60_000, actor: SYSTEM });
 
     // The wedged worker returns and tries to carry on with its stale row.
-    const after = await setPipelineRunStatus(ctx.pool, run, 'calculating');
+    // Its in-memory status is 'queued', so the only legal hop is 'extracting'.
+    // The SQL refuses because the DB row is already 'failed' (reaped).
+    const after = await setPipelineRunStatus(ctx.pool, run, 'extracting');
     expect(after?.status).toBe('failed');
     expect(after?.error).toContain('reaped');
 
-    const settled = await setPipelineRunStatus(ctx.pool, run, 'ready', { actor: SYSTEM });
+    const settled = await setPipelineRunStatus(ctx.pool, run, 'failed', { error: 'late', actor: SYSTEM });
     expect(settled?.status).toBe('failed');
     expect(await latestPipelineRun(ctx.pool, valuationId)).toMatchObject({ status: 'failed' });
     expect(await terminalEvents(valuationId)).toEqual(['auto_pipeline_failed']);
@@ -252,11 +256,13 @@ describe.skipIf(!dbUp)('auto-pipeline run status finality', () => {
 
     // Now the worker from the first attempt finally returns. Its row is stale in
     // a way `status` alone cannot express — the row is genuinely active.
-    const hop = await setPipelineRunStatus(ctx.pool, stale, 'calculating');
+    // The stale worker's in-memory status is 'queued', so 'extracting' is the
+    // only legal hop. The SQL refuses because `attempts` no longer matches.
+    const hop = await setPipelineRunStatus(ctx.pool, stale, 'extracting');
     expect(hop?.status).toBe('queued');
     expect(hop?.attempts).toBe(live!.attempts);
 
-    const ended = await setPipelineRunStatus(ctx.pool, stale, 'ready', { actor: SYSTEM });
+    const ended = await setPipelineRunStatus(ctx.pool, stale, 'failed', { error: 'stale', actor: SYSTEM });
     expect(ended?.status).toBe('queued');
 
     // The second attempt is untouched and still owns the row, and the only
@@ -279,7 +285,12 @@ describe.skipIf(!dbUp)('auto-pipeline run status finality', () => {
       { valuationId, trigger: 'upload', triggeredBy: ops.id },
       SYSTEM,
     ))!;
-    await setPipelineRunStatus(ctx.pool, run, 'ready', { actor: SYSTEM });
+    let r = (await setPipelineRunStatus(ctx.pool, run, 'extracting'))!;
+    r = (await setPipelineRunStatus(ctx.pool, r, 'calculating'))!;
+    await setPipelineRunStatus(ctx.pool, r, 'ready', { actor: SYSTEM });
+    // The stale `run` object still holds 'queued'; 'failed' is a legal
+    // transition from 'queued' but the SQL refuses — the DB row is already
+    // 'ready' (terminal). No second event is recorded.
     await setPipelineRunStatus(ctx.pool, run, 'failed', { error: 'late', actor: SYSTEM });
     expect(await terminalEvents(valuationId)).toEqual(['auto_pipeline_completed']);
   });
@@ -349,7 +360,7 @@ describe.skipIf(!dbUp)('auto-pipeline run status finality', () => {
       SYSTEM,
     ))!;
     await ctx.pool.query('DELETE FROM pipeline_runs WHERE id = $1', [run.id]);
-    await expect(setPipelineRunStatus(ctx.pool, run, 'ready', { actor: SYSTEM })).resolves.toBeNull();
+    await expect(setPipelineRunStatus(ctx.pool, run, 'extracting')).resolves.toBeNull();
   });
 });
 

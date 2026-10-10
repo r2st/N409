@@ -127,8 +127,13 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
       subject: 'Test',
       body: 'Body',
     });
-    // Fail it up to the cap.
-    for (let i = 0; i < 3; i++) await markEmail(ctx.pool, email.id, 'failed', 'boom');
+    // Fail once (markEmail requires status = 'queued'), then set attempts to
+    // the cap directly — simulating a row that has been retried to exhaustion.
+    await markEmail(ctx.pool, email.id, 'failed', 'boom');
+    await ctx.pool.query(
+      `UPDATE email_outbox SET attempts = $2, next_attempt_at = now() WHERE id = $1`,
+      [email.id, 3],
+    );
 
     // Track *which* ids the transport was asked to deliver rather than a bare
     // boolean: "the sweep delivered nothing" would also pass if the sweep had
