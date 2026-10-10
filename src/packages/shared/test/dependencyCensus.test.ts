@@ -944,9 +944,6 @@ const DEPRECATED_ALLOWED: Record<string, string> = {
   'node_modules/eslint':
     'eslint 9.x is deprecated in favour of 10.x. The 10.x migration is a ' +
     'major-version bump tracked separately from a patch-level freshness audit.',
-  'node_modules/glob':
-    'glob 10.x is deprecated; arrives transitively via test-exclude ' +
-    '(@vitest/coverage-v8). Runs only while collecting coverage.',
   'node_modules/whatwg-encoding':
     "jsdom's HTML decoder. The deprecation points at a replacement jsdom has " +
     'not adopted; jsdom itself is a dev dependency of web-frontend only.',
