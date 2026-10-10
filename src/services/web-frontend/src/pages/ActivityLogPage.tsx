@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeLoadFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { eventLabel, formatDateTime, localDayEnd, localDayStart } from '../lib/format';
 import {
   Button,
   EmptyState,
   ErrorNote,
+  LoadError,
   PickerOverflowNote,
   ResultCount,
   Select,
@@ -82,6 +83,7 @@ export function ActivityLogPage() {
    */
   const [appending, setAppending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
   const [actors, setActors] = useState<UserOption[]>([]);
   const [actorsCapped, setActorsCapped] = useState(false);
   const [actorsFailed, setActorsFailed] = useState(false);
@@ -135,14 +137,14 @@ export function ActivityLogPage() {
           setError(
             err instanceof ApiError && err.status === 403
               ? 'The activity log is operations-only.'
-              : 'Could not load the activity log.',
+              : describeLoadFailure(err, 'Could not load the activity log.'),
           );
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [buildQuery]);
+  }, [buildQuery, retryToken]);
 
   useEffect(() => {
     api<{ options: UserOption[]; truncated: boolean }>('/users/options')
@@ -190,8 +192,8 @@ export function ActivityLogPage() {
       setEvents((prev) => [...prev, ...d.events]);
       setTotal(d.total);
       setPage(page + 1);
-    } catch {
-      setError('Could not load more activity.');
+    } catch (err) {
+      setError(describeLoadFailure(err, 'Could not load more activity.'));
     } finally {
       setAppending(false);
     }
@@ -302,7 +304,12 @@ export function ActivityLogPage() {
        */}
       <ResultCount count={loading ? null : total} noun="event" query={type || undefined} />
 
-      {error && (
+      {error && events.length === 0 && (
+        <div className="mt-6">
+          <LoadError message={error} onRetry={() => { setError(null); setRetryToken((n) => n + 1); }} />
+        </div>
+      )}
+      {error && events.length > 0 && (
         <div className="mt-6">
           <ErrorNote>{error}</ErrorNote>
         </div>

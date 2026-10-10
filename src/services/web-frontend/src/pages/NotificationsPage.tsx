@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, describeActionFailure, describeLoadFailure } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import type { AppNotification } from '../lib/types';
-import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton } from '../components/ui';
+import { Button, EmptyState, ErrorNote, LoadError, LoadingBlock, Skeleton } from '../components/ui';
 
 /**
  * In-app notification centre (M4).
@@ -138,7 +138,12 @@ export function NotificationsPage() {
         {notice}
       </p>
 
-      {error && (
+      {error && !notifications && (
+        <div className="mt-6">
+          <LoadError message={error} onRetry={() => { setError(null); void load(); }} />
+        </div>
+      )}
+      {error && notifications && (
         <div className="mt-6">
           <ErrorNote>{error}</ErrorNote>
         </div>

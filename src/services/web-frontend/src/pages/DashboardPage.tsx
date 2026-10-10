@@ -21,6 +21,7 @@ import {
   EmptyState,
   ErrorNote,
   KindBadge,
+  LoadError,
   LoadingBlock,
   Skeleton,
   SkeletonCardList,
@@ -29,6 +30,7 @@ import {
   StatCardSkeleton,
   StateBadge,
   TextInput,
+  useRetry,
 } from '../components/ui';
 import { DonutChart, LineChart } from '../components/charts';
 import { HelpIcon } from '../components/HelpIcon';
@@ -75,12 +77,13 @@ export function DashboardPage() {
   const [analyticsReload, setAnalyticsReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState({ from: '', to: '' });
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     api<ValuationList>('/valuations?per_page=100')
       .then((res) => setValuations(res.valuations))
       .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load valuations.')));
-  }, []);
+  }, [token]);
 
   // Analytics is noise for clients with 1–2 valuations — ops and partners only
   // (partner data is already server-scoped to their organisation).
@@ -166,7 +169,12 @@ export function DashboardPage() {
         </div>
       )}
 
-      {error && (
+      {error && !valuations && (
+        <div className="mt-6">
+          <LoadError message={error} {...retryProps} />
+        </div>
+      )}
+      {error && valuations && (
         <div className="mt-6">
           <ErrorNote>{error}</ErrorNote>
         </div>

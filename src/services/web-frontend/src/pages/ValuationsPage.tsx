@@ -23,6 +23,7 @@ import {
   EmptyState,
   ErrorNote,
   KindBadge,
+  LoadError,
   LoadingBlock,
   PickerOverflowNote,
   ResultCount,
@@ -729,7 +730,12 @@ export function ValuationsPage() {
           <ErrorNote>{exportError}</ErrorNote>
         </div>
       )}
-      {error && (
+      {error && !data && (
+        <div className="mt-6">
+          <LoadError message={error} onRetry={reload} />
+        </div>
+      )}
+      {error && data && (
         <div className="mt-6">
           <ErrorNote>{error}</ErrorNote>
         </div>

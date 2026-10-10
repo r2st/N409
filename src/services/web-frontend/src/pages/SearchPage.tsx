@@ -8,8 +8,8 @@ import { formatBytes } from '../lib/pipeline';
 import type { SearchResults } from '../lib/types';
 import {
   EmptyState,
-  ErrorNote,
   KindBadge,
+  LoadError,
   ResultCount,
   Spinner,
   StateBadge,
@@ -30,6 +30,7 @@ export function SearchPage() {
   const [results, setResults] = useState<SearchResults | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [retryToken, setRetryToken] = useState(0);
 
   /**
    * Which search the displayed results belong to.
@@ -64,7 +65,7 @@ export function SearchPage() {
         .finally(() => current() && setBusy(false));
     }, 250);
     return () => clearTimeout(timer);
-  }, [q]);
+  }, [q, retryToken]);
 
   /**
    * The three collections, each defaulted to empty.
@@ -117,7 +118,7 @@ export function SearchPage() {
 
       {error && (
         <div className="mt-6">
-          <ErrorNote>{error}</ErrorNote>
+          <LoadError message={error} onRetry={() => { setError(null); setRetryToken((n) => n + 1); }} />
         </div>
       )}
       {busy && <Spinner />}

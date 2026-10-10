@@ -22,6 +22,7 @@ import {
   ErrorNote,
   Field,
   KindBadge,
+  LoadError,
   PickerOverflowNote,
   ResultCount,
   Select,
@@ -224,7 +225,8 @@ function TaskQueue({
       </div>
 
       <div className="mt-6">
-        {error && <ErrorNote>{error}</ErrorNote>}
+        {error && !tasks && <LoadError message={error} onRetry={() => { setError(null); void load(); }} />}
+        {error && tasks && <ErrorNote>{error}</ErrorNote>}
         {rosterFailed && <RosterUnavailableNote />}
         {!tasks && !error && <TableSkeleton columns={5} rows={6} label="Loading tasks…" />}
         {tasks && tasks.length === 0 && (
@@ -426,7 +428,8 @@ function ReviewQueue({ options, rosterFailed }: { options: UserOption[]; rosterF
       </div>
 
       <div className="mt-6">
-        {error && <ErrorNote>{error}</ErrorNote>}
+        {error && !reviews && <LoadError message={error} onRetry={() => { setError(null); void load(); }} />}
+        {error && reviews && <ErrorNote>{error}</ErrorNote>}
         {rosterFailed && <RosterUnavailableNote />}
         {!reviews && !error && <TableSkeleton columns={5} rows={4} label="Loading review queue…" />}
         {reviews && reviews.length === 0 && (
