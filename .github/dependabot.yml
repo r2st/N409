@@ -49,3 +49,7 @@ updates:
     directory: /src/services/web
     schedule:
       interval: weekly
+  - package-ecosystem: docker
+    directory: /src/services/report
+    schedule:
+      interval: weekly

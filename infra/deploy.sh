@@ -464,7 +464,7 @@ run_remote "cd $REMOTE_DIR && npm ci && npm run build" \
 # does not pay for a pip resolve.
 if [[ -n "$PREV_SHA" ]] && $GIT cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; then
   for svc in ai engine-wrapper; do
-    if $GIT diff --name-only "$PREV_SHA" HEAD -- "src/services/$svc/requirements.txt" | grep -q .; then
+    if $GIT diff --name-only "$PREV_SHA" "$SHA" -- "src/services/$svc/requirements.txt" | grep -q .; then
       log "$svc: requirements.txt changed — installing"
       run_remote "cd $REMOTE_DIR/src/services/$svc && .venv/bin/pip install -r requirements.txt" \
         || die "$svc pip install failed — nothing was restarted"

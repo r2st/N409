@@ -26,17 +26,15 @@ ufw default allow outgoing
 # SSH — keep your session alive. Restrict to an admin CIDR in production.
 ufw allow 22/tcp comment 'ssh'
 
-# Public web: Caddy TLS + the web/BFF SPA host.
+# Public web: Caddy TLS only. Caddy proxies to localhost:3000, so the web
+# service must NOT be world-reachable — all traffic enters through :443.
 ufw allow 80/tcp comment 'http (caddy redirect)'
 ufw allow 443/tcp comment 'https (caddy)'
-ufw allow 3000/tcp comment 'n409-web (SPA + /api proxy)'
 
-# Internal services are reachable only over loopback — do NOT open 3001–3004.
-# (They are listed here as an explicit reminder, denied by the default policy.)
-#   3001 valuation, 3002 ai, 3003 engine-wrapper, 3004 report
-
+# All five services bind host ports 3000–3004 and are reachable only over
+# loopback. Caddy is the sole public entry point.
 # Belt-and-braces explicit denies in case a later rule opens them broadly.
-for p in 3001 3002 3003 3004; do
+for p in 3000 3001 3002 3003 3004; do
   ufw deny "${p}/tcp" comment "internal service ${p} — loopback only"
 done
 

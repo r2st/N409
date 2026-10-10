@@ -195,16 +195,17 @@ jobs:
     needs: [node]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
       - name: Build valuation image
-        run: docker build -f src/services/valuation/Dockerfile .
+        run: docker buildx build --cache-from type=gha,scope=valuation --cache-to type=gha,mode=max,scope=valuation -f src/services/valuation/Dockerfile .
       - name: Build web (BFF) image
-        run: docker build -f src/services/web/Dockerfile .
+        run: docker buildx build --cache-from type=gha,scope=web --cache-to type=gha,mode=max,scope=web -f src/services/web/Dockerfile .
       - name: Build report image
-        run: docker build -f src/services/report/Dockerfile .
+        run: docker buildx build --cache-from type=gha,scope=report --cache-to type=gha,mode=max,scope=report -f src/services/report/Dockerfile .
       - name: Build ai image
-        run: docker build src/services/ai
+        run: docker buildx build --cache-from type=gha,scope=ai --cache-to type=gha,mode=max,scope=ai src/services/ai
       - name: Build engine-wrapper image
-        run: docker build src/services/engine-wrapper
+        run: docker buildx build --cache-from type=gha,scope=engine --cache-to type=gha,mode=max,scope=engine src/services/engine-wrapper
 
   terraform:
     name: Terraform validate

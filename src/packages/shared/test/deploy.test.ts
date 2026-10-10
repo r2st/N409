@@ -655,6 +655,35 @@ describe('python dependencies', () => {
     ]);
     expect(run.remote.some((c) => c.includes('pip install'))).toBe(false);
   });
+
+  it('diffs against the deployed ref, not HEAD, during a rollback', () => {
+    // The requirements diff must compare PREV_SHA to $SHA (the commit being
+    // deployed), not to HEAD. During a rollback $SHA is the older commit and
+    // HEAD is the newer one being undone. Diffing to HEAD would see no change
+    // when rolling back a commit that added a requirements.txt entry, so pip
+    // install would be skipped and the host venv would stay on the newer deps
+    // under the older code.
+    const dir = path.join(repo, 'src/services/ai');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'requirements.txt'), 'fastapi\n');
+    git('add', '-A');
+    git('commit', '-qm', 'initial requirements');
+    const older = git('rev-parse', 'HEAD');
+
+    writeFileSync(path.join(dir, 'requirements.txt'), 'fastapi\nuvicorn\n');
+    git('add', '-A');
+    git('commit', '-qm', 'add uvicorn');
+    const newer = git('rev-parse', 'HEAD');
+
+    // Rolling back from newer to older: requirements.txt changed between
+    // older (the deployed ref) and newer (what PREV_SHA will be), so pip
+    // install must fire.
+    const run = deploy(['--apply', `--to=${older}`], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${newer}\\n'; exit 0; }`,
+    ]);
+    expect(run.status).toBe(0);
+    expect(run.remote.some((c) => c.includes('pip install -r requirements.txt'))).toBe(true);
+  });
 });
 
 describe('the shipped archive', () => {

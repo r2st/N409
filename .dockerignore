@@ -1,0 +1,57 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# CI/CD and infra (not needed in images)
+.github/
+infra/
+e2e/
+
+# Environment and secrets
+.env*
+!.env.example
+keys/
+*.pem
+*.key
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test and coverage artifacts
+coverage/
+.nyc_output/
+.pytest_cache/
+.coverage
+coverage.xml
+mutants/
+.mutmut-cache
+
+# Build artifacts (rebuilt inside the image)
+dist/
+build/
+node_modules/
+
+# Python virtual environments (rebuilt inside the image)
+.venv/
+__pycache__/
+
+# Claude Code
+.claude/
+
+# Scratch / temp
+scratchpad/
+tmp/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+*.md
+docs/
+LICENSE
