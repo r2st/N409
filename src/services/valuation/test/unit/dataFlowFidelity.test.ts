@@ -26,8 +26,17 @@ import {
 } from '../../src/domain/valuationCompare.js';
 import { buildBridge } from '../../src/domain/valuationBridge.js';
 import { exerciseScenarios, vestingStatus, type VestingSchedule } from '../../src/domain/vesting.js';
-import { num } from '../../src/domain/reportSummary.js';
+import { num, PER_SHARE_DIGITS, formatCurrency } from '../../src/domain/reportSummary.js';
 import { scoreCompleteness } from '../../src/domain/dataCompleteness.js';
+import {
+  DEFAULT_PRICE_CENTS,
+  FALLBACK_PRICE_CENTS,
+  EXPRESS_DELIVERY_CENTS,
+  QSBS_LETTER_CENTS,
+  RAISE_BANDS,
+  quotePrice,
+  priceForKind,
+} from '../../src/domain/pricing.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -970,5 +979,63 @@ describe('completeness scoring — DLOM blend volatility', () => {
     expect(volGap).toBeDefined();
     expect(volGap!.detail).toContain('ghaidarov');
     expect(volGap!.detail).toMatch(/is derived from volatility/);
+  });
+});
+
+// ── R409 M2: PER_SHARE_DIGITS contract ─────────────────────────────────────
+
+describe('PER_SHARE_DIGITS contract between engine and report renderers', () => {
+  it('is exactly 4', () => {
+    expect(PER_SHARE_DIGITS).toBe(4);
+  });
+
+  it('formatCurrency renders sub-cent precision at PER_SHARE_DIGITS', () => {
+    expect(formatCurrency(2.5013, 'USD', PER_SHARE_DIGITS)).toBe('$2.5013');
+    expect(formatCurrency(0.0512, 'USD', PER_SHARE_DIGITS)).toBe('$0.0512');
+  });
+
+  it('pads trailing zeros to the contracted precision', () => {
+    expect(formatCurrency(2.5, 'USD', PER_SHARE_DIGITS)).toBe('$2.5000');
+  });
+
+  it('denominates in the engagement currency', () => {
+    expect(formatCurrency(2.5013, 'GBP', PER_SHARE_DIGITS)).toBe('£2.5013');
+  });
+});
+
+// ── R409 M2: Pricing constants coherence ───────────────────────────────────
+
+describe('pricing constants form a coherent set', () => {
+  it('409a base price is 4900 cents', () => {
+    expect(DEFAULT_PRICE_CENTS['409a']).toBe(4_900);
+  });
+
+  it('fallback is the cheapest published figure', () => {
+    const published = Object.values(DEFAULT_PRICE_CENTS).filter(
+      (v): v is number => v !== undefined,
+    );
+    expect(FALLBACK_PRICE_CENTS).toBe(Math.min(...published));
+  });
+
+  it('raise bands all carry zero uplift', () => {
+    for (const band of RAISE_BANDS) {
+      expect(band.uplift_cents).toBe(0);
+    }
+  });
+
+  it('quotePrice total with all add-ons', () => {
+    const q = quotePrice({ kind: '409a', addons: { express: true, qsbs_letter: true } });
+    const expected = DEFAULT_PRICE_CENTS['409a']! + EXPRESS_DELIVERY_CENTS + QSBS_LETTER_CENTS;
+    expect(q.amount_cents).toBe(expected);
+  });
+
+  it('quotePrice total without add-ons is the base', () => {
+    const q = quotePrice({ kind: '409a' });
+    expect(q.amount_cents).toBe(DEFAULT_PRICE_CENTS['409a']);
+  });
+
+  it('priceForKind falls back for unknown kinds', () => {
+    expect(priceForKind('nonexistent')).toBe(FALLBACK_PRICE_CENTS);
+    expect(priceForKind('409a')).toBe(DEFAULT_PRICE_CENTS['409a']);
   });
 });

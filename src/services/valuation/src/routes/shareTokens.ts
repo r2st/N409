@@ -21,6 +21,7 @@ interface ShareSummary {
   company_name: string;
   valuation_date: string | null;
   fmv_per_share: number | null;
+  currency: string;
   state: string;
   kind: string;
   powered_by: string;
@@ -66,6 +67,7 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
         company_name: string;
         valuation_date: string | null;
         fmv_per_share: string | null;
+        currency: string;
         state: string;
         kind: string;
       }>(
@@ -84,6 +86,7 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
               FROM calculations c
              WHERE c.valuation_id = v.id AND c.status = 'completed'
              ORDER BY c.created_at DESC LIMIT 1) AS fmv_per_share,
+           v.currency,
            v.state,
            v.kind
          FROM bumped b
@@ -108,6 +111,7 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
         company_name: row.company_name,
         valuation_date: row.valuation_date ? row.valuation_date.slice(0, 10) : null,
         fmv_per_share: row.fmv_per_share !== null ? Number(row.fmv_per_share) : null,
+        currency: row.currency ?? 'USD',
         state: row.state,
         kind: row.kind,
         powered_by: 'DoAide 409A',

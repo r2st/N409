@@ -2,33 +2,18 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Seo } from '../components/Seo';
 import { ShareResultBar } from '../components/ShareResultBar';
+import { formatPerShare, formatDate, KIND_LABELS } from '../lib/format';
 import { siteOrigin } from '../lib/seo';
 
 interface ShareSummary {
   company_name: string;
   valuation_date: string | null;
   fmv_per_share: number | null;
+  currency: string;
   state: string;
   kind: string;
   powered_by: string;
 }
-
-function formatDollars(amount: number): string {
-  return `$${amount.toFixed(2)}`;
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-const KIND_LABELS: Record<string, string> = {
-  '409a': '409A Valuation',
-  fmv: 'Fair Market Value',
-  '718': 'ASC 718 Valuation',
-  '820': 'ASC 820 Fair Value',
-  '805': 'Purchase Price Allocation',
-};
 
 const STATE_LABELS: Record<string, string> = {
   published: 'Completed',
@@ -79,11 +64,12 @@ export function ShareSummaryPage() {
   }, [token]);
 
   const origin = siteOrigin();
+  const kindLabel = summary ? (KIND_LABELS[summary.kind as keyof typeof KIND_LABELS] ?? summary.kind) : '';
   const shareText = summary
-    ? `${summary.company_name} completed their ${KIND_LABELS[summary.kind] ?? summary.kind}${summary.fmv_per_share ? ` — ${formatDollars(summary.fmv_per_share)}/share` : ''} | Powered by DoAide 409A`
+    ? `${summary.company_name} completed their ${kindLabel}${summary.fmv_per_share != null ? ` — ${formatPerShare(summary.fmv_per_share, summary.currency)}/share` : ''} | Powered by DoAide 409A`
     : '';
   const whatsappText = summary
-    ? `\u{1F4CA} ${summary.company_name} just completed their ${KIND_LABELS[summary.kind] ?? summary.kind} with DoAide${summary.fmv_per_share ? ` — ${formatDollars(summary.fmv_per_share)}/share` : ''}\n\nGet yours \u{2192} ${origin}`
+    ? `\u{1F4CA} ${summary.company_name} just completed their ${kindLabel} with DoAide${summary.fmv_per_share != null ? ` — ${formatPerShare(summary.fmv_per_share, summary.currency)}/share` : ''}\n\nGet yours \u{2192} ${origin}`
     : '';
 
   if (loading) {
@@ -114,8 +100,8 @@ export function ShareSummaryPage() {
   return (
     <div className="mx-auto max-w-2xl px-5 py-16">
       <Seo
-        title={`${summary.company_name} — ${KIND_LABELS[summary.kind] ?? summary.kind}`}
-        description={`${summary.company_name} completed their ${KIND_LABELS[summary.kind] ?? summary.kind} with DoAide 409A.`}
+        title={`${summary.company_name} — ${kindLabel}`}
+        description={`${summary.company_name} completed their ${kindLabel} with DoAide 409A.`}
         path={`/share/${token ?? ''}`}
         noindex
       />
@@ -137,7 +123,7 @@ export function ShareSummaryPage() {
           {summary.company_name}
         </h1>
         <p className="mt-2 text-center text-sm text-ink-500">
-          {KIND_LABELS[summary.kind] ?? summary.kind}
+          {kindLabel}
           {summary.state in STATE_LABELS ? ` — ${STATE_LABELS[summary.state]}` : ''}
         </p>
 
@@ -146,7 +132,7 @@ export function ShareSummaryPage() {
             <div className="rounded-lg bg-paper-50 p-4 text-center">
               <div className="text-xs font-medium uppercase tracking-wide text-ink-400">Fair Market Value</div>
               <div className="mt-1 font-display text-2xl font-bold text-ink-900">
-                {formatDollars(summary.fmv_per_share)}
+                {formatPerShare(summary.fmv_per_share, summary.currency)}
               </div>
               <div className="text-xs text-ink-500">per share</div>
             </div>
@@ -166,7 +152,7 @@ export function ShareSummaryPage() {
           <ShareResultBar
             title={`${summary.company_name} valuation summary`}
             text={shareText}
-            emailSubject={`${summary.company_name} — ${KIND_LABELS[summary.kind] ?? summary.kind}`}
+            emailSubject={`${summary.company_name} — ${kindLabel}`}
             emailLabel="Email summary"
             whatsappText={whatsappText}
           />

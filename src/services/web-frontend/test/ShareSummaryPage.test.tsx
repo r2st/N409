@@ -34,6 +34,7 @@ describe('ShareSummaryPage', () => {
         company_name: 'Acme Corp',
         valuation_date: '2026-06-15',
         fmv_per_share: 1.25,
+        currency: 'USD',
         state: 'published',
         kind: '409a',
         powered_by: 'DoAide 409A',
@@ -47,7 +48,7 @@ describe('ShareSummaryPage', () => {
     });
 
     expect(screen.getByText('Acme Corp')).toBeTruthy();
-    expect(screen.getByText('$1.25')).toBeTruthy();
+    expect(screen.getByText('$1.2500')).toBeTruthy();
     expect(screen.getByText(/Powered by DoAide 409A/)).toBeTruthy();
   });
 
@@ -55,7 +56,8 @@ describe('ShareSummaryPage', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: false,
       status: 410,
-    } as Response);
+      json: async () => ({}),
+    } as unknown as Response);
 
     renderPage();
 
@@ -68,12 +70,13 @@ describe('ShareSummaryPage', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: false,
       status: 404,
-    } as Response);
+      json: async () => ({}),
+    } as unknown as Response);
 
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText('Share link not found.')).toBeTruthy();
+      expect(screen.getByText('Share link not found — the token may be invalid or already used.')).toBeTruthy();
     });
   });
 
@@ -84,6 +87,7 @@ describe('ShareSummaryPage', () => {
         company_name: 'TestCo',
         valuation_date: null,
         fmv_per_share: null,
+        currency: 'USD',
         state: 'published',
         kind: '409a',
         powered_by: 'DoAide 409A',
@@ -106,6 +110,7 @@ describe('ShareSummaryPage', () => {
         company_name: 'TestCo',
         valuation_date: null,
         fmv_per_share: null,
+        currency: 'USD',
         state: 'published',
         kind: '409a',
         powered_by: 'DoAide 409A',
@@ -126,6 +131,7 @@ describe('ShareSummaryPage', () => {
         company_name: 'SharedCo',
         valuation_date: '2026-06-15',
         fmv_per_share: 2.00,
+        currency: 'USD',
         state: 'delivered',
         kind: '409a',
         powered_by: 'DoAide 409A',
