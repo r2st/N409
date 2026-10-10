@@ -3,7 +3,7 @@ import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
 import { Button, ErrorNote, Field, inputClass, ListTruncationNote, Spinner } from '../components/ui';
 import { required, useFormValidation } from '../lib/useFormValidation';
-import { formatDate, kindLabel, moneyFormatter, PER_SHARE_DIGITS, stateLabel } from '../lib/format';
+import { formatDate, formatExactPercent, kindLabel, moneyFormatter, PER_SHARE_DIGITS, stateLabel } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 
 interface Section {
@@ -483,7 +483,7 @@ function NoteForm({ token }: { token: string }) {
   );
 }
 
-const pct = (v: string | null) => (v === null || v === undefined ? '—' : `${(Number(v) * 100).toFixed(1)}%`);
+const pct = (v: string | null) => formatExactPercent(v);
 
 /**
  * `digits` exists because this portal is where the figure is *checked*.
