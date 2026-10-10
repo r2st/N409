@@ -24,7 +24,7 @@ import type { ValuationKind, ValuationState } from '../lib/types';
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 const buttonStyles: Record<ButtonVariant, string> = {
-  primary: 'bg-bond-600 text-bond-fg hover:bg-bond-700 active:bg-bond-800 shadow-card disabled:bg-ink-300',
+  primary: 'bg-bond-600 text-bond-fg hover:bg-bond-700 active:bg-bond-800 shadow-card disabled:bg-ink-400 disabled:text-surface',
   secondary:
     'border border-ink-200 bg-surface text-ink-800 hover:border-ink-400 hover:bg-paper-50 disabled:text-ink-300',
   ghost: 'text-ink-600 hover:bg-paper-200 hover:text-ink-900',

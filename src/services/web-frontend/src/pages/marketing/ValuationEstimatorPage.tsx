@@ -358,7 +358,7 @@ export function ValuationEstimatorPage(): React.JSX.Element {
               disabled={!canEstimate}
               onClick={handleEstimate}
               data-testid="estimate-button"
-              className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               Estimate Valuation
             </button>

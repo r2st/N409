@@ -46,7 +46,7 @@
   --color-bond-300: #f7d070;
   --color-bond-400: #f0b429;
   --color-bond-500: #d4a01f;
-  --color-bond-600: #a87c1c;
+  --color-bond-600: #946b17;
   --color-bond-700: #7d5c15;
   --color-bond-800: #533e0e;
   --color-bond-900: #2a1f08;
@@ -57,7 +57,7 @@
   --color-brass-300: #f7d070;
   --color-brass-400: #f0b429;
   --color-brass-500: #d4a01f;
-  --color-brass-600: #a87c1c;
+  --color-brass-600: #946b17;
 
   /*
    * chrome — the brand furniture that is dark in BOTH themes: the app sidebar,
@@ -550,7 +550,7 @@ html {
   --bg-card-hover: rgba(32, 32, 36, 0.95);
   --text: rgb(229, 231, 235);
   --text-white: rgb(255, 255, 255);
-  --text-muted: rgba(255, 255, 255, 0.52);
+  --text-muted: rgba(255, 255, 255, 0.6);
   min-height: 100vh;
   min-height: 100dvh;
   background: var(--bg);
@@ -996,7 +996,7 @@ html {
 }
 
 .landing-footer-copy {
-  color: rgba(255, 255, 255, 0.52);
+  color: rgba(255, 255, 255, 0.6);
   font-size: 11px;
 }
 
@@ -1039,7 +1039,7 @@ html {
 }
 
 .landing-trust-item {
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.6);
   font-size: 12px;
   font-family: 'IBM Plex Mono', var(--font-mono);
   white-space: nowrap;
@@ -1184,13 +1184,13 @@ html {
 
 .landing-timeline-duration {
   font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.6);
   font-family: 'IBM Plex Mono', monospace;
 }
 
 .landing-timeline-chevron {
   flex-shrink: 0;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.6);
   transition: transform 0.2s;
 }
 
@@ -1221,7 +1221,7 @@ html {
 
 .landing-timeline-list li {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.6);
   line-height: 1.5;
 }
 
@@ -1269,7 +1269,7 @@ html {
   border-color: rgba(255, 255, 255, 0.15);
   color: #fff;
 }
-.landing-subscribe input::placeholder { color: rgba(255, 255, 255, 0.35); }
+.landing-subscribe input::placeholder { color: rgba(255, 255, 255, 0.45); }
 
 /* ── Auth card ── */
 
@@ -1391,7 +1391,7 @@ html {
 
 .landing-divider-text {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.52);
   font-family: 'IBM Plex Mono', var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1399,14 +1399,14 @@ html {
 
 /* Style overrides for form fields inside the dark auth card */
 .landing-auth-card label {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.64);
   font-size: 12px;
 }
 .landing-auth-card input[type="text"],
 .landing-auth-card input[type="email"],
 .landing-auth-card input[type="password"] {
   background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.36);
   color: var(--text);
   border-radius: 10px;
   min-height: 44px;
@@ -1419,7 +1419,7 @@ html {
   box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.12);
 }
 .landing-auth-card input::placeholder {
-  color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 /* ── Responsive: mobile stacks vertically at 768px ── */

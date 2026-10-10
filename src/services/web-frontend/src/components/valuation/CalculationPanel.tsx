@@ -257,7 +257,7 @@ export function CalculationPanel({
                       : `The ${label} approach has no weight in the latest run`
                   }
                   onClick={() => void run(approach)}
-                  className="tap-area cursor-pointer rounded-full border border-ink-200 bg-surface px-3 py-1 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="tap-area cursor-pointer rounded-full border border-ink-200 bg-surface px-3 py-1 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {busy === approach ? 'Recomputing…' : `↻ ${label}`}
                 </button>

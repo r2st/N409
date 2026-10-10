@@ -285,7 +285,7 @@ export function NetworkTab() {
                 type="button"
                 disabled={page <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-40"
+                className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-60"
               >
                 Previous
               </button>
@@ -296,7 +296,7 @@ export function NetworkTab() {
                 type="button"
                 disabled={page >= pages}
                 onClick={() => setPage((p) => p + 1)}
-                className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-40"
+                className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-60"
               >
                 Next
               </button>
