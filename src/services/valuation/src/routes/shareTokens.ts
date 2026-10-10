@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { requirePrincipal } from '../plugins/auth.js';
 import { canReadValuation } from '../auth/rbac.js';
+import type { ValuationRow } from '../repos/valuations.js';
 import { findValuationById } from '../repos/valuations.js';
 import { forbidden } from '../domain/accessProblem.js';
 import { invalidBody } from '../domain/validationProblem.js';
@@ -11,6 +12,10 @@ import { invalidBody } from '../domain/validationProblem.js';
 const CreateShareBody = z.object({
   valuation_id: z.string().refine(isUlid, 'must be a ULID'),
 });
+
+function toRef(v: ValuationRow) {
+  return { userId: v.user_id, partnerId: v.partner_id };
+}
 
 interface ShareSummary {
   company_name: string;
@@ -25,30 +30,31 @@ interface ShareSummary {
 export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): void {
   app.post<{ Body: z.infer<typeof CreateShareBody> }>(
     '/api/share-tokens',
-    async (req, reply) => {
+    async (req) => {
       const principal = requirePrincipal(req);
       const parsed = CreateShareBody.safeParse(req.body);
-      if (!parsed.success) return invalidBody(reply, parsed.error);
+      if (!parsed.success) throw invalidBody('Invalid share token request', parsed.error);
 
       const { valuation_id } = parsed.data;
       const valuation = await findValuationById(pool, valuation_id);
-      if (!valuation) return reply.code(404).send(problems.notFound('valuation'));
-      if (!canReadValuation(principal, valuation)) return forbidden(reply);
+      if (!valuation) throw problems.notFound('valuation');
+      if (!canReadValuation(principal, toRef(valuation)))
+        throw forbidden('Creating a share link', 'own-record');
 
       const { rows } = await pool.query<{ token: string }>(
         `INSERT INTO valuation_share_tokens (valuation_id, created_by)
          VALUES ($1, $2)
          RETURNING token`,
-        [valuation_id, principal.userId],
+        [valuation_id, principal.id],
       );
 
-      return reply.code(201).send({ token: rows[0]!.token });
+      return { token: rows[0]!.token };
     },
   );
 
   app.get<{ Params: { token: string } }>(
     '/api/share-tokens/:token/summary',
-    async (req, reply) => {
+    async (req) => {
       const { token } = req.params;
 
       const { rows } = await pool.query<{
@@ -76,11 +82,16 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
         [token],
       );
 
-      if (rows.length === 0) return reply.code(404).send(problems.notFound('share token'));
+      if (rows.length === 0) throw problems.notFound('share token');
       const row = rows[0]!;
 
       if (row.expires_at < new Date()) {
-        return reply.code(410).send(problems.gone('This share link has expired'));
+        throw new ApiProblem({
+          status: 410,
+          title: 'Gone',
+          type: 'urn:n409:problem:gone',
+          detail: 'This share link has expired',
+        });
       }
 
       await pool.query(
@@ -98,7 +109,7 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
         powered_by: 'DoAide 409A',
       };
 
-      return reply.send(summary);
+      return summary;
     },
   );
 }
