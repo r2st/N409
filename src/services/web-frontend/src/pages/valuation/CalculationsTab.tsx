@@ -1,5 +1,7 @@
 import { useWorkspace } from './ValuationWorkspace';
 import { CalculationPanel } from '../../components/valuation/CalculationPanel';
+import { useAuth } from '../../lib/auth';
+import { isOps } from '../../lib/rbac';
 
 /**
  * Thin adapter mounting an M1 pipeline panel as a workspace tab.
@@ -22,10 +24,8 @@ import { CalculationPanel } from '../../components/valuation/CalculationPanel';
  */
 export function CalculationsTab() {
   const { valuation, retired } = useWorkspace();
-  // The panel takes the condition rather than being wrapped: the run history
-  // under the buttons has its own control — "Inspect steps" — and that is the
-  // one thing on a withdrawn engagement somebody is most likely to be here for.
+  const { user } = useAuth();
   return (
-    <CalculationPanel valuationId={valuation.id} currency={valuation.currency ?? 'USD'} readOnly={retired} />
+    <CalculationPanel valuationId={valuation.id} currency={valuation.currency ?? 'USD'} readOnly={!isOps(user) || retired} />
   );
 }

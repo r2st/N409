@@ -92,7 +92,19 @@ function CompletionBar({ percent, halted }: { percent: number; halted: boolean }
   );
 }
 
-/** The one thing the client should do next, with a link to the right tab. */
+const TAB_LABELS: Record<string, string> = {
+  documents: 'Documents',
+  'cap-table': 'Cap Table',
+  model: 'Financial Model',
+  params: 'Params',
+  calculations: 'Calculations',
+  report: 'Report',
+  intake: 'Intake',
+  company: 'Company',
+  progress: 'Progress',
+  engagement: 'Engagement',
+};
+
 function NextActionCard({ action, base }: { action: NextAction; base: string }) {
   const attention = action.client_action_required;
   return (
@@ -112,7 +124,7 @@ function NextActionCard({ action, base }: { action: NextAction; base: string }) 
           to={`${base}/${action.tab}`}
           className="mt-3 inline-block text-sm font-semibold text-bond-700 underline underline-offset-2 hover:text-bond-800"
         >
-          Go to {action.tab}
+          Go to {TAB_LABELS[action.tab] ?? action.tab}
         </Link>
       )}
     </div>
@@ -283,9 +295,16 @@ export function ProgressTab() {
             ))}
           </ul>
           <p className="mt-4 text-xs text-ink-400">
-            {missing.length === 0
-              ? 'Everything we need is in — thank you.'
-              : `${missing.length} item${missing.length === 1 ? '' : 's'} still needed. Upload them on the Documents tab.`}
+            {missing.length === 0 ? (
+              'Everything we need is in — thank you.'
+            ) : (
+              <>
+                {missing.length} item{missing.length === 1 ? '' : 's'} still needed.{' '}
+                <Link to={`${base}/documents`} className="font-semibold text-bond-600 hover:text-bond-700">
+                  Upload them →
+                </Link>
+              </>
+            )}
           </p>
           {progress.report.available && (
             <button

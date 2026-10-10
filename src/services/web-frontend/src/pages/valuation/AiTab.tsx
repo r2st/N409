@@ -1,5 +1,7 @@
 import { useWorkspace } from './ValuationWorkspace';
 import { AiPanel } from '../../components/valuation/AiPanel';
+import { useAuth } from '../../lib/auth';
+import { isOps } from '../../lib/rbac';
 import { WriteGate } from '../../components/ui';
 
 /**
@@ -23,8 +25,9 @@ import { WriteGate } from '../../components/ui';
  */
 export function AiTab() {
   const { valuation, retired } = useWorkspace();
+  const { user } = useAuth();
   return (
-    <WriteGate closed={retired}>
+    <WriteGate closed={!isOps(user) || retired}>
       <AiPanel valuationId={valuation.id} />
     </WriteGate>
   );

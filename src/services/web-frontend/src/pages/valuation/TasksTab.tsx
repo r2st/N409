@@ -1,5 +1,7 @@
 import { useWorkspace } from './ValuationWorkspace';
 import { TasksPanel } from '../../components/valuation/TasksPanel';
+import { useAuth } from '../../lib/auth';
+import { isOps } from '../../lib/rbac';
 import { WriteGate } from '../../components/ui';
 
 /**
@@ -23,8 +25,9 @@ import { WriteGate } from '../../components/ui';
  */
 export function TasksTab() {
   const { valuation, retired } = useWorkspace();
+  const { user } = useAuth();
   return (
-    <WriteGate closed={retired}>
+    <WriteGate closed={!isOps(user) || retired}>
       <TasksPanel valuationId={valuation.id} />
     </WriteGate>
   );
