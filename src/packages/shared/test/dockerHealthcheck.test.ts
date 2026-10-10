@@ -177,3 +177,71 @@ describe('docker-compose healthchecks', () => {
     expect(uses).toHaveLength(2);
   });
 });
+
+describe('docker-compose stop_grace_period', () => {
+  const compose = readFileSync(path.join(repoRoot, 'docker-compose.yml'), 'utf8');
+
+  /**
+   * Extracts the `stop_grace_period` for each application service in the
+   * compose file. Infrastructure services (postgres, redis) are excluded — they
+   * have their own shutdown semantics and are not ours to bound.
+   */
+  function appServiceGracePeriods(): Map<string, string | null> {
+    const out = new Map<string, string | null>();
+    const appServices = ['valuation', 'web', 'ai', 'engine-wrapper', 'report'];
+    let currentService: string | null = null;
+    let indent = 0;
+
+    for (const line of compose.split('\n')) {
+      // Top-level service definition: exactly two spaces of indent, a name, and
+      // a colon. Deeper lines belong to the current service.
+      const svcMatch = /^  (\S+):/.exec(line);
+      if (svcMatch && !/^\s{4,}/.test(line)) {
+        currentService = appServices.includes(svcMatch[1]!) ? svcMatch[1]! : null;
+        if (currentService && !out.has(currentService)) out.set(currentService, null);
+        indent = 2;
+        continue;
+      }
+      if (currentService === null) continue;
+      // A line at the service's own indent that sets stop_grace_period.
+      const graceMatch = /^\s+stop_grace_period:\s*(.+)/.exec(line);
+      if (graceMatch) out.set(currentService, graceMatch[1]!.trim());
+    }
+    return out;
+  }
+
+  /** Parse a Docker duration string (e.g. "30s", "1m30s") into seconds. */
+  function parseDockerDuration(raw: string): number {
+    let total = 0;
+    const minMatch = /(\d+)m(?!s)/.exec(raw);
+    if (minMatch) total += Number(minMatch[1]) * 60;
+    const secMatch = /(\d+)s/.exec(raw);
+    if (secMatch) total += Number(secMatch[1]);
+    return total || Number(raw);
+  }
+
+  it('is set on every application service', () => {
+    // Docker's default is 10s. The Python services use --timeout-graceful-
+    // shutdown 15, so a `docker compose down` would SIGKILL them at 10s —
+    // before their own graceful path finishes. The exact race the systemd units
+    // fixed with TimeoutStopSec=30, reproduced here in a different supervisor.
+    const periods = appServiceGracePeriods();
+    expect(periods.size).toBe(5);
+    for (const [service, grace] of periods) {
+      expect([service, grace !== null]).toEqual([service, true]);
+    }
+  });
+
+  it('clears the application grace period on every service', () => {
+    // The rule is the same one systemdShutdown.ts enforces: the supervisor must
+    // give up *after* the application does, so a clean shutdown is never pre-
+    // empted by a SIGKILL. The Node services exit within DEFAULT_SHUTDOWN_
+    // GRACE_MS (10s); the Python ones within --timeout-graceful-shutdown (15s).
+    const periods = appServiceGracePeriods();
+    for (const [service, raw] of periods) {
+      const seconds = parseDockerDuration(raw!);
+      // Must be above both the Node grace (10s) and the uvicorn grace (15s).
+      expect(seconds, `${service}: stop_grace_period=${raw} is not above 15s`).toBeGreaterThan(15);
+    }
+  });
+});

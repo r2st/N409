@@ -34,6 +34,11 @@ services:
       context: .
       dockerfile: src/services/valuation/Dockerfile
     restart: unless-stopped
+    # Matched to systemd's TimeoutStopSec=30. Docker's default is 10s, and the
+    # Node graceful shutdown takes up to 10s (shared/shutdown.ts) — so the
+    # default would SIGKILL at the exact instant the app gives up, turning a
+    # clean exit into a race. 30s gives the same margin the unit file does.
+    stop_grace_period: 30s
     environment:
       DATABASE_URL: postgres://n409:n409_dev@postgres:5432/n409_dev
       JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
@@ -75,6 +80,7 @@ services:
       context: .
       dockerfile: src/services/web/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       HOST: '0.0.0.0'
       PORT: '3000'
@@ -110,6 +116,7 @@ services:
     build:
       context: src/services/ai
     restart: unless-stopped
+    stop_grace_period: 30s
     # Internal service — reachable only on the compose network, no host port
     # (audit B-1 P0 / I-1 P3). It listens on all interfaces *inside* the
     # container but is never published to the host.
@@ -142,6 +149,7 @@ services:
       context: .
       dockerfile: src/services/engine-wrapper/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     # Internal service — no host port (audit B-1 P0 / I-1 P3).
     environment:
       HOST: '0.0.0.0'
@@ -167,6 +175,7 @@ services:
       context: .
       dockerfile: src/services/report/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     # Internal service — no host port (audit I-1 P3).
     environment:
       # Reachable on the compose network only (`expose`, not `ports`), which
