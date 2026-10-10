@@ -4,7 +4,7 @@ import { formatDateTime, formatPerShare, moneyFormatter } from '../../lib/format
 import { useWorkspace } from './ValuationWorkspace';
 import { WaterfallChart } from '../../components/charts';
 import { RollforwardPanel } from '../../components/valuation/RollforwardPanel';
-import { EmptyState, ErrorNote, Select, Spinner, WriteGate } from '../../components/ui';
+import { EmptyState, ErrorNote, LoadError, Select, Spinner, WriteGate, useRetry } from '../../components/ui';
 import { useLatestOnly } from '../../lib/useLatestOnly';
 
 interface Candidate {
@@ -82,6 +82,7 @@ export function BridgeTab() {
   const [data, setData] = useState<BridgeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   const claim = useLatestOnly();
 
@@ -92,7 +93,7 @@ export function BridgeTab() {
         setBridgeable(r.bridgeable);
       })
       .catch((err: unknown) => setError(describeLoadFailure(err, 'Could not load comparable valuations.')));
-  }, [valuation.id]);
+  }, [valuation.id, token]);
 
   useEffect(() => {
     if (!compareId) {
@@ -129,7 +130,8 @@ export function BridgeTab() {
         </p>
       </div>
 
-      {error && <ErrorNote>{error}</ErrorNote>}
+      {error && !candidates && <LoadError message={error} {...retryProps} />}
+      {error && candidates && <ErrorNote>{error}</ErrorNote>}
 
       {bridgeable === false ? (
         // Not "none yet". Waiting will not produce one, so the sentence that
