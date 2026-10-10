@@ -273,7 +273,10 @@ describe('error messages name what failed, why, and what to do', () => {
       // shape was wrong tells a prober how to spell a real one. The gate has
       // been red on main for five rounds over that one call, which is a ratchet
       // measuring nothing.
-      320,
+      //
+      // Re-based up by one in R408. R392 gave `/admin/blog/posts/:slug` the
+      // same shape check, same reasoning as the help articles above.
+      321,
     );
   });
 });

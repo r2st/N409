@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { describeTransportFailure, newUlid } from '@n409/shared';
 import { withClientTransaction, withTransaction } from '../db/pool.js';
 import {
   classifyTransportError,
@@ -223,7 +223,7 @@ export async function recordSendFailure(
   // take it out of the retry it should stay in.
   if (kind === null || !isTerminalBounce(kind)) return kind;
 
-  const detail = sliceChars(err instanceof Error ? err.message : String(err), 500);
+  const detail = sliceChars(describeTransportFailure(err), 500);
   const occurredAt = new Date();
 
   await recordDeliveryEvent(db, {
