@@ -144,6 +144,11 @@ describe('destructiveFindings', () => {
     expect(destructiveFindings(sql).map((f) => f.rule)).toEqual(['not-null-without-default']);
   });
 
+  it("does not let a comma-separated column's DEFAULT excuse a prior column's missing one", () => {
+    const sql = "ALTER TABLE users ADD COLUMN tier text NOT NULL, ADD COLUMN plan text NOT NULL DEFAULT 'free';";
+    expect(destructiveFindings(sql).map((f) => f.rule)).toEqual(['not-null-without-default']);
+  });
+
   it('does not read its own prose as DDL', () => {
     // Two migrations in the directory discuss renaming in comments. A scanner
     // that reports those would be fixed by deleting the explanation.

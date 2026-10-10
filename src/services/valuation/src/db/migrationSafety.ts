@@ -126,7 +126,7 @@ const RULES: Rule[] = [
     key: 'not-null-without-default',
     // Two separate risks in one shape: on a non-empty table the statement fails
     // outright, and on a large one it holds a lock for the length of a rewrite.
-    pattern: /\bADD\s+COLUMN\b(?:\s+IF\s+NOT\s+EXISTS)?\s+[^;,()]*?\bNOT\s+NULL\b(?![^;]*\bDEFAULT\b)/gi,
+    pattern: /\bADD\s+COLUMN\b(?:\s+IF\s+NOT\s+EXISTS)?\s+[^;,()]*?\bNOT\s+NULL\b(?![^;,]*\bDEFAULT\b)/gi,
     explain: () =>
       'adds a NOT NULL column with no DEFAULT. On any table that already has rows the statement fails ' +
       'and the migration aborts — but only on environments whose table is non-empty, so it passes in ' +
