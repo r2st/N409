@@ -71,7 +71,7 @@ import math
 import os
 import re
 import time
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Generic, Iterable, Mapping, Sequence, TypedDict, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -281,7 +281,10 @@ def _render_labels(
     return "{" + ",".join(parts) + "}" if parts else ""
 
 
-class _Family:
+_T = TypeVar("_T")
+
+
+class _Family(Generic[_T]):
     """Shared bookkeeping for the capped label-set map every instrument keeps."""
 
     def __init__(
@@ -300,16 +303,16 @@ class _Family:
         self.help = help_text
         self.label_names = tuple(label_names)
         self._max_series = max_series
-        self._series: dict[tuple[str, ...], object] = {}
+        self._series: dict[tuple[str, ...], _T] = {}
         self._overflow_key: tuple[str, ...] | None = None
 
-    def _create(self) -> object:  # pragma: no cover - overridden
+    def _create(self) -> _T:  # pragma: no cover - overridden
         raise NotImplementedError
 
     def _key(self, labels: Mapping[str, str] | None) -> tuple[str, ...]:
         return tuple(str((labels or {}).get(n, "")) for n in self.label_names)
 
-    def _at(self, labels: Mapping[str, str] | None) -> object:
+    def _at(self, labels: Mapping[str, str] | None) -> _T:
         key = self._key(labels)
         existing = self._series.get(key)
         if existing is not None:
@@ -329,10 +332,10 @@ class _Family:
         return created
 
 
-class Counter(_Family):
+class Counter(_Family[list[float]]):
     """A monotonically increasing tally, per label set."""
 
-    def _create(self) -> object:
+    def _create(self) -> list[float]:
         return [0.0]
 
     def inc(self, labels: Mapping[str, str] | None = None, value: float = 1) -> None:
@@ -343,19 +346,25 @@ class Counter(_Family):
         if value < 0:
             return
         cell = self._at(labels)
-        cell[0] += value  # type: ignore[index]
+        cell[0] += value
 
     def render(self) -> list[str]:
         out = [f"# HELP {self.name} {escape_help(self.help)}", f"# TYPE {self.name} counter"]
         for values, cell in self._series.items():
             out.append(
                 f"{self.name}{_render_labels(self.label_names, values)} "
-                f"{format_value(cell[0])}"  # type: ignore[index]
+                f"{format_value(cell[0])}"
             )
         return out
 
 
-class Histogram(_Family):
+class _HistogramCell(TypedDict):
+    counts: list[int]
+    sum: float
+    count: int
+
+
+class Histogram(_Family[_HistogramCell]):
     """Cumulative buckets, a sum and a count, per label set."""
 
     def __init__(
@@ -369,7 +378,7 @@ class Histogram(_Family):
         super().__init__(name, help_text, label_names, max_series)
         self.bounds = tuple(sorted(bounds))
 
-    def _create(self) -> object:
+    def _create(self) -> _HistogramCell:
         return {"counts": [0 for _ in self.bounds], "sum": 0.0, "count": 0}
 
     def observe(self, value: float, labels: Mapping[str, str] | None = None) -> None:
@@ -381,24 +390,24 @@ class Histogram(_Family):
         # bucket already holds every request ever served.
         for i, bound in enumerate(self.bounds):
             if value <= bound:
-                cell["counts"][i] += 1  # type: ignore[index]
+                cell["counts"][i] += 1
                 break
-        cell["sum"] += value  # type: ignore[index]
-        cell["count"] += 1  # type: ignore[index]
+        cell["sum"] += value
+        cell["count"] += 1
 
     def render(self) -> list[str]:
         out = [f"# HELP {self.name} {escape_help(self.help)}", f"# TYPE {self.name} histogram"]
         for values, cell in self._series.items():
             running = 0
             for i, bound in enumerate(self.bounds):
-                running += cell["counts"][i]  # type: ignore[index]
+                running += cell["counts"][i]
                 le = _render_labels(self.label_names, values, ("le", format_value(bound)))
                 out.append(f"{self.name}_bucket{le} {running}")
             inf = _render_labels(self.label_names, values, ("le", "+Inf"))
-            out.append(f"{self.name}_bucket{inf} {cell['count']}")  # type: ignore[index]
+            out.append(f"{self.name}_bucket{inf} {cell['count']}")
             base = _render_labels(self.label_names, values)
-            out.append(f"{self.name}_sum{base} {format_value(cell['sum'])}")  # type: ignore[index]
-            out.append(f"{self.name}_count{base} {cell['count']}")  # type: ignore[index]
+            out.append(f"{self.name}_sum{base} {format_value(cell['sum'])}")
+            out.append(f"{self.name}_count{base} {cell['count']}")
         return out
 
 
