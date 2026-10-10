@@ -45,11 +45,10 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
     if (delta === null) return { background: 'var(--color-paper-200)', color: 'var(--color-ink-300)' };
     const intensity = Math.min(1, Math.abs(delta) / maxAbs);
     const alpha = 0.12 + intensity * 0.6;
-    // bond green above base, brick red below.
     const rgb = delta >= 0 ? '47, 125, 91' : '160, 82, 82';
     return {
       background: `rgba(${rgb}, ${alpha})`,
-      color: intensity > 0.6 ? '#fff' : 'var(--color-ink-900)',
+      color: 'var(--color-ink-900)',
     };
   };
 
@@ -81,16 +80,17 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
                   // A reason only ever explains a *missing* value; where there
                   // is a number, the delta is the more useful hover.
                   const reason = cell.value === null ? cell.note : undefined;
+                  const deltaPct =
+                    cell.delta === null ? null : `${cell.delta >= 0 ? '+' : ''}${(cell.delta * 100).toFixed(1)}%`;
                   return (
                     <td
                       key={j}
                       className="tnum px-4 py-2.5 text-right"
                       style={{ backgroundColor: style.background, color: style.color }}
-                      title={reason ?? (cell.delta === null ? 'n/a' : `${(cell.delta * 100).toFixed(1)}%`)}
+                      title={reason ?? (deltaPct ?? 'n/a')}
                     >
                       {cell.value === null ? '—' : format(cell.value)}
-                      {/* `title` is hover-only and never reaches a screen reader,
-                          which would otherwise be read an unexplained dash. */}
+                      {deltaPct && <span className="sr-only"> ({deltaPct})</span>}
                       {reason && <span className="sr-only">{reason}</span>}
                     </td>
                   );
