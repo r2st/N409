@@ -638,7 +638,8 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
     let state;
     try {
       state = await verifyCapTableSyncState(q.state, deps.jwt);
-    } catch {
+    } catch (err) {
+      req.log.warn({ err }, 'cap-table sync callback state verification failed');
       throw problems.unprocessable(integrationCallbackRefusal('capTable'));
     }
     const provider = parseProvider(state.provider);

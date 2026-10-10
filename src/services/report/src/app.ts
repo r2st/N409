@@ -370,6 +370,7 @@ export function buildApp(): FastifyInstance {
         errors: parsed.error.issues,
       });
     const { branding, ...rest } = parsed.data;
+    const startedAt = performance.now();
     const pdf = await renderReportPdf({
       ...rest,
       ...(branding
@@ -382,6 +383,11 @@ export function buildApp(): FastifyInstance {
           }
         : {}),
     });
+    const renderMs = Math.round(performance.now() - startedAt);
+    req.log.info(
+      { render_ms: renderMs, sections: rest.sections.length, pdf_bytes: pdf.length },
+      'pdf render complete',
+    );
     return reply
       .type('application/pdf')
       .header('content-disposition', 'inline; filename="report.pdf"')

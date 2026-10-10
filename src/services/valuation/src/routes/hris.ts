@@ -618,7 +618,8 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     let state;
     try {
       state = await verifyHrisState(q.state, deps.jwt);
-    } catch {
+    } catch (err) {
+      req.log.warn({ err }, 'hris callback state verification failed');
       throw problems.unprocessable(integrationCallbackRefusal('hris'));
     }
     const provider = parseProvider(state.provider);

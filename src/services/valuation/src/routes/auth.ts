@@ -670,7 +670,8 @@ export function registerAuthRoutes(
 
     try {
       await verifyOidcState(query.data.state, deps.jwt);
-    } catch {
+    } catch (err) {
+      req.log.warn({ err }, 'OIDC state verification failed');
       return refuseSso(req, reply, 'invalid_request', problems.unauthorized('Invalid OIDC state'));
     }
     /*

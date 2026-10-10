@@ -205,7 +205,8 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
     let state;
     try {
       state = await verifyAccountingState(q.state, deps.jwt);
-    } catch {
+    } catch (err) {
+      req.log.warn({ err }, 'accounting callback state verification failed');
       throw problems.unprocessable(integrationCallbackRefusal('accounting'));
     }
     const provider = parseProvider(state.provider);
