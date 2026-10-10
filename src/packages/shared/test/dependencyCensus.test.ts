@@ -543,6 +543,78 @@ describe('pyproject.toml agrees with the requirements files that actually instal
 });
 
 // ---------------------------------------------------------------------------
+// Python: dependency floors above known-vulnerable ranges (M14 audit)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses `>=X.Y.Z` floors from a requirements.txt into a map of name → floor.
+ *
+ * Only `>=` is checked because that is the convention every line here follows —
+ * a floor is the thing deploy.sh enforces, and raising it schedules the
+ * reinstall that retires the vulnerable build. Lines without a `>=` (bare
+ * names, `==` pins, `-r` includes) are excluded.
+ */
+function requirementFloors(file: string): Map<string, string> {
+  const floors = new Map<string, string>();
+  for (const raw of readFileSync(file, 'utf8').split('\n')) {
+    const line = raw.split('#')[0]!.trim();
+    if (!line || line.startsWith('-')) continue;
+    const match = /^([A-Za-z0-9_-]+)\s*>=\s*([0-9]+(?:\.[0-9]+)*)/.exec(line);
+    if (match) floors.set(match[1]!.toLowerCase(), match[2]!);
+  }
+  return floors;
+}
+
+function versionAtLeast(actual: string, minimum: string): boolean {
+  const a = actual.split('.').map(Number);
+  const b = minimum.split('.').map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const ai = a[i] ?? 0;
+    const bi = b[i] ?? 0;
+    if (ai > bi) return true;
+    if (ai < bi) return false;
+  }
+  return true;
+}
+
+/**
+ * Direct dependencies whose advisory-fixed version is above the floor declared
+ * in requirements.txt. Each entry names the package, the minimum safe version,
+ * and the advisory that fixed it — so the test message says *why* the floor
+ * needs raising, not just that it does.
+ */
+const PY_MINIMUM_SAFE: { pkg: string; minSafe: string; advisory: string }[] = [
+  { pkg: 'anyio', minSafe: '4.14.2', advisory: 'PYSEC-2026-4024 / PYSEC-2026-4025' },
+  { pkg: 'pypdf', minSafe: '6.15.0', advisory: 'PYSEC-2026-3655 / PYSEC-2026-3656' },
+];
+
+describe('python dependency floors exclude known-vulnerable ranges', () => {
+  for (const svc of PY_SERVICES) {
+    const reqsFile = path.join(repoRoot, svc, 'requirements.txt');
+    if (!existsSync(reqsFile)) continue;
+
+    it(`${svc}/requirements.txt`, () => {
+      const floors = requirementFloors(reqsFile);
+      const below: string[] = [];
+
+      for (const { pkg, minSafe, advisory } of PY_MINIMUM_SAFE) {
+        const floor = floors.get(pkg);
+        if (floor === undefined) continue;
+        if (!versionAtLeast(floor, minSafe)) {
+          below.push(`${pkg}>=${floor} is below the fix for ${advisory} (need >=${minSafe})`);
+        }
+      }
+
+      expect(
+        below,
+        `${svc}/requirements.txt declares a floor below a known-vulnerable version. ` +
+          `Raise the floor so deploy.sh installs a patched version on the next deploy.`,
+      ).toEqual([]);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // The lockfile
 // ---------------------------------------------------------------------------
 

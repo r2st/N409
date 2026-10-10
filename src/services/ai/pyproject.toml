@@ -17,7 +17,7 @@ dependencies = [
     # app/errors.py, anyio in app/limits.py) and, before R195, declared nowhere.
     "pydantic>=2.9",
     "starlette>=0.46",
-    "anyio>=4.0",
+    "anyio>=4.14.2",
     # Imported by tools/check_installed_deps.py, which infra/deploy.sh runs as
     # its preflight gate using this venv's interpreter. It reached the tool only
     # as a pytest transitive, and pytest is not on the deploy host.

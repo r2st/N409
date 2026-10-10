@@ -23,7 +23,7 @@ yfinance>=0.2
 #   anyio       app/limits.py — to_thread.current_default_thread_limiter()
 pydantic>=2.9
 starlette>=0.46
-anyio>=4.0
+anyio>=4.14.2
 
 # Imported by tools/check_installed_deps.py, which infra/deploy.sh runs with
 # *this venv's* interpreter as its preflight gate — see the matching block in
