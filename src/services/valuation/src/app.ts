@@ -544,6 +544,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // set their own header and are left alone.
   registerNoStoreDefault(app);
 
+  app.addHook('onSend', (_req, reply, _payload, done) => {
+    void reply.header('x-api-version', '0.1.0');
+    done();
+  });
+
   registerProblemHandler(app);
   // Records every route as it registers so the assertion at the end of this
   // function can refuse to boot with an endpoint that has neither

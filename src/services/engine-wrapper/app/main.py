@@ -115,7 +115,7 @@ app.add_middleware(make_metrics_middleware(_metrics))
 # Outermost, so the headers reach the responses the layers above return without
 # ever seeing a route — the token gate's 401, the body cap's 413, the limiter's
 # 429 and the unhandled-error 500 (round 74).
-app.add_middleware(make_security_headers_middleware())
+app.add_middleware(make_security_headers_middleware(api_version=ENGINE_VERSION))
 # Put the request id on the deliberate failures as well, so every error
 # response this service can emit is traceable to a log line.
 install_error_handlers(app, SERVICE)

@@ -69,9 +69,9 @@ _PERMISSIONS_POLICY = (
 )
 
 
-def headers_for(path: str) -> dict[str, str]:
+def headers_for(path: str, *, api_version: str = "") -> dict[str, str]:
     """The security headers a response on `path` should carry."""
-    return {
+    h: dict[str, str] = {
         "content-security-policy": _DOCS_CSP if path in _DOC_PATHS else API_CSP,
         "x-content-type-options": "nosniff",
         "x-frame-options": "DENY",
@@ -83,9 +83,12 @@ def headers_for(path: str) -> dict[str, str]:
         # valuation service's `crossOriginResourcePolicy: same-site`.
         "cross-origin-resource-policy": "same-site",
     }
+    if api_version:
+        h["x-api-version"] = api_version
+    return h
 
 
-def make_security_headers_middleware():
+def make_security_headers_middleware(*, api_version: str = ""):
     """Middleware stamping {@link headers_for} onto every response.
 
     Registered outermost (added last) so it also covers the responses the
@@ -103,7 +106,7 @@ def make_security_headers_middleware():
             if scope["type"] != "http":
                 await app(scope, receive, send)
                 return
-            stamped = headers_for(scope["path"])
+            stamped = headers_for(scope["path"], api_version=api_version)
 
             async def send_wrapper(message: dict) -> None:
                 if message["type"] == "http.response.start":

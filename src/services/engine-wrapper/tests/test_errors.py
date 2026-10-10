@@ -99,7 +99,7 @@ class TestUnhandledException:
     def test_answers_json_not_plain_text(self, boom_client: TestClient) -> None:
         res = boom_client.get("/boom")
         assert res.status_code == 500
-        assert res.headers["content-type"].startswith("application/json")
+        assert "json" in res.headers["content-type"]
         assert res.json()["detail"] == INTERNAL_ERROR_DETAIL
 
     def test_does_not_leak_the_exception_message(self, boom_client: TestClient) -> None:
@@ -441,3 +441,63 @@ class TestARefusalCanAlwaysBeSerialised:
         )
         assert res.status_code == 422
         assert "inf" in json.dumps(res.json()["detail"])
+
+
+class TestRfc9457Envelope:
+    """Error responses carry ``type``, ``title`` and ``status`` alongside
+    ``detail`` so cross-service error handling is consistent with the Fastify
+    tier's RFC 9457 bodies (M16 audit).
+    """
+
+    def test_4xx_carries_problem_fields(self, boom_client: TestClient) -> None:
+        res = boom_client.get("/teapot")
+        body = res.json()
+        assert body["status"] == 418
+        assert body["title"] == "Error"
+        assert body["type"] == "about:blank"
+        assert body["detail"] == "I'm a teapot"
+
+    def test_5xx_carries_problem_fields(self, boom_client: TestClient) -> None:
+        res = boom_client.get("/unavailable")
+        body = res.json()
+        assert body["status"] == 503
+        assert body["title"] == "Service Unavailable"
+        assert body["type"] == "urn:n409:problem:unavailable"
+
+    def test_422_carries_validation_type(self) -> None:
+        res = client.post(
+            "/engine/v1/compute",
+            content="{}",
+            headers={"content-type": "application/json"},
+        )
+        body = res.json()
+        assert body["status"] == 422
+        assert body["type"] == "urn:n409:problem:validation"
+        assert body["title"] == "Unprocessable Content"
+
+    def test_500_carries_internal_type(self, boom_client: TestClient) -> None:
+        res = boom_client.get("/boom")
+        body = res.json()
+        assert body["status"] == 500
+        assert body["type"] == "urn:n409:problem:internal"
+        assert body["title"] == "Internal Server Error"
+
+    def test_content_type_is_problem_json(self, boom_client: TestClient) -> None:
+        res = boom_client.get("/teapot")
+        assert "application/problem+json" in res.headers["content-type"]
+
+
+class TestApiVersionHeader:
+    """Every response carries an ``X-API-Version`` header (M16 audit)."""
+
+    def test_success_response_carries_version(self) -> None:
+        res = client.get("/health")
+        assert res.headers.get("x-api-version") == "py-1.0.0"
+
+    def test_error_response_carries_version(self) -> None:
+        res = client.post(
+            "/engine/v1/compute",
+            content="{}",
+            headers={"content-type": "application/json"},
+        )
+        assert res.headers.get("x-api-version") == "py-1.0.0"

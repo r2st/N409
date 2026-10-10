@@ -87,4 +87,14 @@ describe.skipIf(!dbUp)('security headers', () => {
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
     expect(res.headers['access-control-allow-methods']).toBeUndefined();
   });
+
+  it('stamps X-API-Version on every response (M16 audit)', async () => {
+    const ok = await ctx.app.inject({ method: 'GET', url: '/health' });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['x-api-version']).toBe('0.1.0');
+
+    const err = await ctx.app.inject({ method: 'GET', url: '/api/v1/valuations' });
+    expect(err.statusCode).toBe(401);
+    expect(err.headers['x-api-version']).toBe('0.1.0');
+  });
 });

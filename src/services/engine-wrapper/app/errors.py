@@ -116,6 +116,35 @@ def _scrubbed(value: object, depth: int = 0) -> object:
     return value
 
 
+_STATUS_PROBLEM_TYPES: dict[int, str] = {
+    400: "urn:n409:problem:bad-request",
+    401: "urn:n409:problem:unauthorized",
+    403: "urn:n409:problem:forbidden",
+    404: "urn:n409:problem:not-found",
+    405: "urn:n409:problem:method-not-allowed",
+    413: "urn:n409:problem:payload-too-large",
+    422: "urn:n409:problem:validation",
+    429: "urn:n409:problem:rate-limited",
+    500: "urn:n409:problem:internal",
+    502: "urn:n409:problem:bad-gateway",
+    503: "urn:n409:problem:unavailable",
+}
+
+_REASON_PHRASES: dict[int, str] = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    413: "Content Too Large",
+    422: "Unprocessable Content",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+}
+
+
 def error_response(status_code: int, detail: object, **extra: object) -> JSONResponse:
     """A JSON error body carrying the active request id, in both places.
 
@@ -127,13 +156,25 @@ def error_response(status_code: int, detail: object, **extra: object) -> JSONRes
     one funnel every error body in this tier passes through: the deliberate
     ``HTTPException``, the 422 field list, and the generic 500, so nothing has to
     remember.
+
+    The envelope carries ``type``, ``title`` and ``status`` alongside ``detail``
+    so that cross-service error handling is consistent with the Fastify tier's
+    RFC 9457 ``application/problem+json`` bodies (M16 audit).
     """
     request_id = current_request_id()
-    content: dict[str, object] = {"detail": _scrubbed(detail), "request_id": request_id, **extra}
+    content: dict[str, object] = {
+        "type": _STATUS_PROBLEM_TYPES.get(status_code, "about:blank"),
+        "title": _REASON_PHRASES.get(status_code, "Error"),
+        "status": status_code,
+        "detail": _scrubbed(detail),
+        "request_id": request_id,
+        **extra,
+    }
     return JSONResponse(
         status_code=status_code,
         content=content,
         headers={REQUEST_ID_HEADER: request_id},
+        media_type="application/problem+json",
     )
 
 

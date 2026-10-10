@@ -475,6 +475,11 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
   // are named here instead.
   registerPermissionsPolicy(app, WEB_PERMISSIONS_POLICY);
 
+  app.addHook('onSend', (_req, reply, _payload, done) => {
+    void reply.header('x-api-version', '0.1.0');
+    done();
+  });
+
   registerProblemHandler(app);
 
   const valuationUrl = upstreamUrl(

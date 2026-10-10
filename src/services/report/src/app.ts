@@ -287,6 +287,12 @@ export function buildApp(): FastifyInstance {
   });
   registerPermissionsPolicy(app, API_PERMISSIONS_POLICY);
   registerNoStoreDefault(app);
+
+  app.addHook('onSend', (_req, reply, _payload, done) => {
+    void reply.header('x-api-version', '0.1.0');
+    done();
+  });
+
   registerProblemHandler(app);
   // Say why a white-labelled report came out without the firm's mark on it.
   // The renderer is a library with no logger of its own; this is the one door
