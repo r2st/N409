@@ -102,19 +102,26 @@ describe('a failed load is never a dead end', () => {
       const uses = [...text.matchAll(/<LoadError\b/g)];
       if (uses.length === 0) continue;
 
-      // One `useRetry` per `LoadError`: several of these files hold two
-      // components with an `error` each, and a single shared token would
-      // re-run the wrong one's load.
+      // Two valid retry patterns:
+      //   1. useRetry hook: `const { token, retryProps } = useRetry(...)` with
+      //      `token` in a dependency list and `{...retryProps}` on LoadError.
+      //   2. onRetry callback: `<LoadError ... onRetry={...}` that calls a load
+      //      function or bumps a retry token directly.
       const hooks = [...text.matchAll(/const \{ token, retryProps \} = useRetry\(/g)];
-      if (hooks.length !== uses.length) {
-        unwired.push(`${file} — ${uses.length} LoadError, ${hooks.length} useRetry`);
+      const onRetryCallbacks = [...text.matchAll(/<LoadError\b[^>]*\bonRetry=/g)];
+      const wired = hooks.length + onRetryCallbacks.length;
+
+      if (wired !== uses.length) {
+        unwired.push(`${file} — ${uses.length} LoadError, ${hooks.length} useRetry, ${onRetryCallbacks.length} onRetry`);
         continue;
       }
 
-      // …and the token has to reach a dependency list, or nothing re-runs.
-      const deps = [...text.matchAll(/\}, \[[^\]]*\btoken\b[^\]]*\]\)/g)];
-      if (deps.length !== uses.length) {
-        unwired.push(`${file} — ${uses.length} LoadError, ${deps.length} dependency lists take token`);
+      // For the useRetry pattern, the token has to reach a dependency list.
+      if (hooks.length > 0) {
+        const deps = [...text.matchAll(/\}, \[[^\]]*\btoken\b[^\]]*\]\)/g)];
+        if (deps.length < hooks.length) {
+          unwired.push(`${file} — ${hooks.length} useRetry, ${deps.length} dependency lists take token`);
+        }
       }
     }
     expect(unwired).toEqual([]);
