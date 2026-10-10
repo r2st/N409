@@ -700,6 +700,10 @@ const DUPLICATE_VERSIONS_ALLOWED: Record<string, string> = {
   'p-limit':
     'an old 2.x nested under a transitive chain. Two concurrency limiters are ' +
     'two independent limiters, which is what each caller wanted anyway.',
+  zod:
+    'a transitive dev dependency resolves zod 4.x at the root; our manifests ' +
+    'declare ^3.24.0 and the production tree ships 3.x only. The two copies ' +
+    'never interact at run time.',
 };
 
 describe('the lockfile resolves one version per package where a split would matter', () => {
@@ -775,13 +779,14 @@ describe('the lockfile resolves one version per package where a split would matt
       "fastify's light-my-request and react-router both take 1.x; @fastify/cookie " +
       'takes 2.x. Three independent parse/serialize sites — a cookie is a string ' +
       'at every boundary between them, never an object one copy hands another.',
-    'fastify-plugin':
-      'a per-plugin metadata wrapper, carried by each plugin rather than shared. ' +
-      '@fastify/multipart and @fastify/reply-from are still on 5.x; fastify 5 ' +
-      'reads the metadata of both.',
-    'process-warning':
-      'each copy keeps its own registry of emitted codes, so the worst a split ' +
-      'costs is one warning printed twice.',
+    'fast-uri':
+      'ajv 8.x (via @fastify/ajv-compiler, fast-json-stringify, ajv-formats) ' +
+      'nests 3.x; ajv 9.x at the root takes 4.x. Pure URI parsers with no ' +
+      'shared state between callers.',
+    'set-cookie-parser':
+      'react-router nests 2.x for its cookie-handling; top-level 3.x is used ' +
+      'by the server. Each parses independently — a cookie is a string at ' +
+      'every boundary between them.',
     xmlbuilder:
       'xml2js serialises with its own 11.x; @node-saml/node-saml builds the ' +
       'AuthnRequest with 15.x. Two writers, one direction, no shared state.',
@@ -892,7 +897,6 @@ const INSTALL_SCRIPTS_ALLOWED = [
   'node_modules/esbuild',
   // Optional macOS file-watcher native addon; builds on install.
   'node_modules/fsevents',
-  'node_modules/playwright/node_modules/fsevents',
   // Writes the generated CLI shims.
   'node_modules/protobufjs',
 ];
@@ -937,9 +941,12 @@ describe('install-time code execution', () => {
  * case green. Keep the two allowlists in step.
  */
 const DEPRECATED_ALLOWED: Record<string, string> = {
-  'node_modules/test-exclude/node_modules/glob':
-    'nested under @vitest/coverage-v8 -> test-exclude, which pins glob 10. Runs ' +
-    'only while collecting coverage.',
+  'node_modules/eslint':
+    'eslint 9.x is deprecated in favour of 10.x. The 10.x migration is a ' +
+    'major-version bump tracked separately from a patch-level freshness audit.',
+  'node_modules/glob':
+    'glob 10.x is deprecated; arrives transitively via test-exclude ' +
+    '(@vitest/coverage-v8). Runs only while collecting coverage.',
   'node_modules/whatwg-encoding':
     "jsdom's HTML decoder. The deprecation points at a replacement jsdom has " +
     'not adopted; jsdom itself is a dev dependency of web-frontend only.',
