@@ -896,3 +896,41 @@ class TestASlowDrip:
             chat("s", "u", model=PREFIXED, client=client)
         # Bounded by the budget and its retries rather than by the far end.
         assert _time.monotonic() - started < 5.0
+
+
+class TestTransportErrorExhaustion:
+    """Every attempt raises a transport error — the call must surface as
+    BedrockError (not a raw httpx exception) and llm_router must translate
+    that into OpenRouterError so every handler's catch clause still works."""
+
+    def test_connect_errors_surface_as_bedrock_error(self, monkeypatch):
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("Connection refused")
+
+        with pytest.raises(BedrockError, match="ConnectError|Connection refused"):
+            chat("s", "u", model=PREFIXED, client=transport(handler))
+
+    def test_connect_errors_route_through_as_openrouter_error(self, monkeypatch):
+        configure(monkeypatch)
+        monkeypatch.setattr(
+            bedrock, "new_client", lambda **kw: transport(
+                lambda _r: (_ for _ in ()).throw(httpx.ConnectError("Connection refused"))
+            ),
+        )
+        with pytest.raises(OpenRouterError) as caught:
+            llm_router.chat("s", "u", model=PREFIXED)
+        assert "Connection refused" in str(caught.value)
+
+    def test_transport_error_is_retried_before_surfacing(self, monkeypatch):
+        configure(monkeypatch)
+        calls: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            raise httpx.ConnectError("Connection refused")
+
+        with pytest.raises(BedrockError):
+            chat("s", "u", model=PREFIXED, client=transport(handler))
+        assert len(calls) == llm_http.MAX_RETRIES + 1

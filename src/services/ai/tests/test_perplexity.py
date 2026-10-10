@@ -503,3 +503,49 @@ class TestSpend:
         assert tokens_used() == 160
         assert openrouter.tokens_used() == 0
         assert bedrock.tokens_used() == 0
+
+
+class TestRateLimitNotRetried:
+    """A 429 is a 4xx and must not be retried — spending a second attempt
+    against a quota that has already refused is both pointless and rude."""
+
+    def test_429_raises_immediately_with_status_in_message(self):
+        calls: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return httpx.Response(429, text="Rate limit exceeded")
+
+        with pytest.raises(PerplexityError, match="429"):
+            research("SaaS multiples", client=stub(handler))
+        assert len(calls) == 1
+
+    def test_429_is_a_provider_error_so_fallback_can_catch_it(self):
+        assert issubclass(PerplexityError, ProviderError)
+
+
+class TestDeadlineExhaustion:
+    """5xx retries consuming the budget until deadline.expired() fires."""
+
+    def test_tight_budget_with_5xx_retries(self, monkeypatch):
+        monkeypatch.setenv("PERPLEXITY_CALL_BUDGET_S", "0.3")
+        from app import llm_http
+        monkeypatch.setattr(llm_http, "MIN_ATTEMPT_S", 0.02)
+        monkeypatch.setattr(llm_http, "RETRY_BACKOFF_BASE_S", 0.05)
+        monkeypatch.setattr(perplexity, "MAX_RETRIES", 50)
+        calls: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return httpx.Response(503, text="Service Unavailable")
+
+        from app.perplexity import DeadlineExceeded as PplxDeadline
+
+        with pytest.raises(PplxDeadline, match="budget exhausted"):
+            research("SaaS multiples", client=stub(handler))
+        assert len(calls) >= 2
+
+    def test_deadline_exceeded_is_a_perplexity_error(self):
+        from app.perplexity import DeadlineExceeded as PplxDeadline
+
+        assert issubclass(PplxDeadline, PerplexityError)
