@@ -1,5 +1,5 @@
 # Build from the repo root: docker build -f src/services/valuation/Dockerfile .
-FROM node:22-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /repo
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY src/packages/shared/package.json src/packages/shared/
@@ -16,7 +16,7 @@ COPY src/services/report src/services/report
 COPY src/services/valuation src/services/valuation
 RUN npx tsc -b src/services/valuation
 
-FROM node:22-alpine
+FROM node:25-alpine
 ENV NODE_ENV=production
 WORKDIR /repo
 COPY --from=build /repo/package.json /repo/package-lock.json ./
