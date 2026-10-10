@@ -14,7 +14,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     );
   }
   if (status === 'anonymous') {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to="/" replace state={{ from: location.pathname + location.search }} />;
   }
   return <>{children}</>;
 }

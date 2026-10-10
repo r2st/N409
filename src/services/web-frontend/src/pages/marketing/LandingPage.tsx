@@ -252,6 +252,7 @@ const SSO_ERROR_FALLBACK =
   'Single sign-on did not complete. Try again, or sign in with your email and password.';
 
 export const COMPANY_HINT_KEY = 'n409.company_hint';
+export const POST_AUTH_RETURN_KEY = 'n409.post_auth_return';
 
 function GoogleButton() {
   return (
@@ -298,8 +299,18 @@ function LoginForm({ onMfa }: { onMfa: (challenge: string) => void }) {
       .catch(() => setProvidersFailed(true));
   }, []);
 
-  const goHome = () =>
-    handOffAfterSignIn((location.state as { from?: string } | null)?.from ?? '/', navigate);
+  const returnTo = (location.state as { from?: string } | null)?.from ?? '/';
+
+  useEffect(() => {
+    if (returnTo !== '/') {
+      try { sessionStorage.setItem(POST_AUTH_RETURN_KEY, returnTo); } catch {}
+    }
+  }, [returnTo]);
+
+  const goHome = () => {
+    try { sessionStorage.removeItem(POST_AUTH_RETURN_KEY); } catch {}
+    handOffAfterSignIn(returnTo, navigate);
+  };
 
   const submit = credentials.handleSubmit(async () => {
     setError(null);
@@ -381,6 +392,8 @@ function LoginForm({ onMfa }: { onMfa: (challenge: string) => void }) {
 
 function RegisterForm() {
   const { register } = useAuth();
+  const [params] = useSearchParams();
+  const redirectParam = params.get('redirect');
   const [form, setForm] = useState({
     first_name: '',
     last_name: '',
@@ -436,7 +449,7 @@ function RegisterForm() {
   const submit = handleSubmit(async () => {
     setError(null);
     setBusy(true);
-    setDestination('/onboarding');
+    setDestination(redirectParam ?? '/onboarding');
     try {
       if (form.company.trim()) localStorage.setItem(COMPANY_HINT_KEY, form.company.trim());
       await register({

@@ -26,8 +26,13 @@ export function GitHubCompletePage() {
       return;
     }
     window.history.replaceState(null, '', '/auth/github/complete');
+    let returnTo = '/';
+    try {
+      const stored = sessionStorage.getItem('n409.post_auth_return');
+      if (stored) { returnTo = stored; sessionStorage.removeItem('n409.post_auth_return'); }
+    } catch {}
     adoptToken(token)
-      .then(() => handOffAfterSignIn('/', navigate))
+      .then(() => handOffAfterSignIn(returnTo, navigate))
       .catch(() => setFailed(true));
   }, [adoptToken, navigate]);
 

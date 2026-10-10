@@ -32,57 +32,67 @@ interface Step {
   learn: string;
 }
 
-const STEPS: Step[] = [
-  {
-    id: 'company',
-    title: 'Set up your company',
-    description: 'Start a valuation and enter your legal name, product kind and currency.',
-    action: { to: '/valuations/new', label: 'New valuation' },
-    learn: 'creating-a-valuation',
-  },
-  {
-    id: 'cap-table',
-    title: 'Build your cap table',
-    description: 'Add share classes, the option pool and preferences — or sync from Carta/Pulley.',
-    learn: 'cap-table-basics',
-  },
-  {
-    id: 'financials',
-    title: 'Provide financial data',
-    description: 'Upload statements and projections, or let the AI digital robots extract the model.',
-    learn: 'financial-data-overview',
-  },
-  {
-    id: 'methodology',
-    title: 'Choose a methodology',
-    description: 'Pick how equity value is allocated: OPM, PWERM, Hybrid or CVM.',
-    learn: 'methodology-overview',
-  },
-  {
-    id: 'assumptions',
-    title: 'Set your assumptions',
-    description: 'Volatility, discount rate, DLOM and the approach weights.',
-    learn: 'assumptions-overview',
-  },
-  {
-    id: 'run',
-    title: 'Run the valuation',
-    description: 'Compute the FMV and clear any health-check warnings.',
-    learn: 'health-checks-overview',
-  },
-  {
-    id: 'report',
-    title: 'Generate the report',
-    description: 'Draft, review and publish the audit-ready valuation report.',
-    learn: 'report-overview',
-  },
-  {
-    id: 'board',
-    title: 'Get board approval',
-    description: 'Route the final value to your board and capture signatures.',
-    learn: 'board-approval-overview',
-  },
-];
+function buildSteps(valuationId: string | null): Step[] {
+  const v = valuationId ? `/valuations/${valuationId}` : null;
+  return [
+    {
+      id: 'company',
+      title: 'Set up your company',
+      description: 'Start a valuation and enter your legal name, product kind and currency.',
+      action: { to: '/valuations/new', label: 'New valuation' },
+      learn: 'creating-a-valuation',
+    },
+    {
+      id: 'cap-table',
+      title: 'Build your cap table',
+      description: 'Add share classes, the option pool and preferences — or sync from Carta/Pulley.',
+      ...(v && { action: { to: `${v}/cap-table`, label: 'Open cap table' } }),
+      learn: 'cap-table-basics',
+    },
+    {
+      id: 'financials',
+      title: 'Provide financial data',
+      description: 'Upload statements and projections, or let the AI digital robots extract the model.',
+      ...(v && { action: { to: `${v}/model`, label: 'Open financials' } }),
+      learn: 'financial-data-overview',
+    },
+    {
+      id: 'methodology',
+      title: 'Choose a methodology',
+      description: 'Pick how equity value is allocated: OPM, PWERM, Hybrid or CVM.',
+      ...(v && { action: { to: `${v}/calculations`, label: 'Open calculations' } }),
+      learn: 'methodology-overview',
+    },
+    {
+      id: 'assumptions',
+      title: 'Set your assumptions',
+      description: 'Volatility, discount rate, DLOM and the approach weights.',
+      ...(v && { action: { to: `${v}/params`, label: 'Open assumptions' } }),
+      learn: 'assumptions-overview',
+    },
+    {
+      id: 'run',
+      title: 'Run the valuation',
+      description: 'Compute the FMV and clear any health-check warnings.',
+      ...(v && { action: { to: `${v}/calculations`, label: 'Run engine' } }),
+      learn: 'health-checks-overview',
+    },
+    {
+      id: 'report',
+      title: 'Generate the report',
+      description: 'Draft, review and publish the audit-ready valuation report.',
+      ...(v && { action: { to: `${v}/report`, label: 'Open report' } }),
+      learn: 'report-overview',
+    },
+    {
+      id: 'board',
+      title: 'Get board approval',
+      description: 'Route the final value to your board and capture signatures.',
+      ...(v && { action: { to: `${v}/engagement`, label: 'Open engagement' } }),
+      learn: 'board-approval-overview',
+    },
+  ];
+}
 
 /** Specialized engines beyond a first 409A — surfaced as explore links, not steps. */
 const EXPLORE: Array<{ to: string; label: string }> = [
@@ -107,14 +117,19 @@ export function GettingStarted() {
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1');
   const [done, setDone] = useState<Set<string>>(loadDone);
   const [earned, setEarned] = useState<Set<string>>(() => new Set());
+  const [latestValuationId, setLatestValuationId] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
     api<OnboardingProgress>('/onboarding/progress')
       .then((p) => {
-        // A checklist is not worth an error state — on failure it simply keeps
-        // showing whatever the user has ticked by hand.
         if (live) setEarned(new Set(p.steps));
+      })
+      .catch(() => undefined);
+    api<{ valuations: Array<{ id: string }> }>('/valuations?per_page=1')
+      .then((d) => {
+        const first = d.valuations[0];
+        if (live && first) setLatestValuationId(first.id);
       })
       .catch(() => undefined);
     return () => {
@@ -124,9 +139,10 @@ export function GettingStarted() {
 
   if (dismissed) return null;
 
+  const steps = buildSteps(latestValuationId);
   const isComplete = (id: string) => done.has(id) || earned.has(id);
-  const completed = STEPS.filter((s) => isComplete(s.id)).length;
-  const allDone = completed === STEPS.length;
+  const completed = steps.filter((s) => isComplete(s.id)).length;
+  const allDone = completed === steps.length;
 
   /**
    * Hand-ticking only ever adds. Unticking a step the account has genuinely
@@ -178,16 +194,16 @@ export function GettingStarted() {
         <div className="h-2 flex-1 overflow-hidden rounded-full bg-paper-200">
           <div
             className="h-full rounded-full bg-bond-600 transition-all"
-            style={{ width: `${(completed / STEPS.length) * 100}%` }}
+            style={{ width: `${(completed / steps.length) * 100}%` }}
           />
         </div>
         <span className="tnum text-xs font-semibold text-ink-500">
-          {completed}/{STEPS.length}
+          {completed}/{steps.length}
         </span>
       </div>
 
       <ol className="mt-5 space-y-2">
-        {STEPS.map((step, i) => {
+        {steps.map((step, i) => {
           const isEarned = earned.has(step.id);
           const isDone = isComplete(step.id);
           return (
