@@ -173,19 +173,6 @@ export async function cancelPendingOrderByCheckout(
   return rows[0] ?? null;
 }
 
-/** @deprecated Use {@link fulfillSubscriptionOrder} instead. */
-export async function updateOrderStripeSubscription(
-  pool: pg.Pool,
-  stripeCheckoutId: string,
-  stripeSubscriptionId: string,
-  status: OrderStatus,
-): Promise<void> {
-  await pool.query(
-    `UPDATE orders SET stripe_subscription_id = $2, status = $3, updated_at = now()
-     WHERE stripe_checkout_id = $1`,
-    [stripeCheckoutId, stripeSubscriptionId, status],
-  );
-}
 
 export async function findOrderByCheckoutId(
   pool: pg.Pool,
