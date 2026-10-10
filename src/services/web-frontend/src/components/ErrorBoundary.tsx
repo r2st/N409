@@ -78,8 +78,8 @@ export class ErrorBoundary extends Component<Props, State> {
           role="alert"
           className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center gap-4 px-6 text-center"
         >
-          <h1 className="text-xl font-semibold text-slate-900">This page didn’t finish loading</h1>
-          <p className="text-sm text-slate-600">
+          <h1 className="text-xl font-semibold text-ink-900">This page didn’t finish loading</h1>
+          <p className="text-sm text-ink-600">
             Part of the app couldn’t be downloaded — usually because a new version was released while this tab
             was open. Your data is safe. Reloading picks up the new version.
           </p>
@@ -98,8 +98,8 @@ export class ErrorBoundary extends Component<Props, State> {
         role="alert"
         className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center gap-4 px-6 text-center"
       >
-        <h1 className="text-xl font-semibold text-slate-900">Something went wrong</h1>
-        <p className="text-sm text-slate-600">
+        <h1 className="text-xl font-semibold text-ink-900">Something went wrong</h1>
+        <p className="text-sm text-ink-600">
           An unexpected error interrupted {this.props.label ?? 'the page'}. Your data is safe — try again, and
           if it keeps happening, reload.
         </p>
@@ -112,7 +112,7 @@ export class ErrorBoundary extends Component<Props, State> {
           </button>
           <button
             onClick={() => window.location.reload()}
-            className="tap-area cursor-pointer rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            className="tap-area cursor-pointer rounded-md border border-ink-200 px-4 py-2 text-sm font-semibold text-ink-700 hover:bg-paper-50"
           >
             Reload
           </button>

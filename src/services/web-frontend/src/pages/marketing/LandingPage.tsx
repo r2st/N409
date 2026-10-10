@@ -767,9 +767,12 @@ export function LandingPage() {
             ) : (
               <>
                 {/* Tab toggle */}
-                <div className="landing-tabs">
+                <div className="landing-tabs" role="tablist" aria-label="Sign in or create account">
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'login'}
+                    aria-controls="landing-tab-panel"
                     className={`landing-tab${activeTab === 'login' ? ' landing-tab-active' : ''}`}
                     onClick={() => setActiveTab('login')}
                   >
@@ -777,6 +780,9 @@ export function LandingPage() {
                   </button>
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'register'}
+                    aria-controls="landing-tab-panel"
                     className={`landing-tab${activeTab === 'register' ? ' landing-tab-active' : ''}`}
                     onClick={() => setActiveTab('register')}
                   >
@@ -785,7 +791,7 @@ export function LandingPage() {
                 </div>
 
                 {/* Forms — key forces re-mount for fade-in animation */}
-                <div key={activeTab} className="landing-form-area">
+                <div key={activeTab} id="landing-tab-panel" role="tabpanel" className="landing-form-area">
                   {activeTab === 'login' ? (
                     <LoginForm onMfa={setMfaChallenge} />
                   ) : (

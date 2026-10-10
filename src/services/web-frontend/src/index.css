@@ -78,7 +78,7 @@
   /* Foreground pair for anything sitting on chrome. */
   --color-chrome-fg: #e8e8ea;
   --color-chrome-dim: #888890;
-  --color-chrome-faint: #555560;
+  --color-chrome-faint: #7a7a84;
 
   /*
    * surface — the card plane. Was a literal `bg-white`, which cannot follow a
@@ -550,7 +550,7 @@ html {
   --bg-card-hover: rgba(32, 32, 36, 0.95);
   --text: rgb(229, 231, 235);
   --text-white: rgb(255, 255, 255);
-  --text-muted: rgba(255, 255, 255, 0.45);
+  --text-muted: rgba(255, 255, 255, 0.52);
   min-height: 100vh;
   min-height: 100dvh;
   background: var(--bg);
@@ -996,7 +996,7 @@ html {
 }
 
 .landing-footer-copy {
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.52);
   font-size: 11px;
 }
 

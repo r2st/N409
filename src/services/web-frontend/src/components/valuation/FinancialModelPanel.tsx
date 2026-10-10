@@ -537,6 +537,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
                 {!readOnly && (
                   <button
                     type="button"
+                    aria-label={`Remove share class ${c.name || `${i + 1}`}`}
                     onClick={() => update({ share_classes: form.share_classes.filter((_, j) => j !== i) })}
                     className="cursor-pointer justify-self-start text-xs font-semibold text-red-600 hover:text-red-700"
                   >
@@ -631,6 +632,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
                     {!readOnly && form.projections.length > 1 && (
                       <button
                         type="button"
+                        aria-label={`Remove projection year ${i + 1}`}
                         onClick={() => update({ projections: form.projections.filter((_, j) => j !== i) })}
                         className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
                       >

@@ -110,6 +110,8 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
           <span className="tnum ml-auto text-xs text-ink-400">{formatDateTime(sig.signed_at)}</span>
           {!published && (
             <button
+              type="button"
+              aria-label={`Remove ${label} signature by ${sig.signer_name}`}
               className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
               disabled={busy}
               onClick={() => void remove(sig.role)}

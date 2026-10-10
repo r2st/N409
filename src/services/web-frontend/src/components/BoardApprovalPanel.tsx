@@ -259,6 +259,8 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
             </details>
             {resolution.status !== 'approved' && (
               <button
+                type="button"
+                aria-label="Regenerate board resolution (clears signatures)"
                 className="mt-3 cursor-pointer text-xs font-semibold text-ink-500 hover:underline"
                 disabled={busy}
                 onClick={() => void generate()}
@@ -300,6 +302,8 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
                       <span className="ml-auto flex items-center gap-3">
                         {m.status === 'pending' && (
                           <button
+                            type="button"
+                            aria-label={`${m.sent_at ? 'Resend signing link to' : 'Email signing link to'} ${m.member_name}`}
                             className="cursor-pointer text-xs font-semibold text-bond-600 hover:underline"
                             disabled={busy}
                             onClick={() => void sendLink(m.id)}
@@ -309,6 +313,8 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
                         )}
                         {m.status === 'pending' && (
                           <button
+                            type="button"
+                            aria-label={`Remove board member ${m.member_name}`}
                             className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
                             disabled={busy}
                             onClick={() => void removeMember(m.id)}

@@ -314,20 +314,16 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
         <span className="flex justify-end gap-3 text-sm">
           <button
             type="button"
+            aria-label={`View intake from ${row.client_name ?? 'unnamed prospect'}`}
             className="cursor-pointer text-bond-700 underline"
             onClick={() => void open(row)}
           >
             View
           </button>
-          {/*
-            The point of collecting the questionnaire. Offered only on a
-            submitted link, which is also the only state the server will
-            convert — an in-progress form has nothing settled to build an
-            engagement from, and a converted one already has its engagement.
-          */}
           {row.status === 'submitted' && (
             <button
               type="button"
+              aria-label={`Convert intake from ${row.client_name ?? 'unnamed prospect'} to engagement`}
               className="cursor-pointer font-semibold text-bond-700 underline"
               onClick={() => void beginConvert(row)}
             >
@@ -342,6 +338,7 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
           {(row.status === 'sent' || row.status === 'in_progress') && (
             <button
               type="button"
+              aria-label={`Withdraw intake link for ${row.client_name ?? 'unnamed prospect'}`}
               className="cursor-pointer text-ink-400 underline hover:text-red-700"
               onClick={() => void revoke(row)}
             >

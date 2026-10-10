@@ -20,7 +20,7 @@ export function SaveResultsPrompt({ toolName, className = '' }: SaveResultsPromp
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="shrink-0 rounded-full bg-bond-100 p-2 text-bond-600">
+          <div className="shrink-0 rounded-full bg-bond-100 p-2 text-bond-700">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
               <polyline points="17 21 17 13 7 13 7 21" />
