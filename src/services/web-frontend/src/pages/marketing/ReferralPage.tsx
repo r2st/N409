@@ -5,6 +5,7 @@ import { FaqAccordion } from '../../components/FaqAccordion';
 import { pageMeta } from '../../lib/pageMeta';
 import { ShareResultBar } from '../../components/ShareResultBar';
 import { siteOrigin } from '../../lib/seo';
+import { OFFLINE_DETAIL } from '../../lib/api';
 import type { FaqItem } from '../../lib/marketing';
 
 interface ReferralBenefit {
@@ -119,10 +120,18 @@ export function ReferralPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
-      if (!res.ok) throw new Error('submission failed');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.detail ??
+            `Your application could not be submitted (${res.status}). Nothing was saved — check your entries and try again.`,
+        );
+      }
       setSubmitted(true);
-    } catch {
-      setSubmitError('Could not submit your application — please try again.');
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error ? err.message : OFFLINE_DETAIL,
+      );
     } finally {
       setSubmitting(false);
     }

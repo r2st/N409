@@ -4,18 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { EmailSubscribe } from '../src/components/EmailSubscribe';
 
-vi.mock('../src/lib/api', () => ({
-  api: vi.fn(),
-  ApiError: class ApiError extends Error {
-    status: number;
-    problem: { title: string };
-    constructor(status: number, problem: { title: string }) {
-      super(problem.title);
-      this.status = status;
-      this.problem = problem;
-    }
-  },
-}));
+vi.mock('../src/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/api')>();
+  return { ...actual, api: vi.fn() };
+});
 
 const { api: mockApi } = await import('../src/lib/api');
 
@@ -49,9 +41,8 @@ describe('EmailSubscribe', () => {
     });
   });
 
-  it('shows error message on API failure', async () => {
-    const { ApiError } = await import('../src/lib/api');
-    vi.mocked(mockApi).mockRejectedValueOnce(new ApiError(429, { title: 'Too many requests' }));
+  it('shows a network message when the request never reaches the server', async () => {
+    vi.mocked(mockApi).mockRejectedValueOnce(new TypeError('Failed to fetch'));
     const user = userEvent.setup();
     render(
       <MemoryRouter>
@@ -61,7 +52,25 @@ describe('EmailSubscribe', () => {
     await user.type(screen.getByLabelText(/compliance deadlines/i), 'test@example.com');
     await user.click(screen.getByRole('button', { name: /subscribe/i }));
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/too many requests/i);
+      expect(screen.getByRole('alert')).toHaveTextContent(/could not reach the server/i);
+    });
+  });
+
+  it('shows the server detail on a structured API failure', async () => {
+    const { ApiError } = await import('../src/lib/api');
+    vi.mocked(mockApi).mockRejectedValueOnce(
+      new ApiError(429, { title: 'Too Many Requests', detail: 'Too many subscribe attempts — please wait a minute and try again.' }),
+    );
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <EmailSubscribe />
+      </MemoryRouter>,
+    );
+    await user.type(screen.getByLabelText(/compliance deadlines/i), 'test@example.com');
+    await user.click(screen.getByRole('button', { name: /subscribe/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/too many subscribe attempts/i);
     });
   });
 });

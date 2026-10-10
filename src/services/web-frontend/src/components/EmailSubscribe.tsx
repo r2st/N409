@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeRequestFailure } from '../lib/api';
 
 export function EmailSubscribe() {
   const [email, setEmail] = useState('');
@@ -19,7 +19,7 @@ export function EmailSubscribe() {
         setEmail('');
       } catch (err) {
         setStatus('error');
-        setErrorMsg(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
+        setErrorMsg(describeRequestFailure(err));
       }
     },
     [email],

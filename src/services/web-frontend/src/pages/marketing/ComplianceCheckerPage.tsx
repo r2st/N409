@@ -48,7 +48,7 @@ type Status = 'compliant' | 'at_risk' | 'non_compliant';
 
 interface CheckResult {
   status: Status;
-  title: string;
+  heading: string;
   summary: string;
   recommendations: string[];
   urgency: string;
@@ -67,7 +67,7 @@ function evaluate(answers: Record<string, boolean | null>): CheckResult | null {
   if (!has409a) {
     return {
       status: 'non_compliant',
-      title: 'Not compliant',
+      heading: 'Not compliant',
       summary: 'Your company does not have a 409A valuation. Any outstanding option grants may have been issued below fair market value.',
       recommendations: [
         'Obtain a 409A valuation before granting any stock options.',
@@ -85,7 +85,7 @@ function evaluate(answers: Record<string, boolean | null>): CheckResult | null {
 
     return {
       status: grantingSoon ? 'non_compliant' : 'at_risk',
-      title: grantingSoon ? 'Action required' : 'At risk',
+      heading: grantingSoon ? 'Action required' : 'At risk',
       summary: `Your 409A valuation may no longer be valid because ${reasons.join(' and ')}.`,
       recommendations: [
         'Commission an updated 409A valuation as soon as possible.',
@@ -101,7 +101,7 @@ function evaluate(answers: Record<string, boolean | null>): CheckResult | null {
   if (!independent) {
     return {
       status: 'at_risk',
-      title: 'Partially compliant',
+      heading: 'Partially compliant',
       summary: 'You have a recent valuation, but it may not qualify for the IRS safe harbor because it was not performed by an independent appraiser.',
       recommendations: [
         'Consider engaging a qualified independent appraiser for your next valuation.',
@@ -114,7 +114,7 @@ function evaluate(answers: Record<string, boolean | null>): CheckResult | null {
 
   return {
     status: 'compliant',
-    title: 'Compliant',
+    heading: 'Compliant',
     summary: 'Your company appears to have a current, independent 409A valuation that qualifies for IRS safe harbor protection.',
     recommendations: [
       'Set a calendar reminder for 30 days before the 12-month anniversary to start the next valuation.',
@@ -139,7 +139,7 @@ export function ComplianceCheckerPage() {
   const result = evaluate(answers);
 
   const shareText = result
-    ? `409A compliance check: ${result.title}. ${result.summary}`
+    ? `409A compliance check: ${result.heading}. ${result.summary}`
     : undefined;
 
   return (
@@ -201,7 +201,7 @@ export function ComplianceCheckerPage() {
                 <div className="flex items-center gap-3">
                   <span className={`text-2xl ${style.accent}`}>{style.icon}</span>
                   <div className={`font-display text-2xl font-semibold ${style.accent}`}>
-                    {result.title}
+                    {result.heading}
                   </div>
                 </div>
                 <p className="mt-3 text-sm leading-relaxed text-ink-700">{result.summary}</p>

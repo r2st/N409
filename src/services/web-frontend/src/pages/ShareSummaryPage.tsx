@@ -50,15 +50,27 @@ export function ShareSummaryPage() {
     })
       .then(async (res) => {
         if (!res.ok) {
-          if (res.status === 410) setError('This share link has expired.');
-          else if (res.status === 404) setError('Share link not found.');
-          else setError('Unable to load valuation summary.');
+          const body = await res.json().catch(() => ({}));
+          if (res.status === 410)
+            setError(body.detail ?? 'This share link has expired.');
+          else if (res.status === 404)
+            setError(body.detail ?? 'Share link not found — the token may be invalid or already used.');
+          else
+            setError(
+              body.detail ??
+                `Could not load the valuation summary (${res.status}). Try reloading the page.`,
+            );
           return;
         }
         setSummary(await res.json());
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setError('Unable to load valuation summary.');
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted)
+          setError(
+            err instanceof Error && err.message
+              ? `Could not load the valuation summary: ${err.message}`
+              : 'Could not reach the server to load the valuation summary. Check your connection and reload the page.',
+          );
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
