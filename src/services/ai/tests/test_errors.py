@@ -166,7 +166,7 @@ class TestDeliberateFailures:
             headers={"x-request-id": "missing-1"},
         )
         assert res.status_code == 404
-        assert res.json()["detail"] == "Unknown pipeline 'no-such-pipeline'"
+        assert res.json()["detail"] == "No pipeline named 'no-such-pipeline'. Check the pipeline name in the request path."
         assert res.json()["request_id"] == "missing-1"
 
     def test_request_validation_error_keeps_fastapis_detail_list(self) -> None:
