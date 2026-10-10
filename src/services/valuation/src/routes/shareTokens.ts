@@ -20,8 +20,7 @@ function toRef(v: ValuationRow) {
 interface ShareSummary {
   company_name: string;
   valuation_date: string | null;
-  fmv_per_share_cents: number | null;
-  methodology: string | null;
+  fmv_per_share: number | null;
   state: string;
   kind: string;
   powered_by: string;
@@ -57,28 +56,39 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
     async (req) => {
       const { token } = req.params;
 
+      // Single round trip: bump view_count and return the joined row (R394 M8).
+      // valuation_date lives in valuation_params.engine_inputs (JSONB), and
+      // fmv_per_share is on the latest calculations row — scalar subqueries
+      // avoid a second round trip for each.
       const { rows } = await pool.query<{
         valuation_id: string;
         expires_at: Date;
         company_name: string;
         valuation_date: string | null;
-        fmv_per_share_cents: number | null;
-        methodology: string | null;
+        fmv_per_share: string | null;
         state: string;
         kind: string;
       }>(
-        `SELECT
-           st.valuation_id,
-           st.expires_at,
+        `WITH bumped AS (
+           UPDATE valuation_share_tokens
+              SET view_count = view_count + 1
+            WHERE token = $1
+           RETURNING valuation_id, expires_at
+         )
+         SELECT
+           b.valuation_id,
+           b.expires_at,
            v.company_name,
-           v.valuation_date,
-           v.fmv_per_share_cents,
-           v.methodology,
+           (p.engine_inputs->>'valuation_date')::text AS valuation_date,
+           (SELECT c.fmv_per_share::text
+              FROM calculations c
+             WHERE c.valuation_id = v.id AND c.status = 'completed'
+             ORDER BY c.created_at DESC LIMIT 1) AS fmv_per_share,
            v.state,
            v.kind
-         FROM valuation_share_tokens st
-         JOIN valuations v ON v.id = st.valuation_id
-         WHERE st.token = $1`,
+         FROM bumped b
+         JOIN valuations v ON v.id = b.valuation_id
+         LEFT JOIN valuation_params p ON p.valuation_id = v.id`,
         [token],
       );
 
@@ -94,16 +104,10 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
         });
       }
 
-      await pool.query(
-        `UPDATE valuation_share_tokens SET view_count = view_count + 1 WHERE token = $1`,
-        [token],
-      );
-
       const summary: ShareSummary = {
         company_name: row.company_name,
-        valuation_date: row.valuation_date,
-        fmv_per_share_cents: row.fmv_per_share_cents,
-        methodology: row.methodology,
+        valuation_date: row.valuation_date ? row.valuation_date.slice(0, 10) : null,
+        fmv_per_share: row.fmv_per_share !== null ? Number(row.fmv_per_share) : null,
         state: row.state,
         kind: row.kind,
         powered_by: 'DoAide 409A',

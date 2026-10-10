@@ -33,8 +33,7 @@ describe('ShareSummaryPage', () => {
       json: async () => ({
         company_name: 'Acme Corp',
         valuation_date: '2026-06-15',
-        fmv_per_share_cents: 125,
-        methodology: 'OPM Backsolve',
+        fmv_per_share: 1.25,
         state: 'published',
         kind: '409a',
         powered_by: 'DoAide 409A',
@@ -49,7 +48,6 @@ describe('ShareSummaryPage', () => {
 
     expect(screen.getByText('Acme Corp')).toBeTruthy();
     expect(screen.getByText('$1.25')).toBeTruthy();
-    expect(screen.getByText('OPM Backsolve')).toBeTruthy();
     expect(screen.getByText(/Powered by DoAide 409A/)).toBeTruthy();
   });
 
@@ -85,8 +83,7 @@ describe('ShareSummaryPage', () => {
       json: async () => ({
         company_name: 'TestCo',
         valuation_date: null,
-        fmv_per_share_cents: null,
-        methodology: null,
+        fmv_per_share: null,
         state: 'published',
         kind: '409a',
         powered_by: 'DoAide 409A',
@@ -108,8 +105,7 @@ describe('ShareSummaryPage', () => {
       json: async () => ({
         company_name: 'TestCo',
         valuation_date: null,
-        fmv_per_share_cents: null,
-        methodology: null,
+        fmv_per_share: null,
         state: 'published',
         kind: '409a',
         powered_by: 'DoAide 409A',
@@ -129,8 +125,7 @@ describe('ShareSummaryPage', () => {
       json: async () => ({
         company_name: 'SharedCo',
         valuation_date: '2026-06-15',
-        fmv_per_share_cents: 200,
-        methodology: 'DCF',
+        fmv_per_share: 2.00,
         state: 'delivered',
         kind: '409a',
         powered_by: 'DoAide 409A',
