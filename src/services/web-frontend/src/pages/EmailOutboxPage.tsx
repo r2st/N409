@@ -9,6 +9,7 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  LoadError,
   LoadingBlock,
   SkeletonTable,
   SkeletonStatStrip,
@@ -507,15 +508,18 @@ export function EmailOutboxPage() {
         ))}
       </div>
 
-      {error && (
+      {error && !emails && (
+        <div className="mt-4">
+          <LoadError message={error} onRetry={() => { setError(null); void load(); }} />
+        </div>
+      )}
+      {error && emails && (
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
 
       {!emails ? (
-        // A load that failed has reported itself above; a skeleton beside that
-        // note would be a wait with nothing behind it, running forever.
         !error && (
           <div className="mt-6">
             <LoadingBlock label={scope === 'all' ? 'Loading emails…' : `Loading ${scope} emails…`}>

@@ -14,6 +14,7 @@ import {
   ErrorNote,
   Field,
   inputClass,
+  LoadError,
   LoadingBlock,
   Select,
   Skeleton,
@@ -951,7 +952,7 @@ function StructureExplorer({ valuationId }: { valuationId: string }) {
       </div>
       {open && (
         <div className="mt-5">
-          {error ? <ErrorNote>{error}</ErrorNote> : graph ? <CapTableGraph graph={graph} /> : <Spinner />}
+          {error ? <LoadError message={error} onRetry={() => { setError(null); setGraph(null); }} /> : graph ? <CapTableGraph graph={graph} /> : <Spinner />}
         </div>
       )}
     </section>

@@ -8,6 +8,7 @@ import {
   EmptyState,
   ErrorNote,
   ListTruncationNote,
+  LoadError,
   LoadingBlock,
   SkeletonCardList,
 } from '../components/ui';
@@ -177,7 +178,12 @@ function SupportQueue() {
         ))}
       </div>
 
-      {error && (
+      {error && !messages && (
+        <div className="mt-4">
+          <LoadError message={error} onRetry={() => { setError(null); void load(); }} />
+        </div>
+      )}
+      {error && messages && (
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
         </div>
@@ -329,7 +335,12 @@ function ContactQueue() {
         ))}
       </div>
 
-      {error && (
+      {error && !submissions && (
+        <div className="mt-4">
+          <LoadError message={error} onRetry={() => { setError(null); void load(); }} />
+        </div>
+      )}
+      {error && submissions && (
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
         </div>
