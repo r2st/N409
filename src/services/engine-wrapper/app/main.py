@@ -813,17 +813,26 @@ def market_feed(request: MarketFeedRequest) -> dict:
     kind = request.kind
     if kind == "prices":
         if not (request.ticker and request.start and request.end):
-            raise HTTPException(status_code=422, detail="prices needs ticker, start, end")
+            raise HTTPException(
+                status_code=422,
+                detail="Market-feed 'prices' requires ticker, start and end date — provide all three as strings (e.g. ticker='AAPL', start='2024-01-01', end='2024-12-31').",
+            )
         return default_client().get_historical_prices(
             request.ticker, request.start, request.end, fallback=request.fallback
         )
     if kind == "financials":
         if not request.ticker:
-            raise HTTPException(status_code=422, detail="financials needs ticker")
+            raise HTTPException(
+                status_code=422,
+                detail="Market-feed 'financials' requires a ticker symbol (e.g. ticker='AAPL').",
+            )
         return default_client().get_company_financials(request.ticker, fallback=request.fallback)
     if kind == "multiples":
         if not request.tickers:
-            raise HTTPException(status_code=422, detail="multiples needs tickers")
+            raise HTTPException(
+                status_code=422,
+                detail="Market-feed 'multiples' requires a non-empty tickers list (e.g. tickers=['AAPL', 'MSFT']).",
+            )
         return default_client().get_company_multiples(
             request.tickers, request.metrics, request.date, fallback=request.fallback
         )

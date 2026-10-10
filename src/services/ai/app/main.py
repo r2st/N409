@@ -832,7 +832,10 @@ def anonymize(request: AnonymizeRequest) -> AnonymizeResponse:
 def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
     runner = ALL_PIPELINES.get(pipeline)
     if runner is None:
-        raise HTTPException(status_code=404, detail=f"Unknown pipeline '{pipeline}'")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No pipeline named '{pipeline}'. Check the pipeline name in the request path.",
+        )
     try:
         model, result = runner(request.model_dump())
     except AnonymizeInputError as exc:
@@ -870,7 +873,10 @@ def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
         # valuation service and would fail identically, twice as expensively.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail=f"Model output unusable: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"The model returned output that could not be parsed into the expected format: {exc}. This is a transient model issue — retrying may produce a valid response.",
+        ) from exc
     # Non-fatal output-shape check (audit B-2 P3): surface contract drift.
     issues = validate_result(pipeline, result)
     if issues:
