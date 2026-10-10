@@ -22,7 +22,6 @@ from .llm_http import (
     DEFAULT_RETRY_AFTER_S,
     MAX_RETRIES,
     MAX_RETRY_AFTER_S,
-    MIN_ATTEMPT_S,
     RETRY_BACKOFF_BASE_S,
     SUPPRESSED_FINISH_REASONS,
     TIMEOUT_S,
@@ -32,7 +31,6 @@ from .llm_http import (
     DeadlineExceeded as _BaseDeadlineExceeded,
     TokenLedger,
     backoff_sleep as _backoff_sleep,
-    clamp_wait as _clamp_wait_shared,
     estimate_tokens as _estimate_tokens,
     finish_reason as _read_finish_reason,
     retry_after_seconds as _read_retry_after,
@@ -505,7 +503,6 @@ def _post_with_retry(
 # importing them from one place.
 # CHARS_PER_TOKEN and the estimate that uses it are shared the same way.
 _retry_after_seconds = _read_retry_after
-_clamp_wait = _clamp_wait_shared
 
 
 def _finish_reason(data: dict) -> str | None:
@@ -537,11 +534,12 @@ def _classify(
         return AuthenticationFailed(joined)
     if not statuses or any(status is None for status in statuses):
         return OpenRouterError(joined)
-    if not all(400 <= status < 500 for status in statuses):  # type: ignore[operator]
+    codes: list[int] = [s for s in statuses if s is not None]
+    if not all(400 <= status < 500 for status in codes):
         return OpenRouterError(joined)
-    if all(status == 429 for status in statuses):
+    if all(status == 429 for status in codes):
         return RateLimited(joined, retry_after_s or DEFAULT_RETRY_AFTER_S)
-    return RequestRejected(joined, next((s for s in statuses if s != 429), None))
+    return RequestRejected(joined, next((s for s in codes if s != 429), None))
 
 
 def _announce_chain_refusal(failure: OpenRouterError, statuses: list[int | None]) -> None:

@@ -220,9 +220,9 @@ class _CappedStream(httpx.SyncByteStream):
                 # keeps delivering into a buffer nobody is draining.
                 self.close()
                 raise ResponseTooLarge(self._limit)
-            if self._out_of_time():
+            if self._budget_s is not None and self._out_of_time():
                 self.close()
-                raise ResponseTooSlow(self._budget_s)  # type: ignore[arg-type]
+                raise ResponseTooSlow(self._budget_s)
             yield chunk
 
     def close(self) -> None:

@@ -483,7 +483,7 @@ def _check_dcf_terminal(c: _Collector, income: dict) -> str:
                 "Supply the terminal-year EBITDA or revenue the multiple belongs to, "
                 "so the report can name the denominator.",
             )
-        elif _finite(metric) is None or _finite(metric) <= 0:  # type: ignore[operator]
+        elif (fm := _finite(metric)) is None or fm <= 0:
             c.error(
                 "out_of_range",
                 "inputs.income.terminal_metric",

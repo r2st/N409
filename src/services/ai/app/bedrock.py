@@ -242,7 +242,7 @@ def call_budget_s() -> float:
 
 def handles(model: str | None) -> bool:
     """Whether this provider owns the given model id."""
-    return bool(model) and model.startswith(MODEL_PREFIX)  # type: ignore[union-attr]
+    return model is not None and model.startswith(MODEL_PREFIX)
 
 
 def strip_prefix(model: str) -> str:
