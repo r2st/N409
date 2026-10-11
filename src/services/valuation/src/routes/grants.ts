@@ -244,12 +244,14 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     const principal = requirePrincipal(req);
     const { id, grantId } = req.params as { id: string; grantId: string };
     await loadReadable(deps.pool, id, principal);
-    const grant = await findGrantById(deps.pool, grantId);
+    const [grant, latest] = await Promise.all([
+      findGrantById(deps.pool, grantId),
+      latestSucceededCalculation(deps.pool, id),
+    ]);
     if (!grant || grant.valuation_id !== id) throw problems.notFound();
 
     // Custom what-if FMVs via ?fmvs=1,2,5 else default ladder from current FMV.
     const currentFmv = Number(grant.exercise_price);
-    const latest = await latestSucceededCalculation(deps.pool, id);
     /*
      * The ladder and the "×current" column are both struck off *the current
      * 409A FMV* — `defaultScenarioFmvs` says so in its own doc comment, and
