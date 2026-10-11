@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import { problems } from '@n409/shared';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { recordThrottleRefusal } from '../observability/requestThrottle.js';
@@ -21,10 +22,10 @@ export function registerSubscribeRoutes(
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
       recordThrottleRefusal('subscribe');
-      return reply
-        .code(429)
-        .header('retry-after', String(Math.ceil((resetAt - Date.now()) / 1000)))
-        .send({ title: 'Too many requests', status: 429 });
+      throw problems.tooManyRequests(
+        'Too many subscription requests',
+        Math.ceil((resetAt - Date.now()) / 1000),
+      );
     }
 
     const parsed = SubscribeBody.safeParse(req.body);
