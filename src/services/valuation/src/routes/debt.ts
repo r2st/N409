@@ -300,14 +300,12 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.get('/api/v1/debt/instruments/:id', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
-    const instrument = await loadInstrument(id);
-    const { valuations, truncated } = await listValuations(deps.pool, id);
-    return {
-      instrument,
-      credit_terms: await findCreditTerms(deps.pool, id),
-      valuations,
-      truncated,
-    };
+    const [instrument, { valuations, truncated }, credit_terms] = await Promise.all([
+      loadInstrument(id),
+      listValuations(deps.pool, id),
+      findCreditTerms(deps.pool, id),
+    ]);
+    return { instrument, credit_terms, valuations, truncated };
   });
 
   app.put('/api/v1/debt/instruments/:id', { preHandler: app.authenticate }, async (req) => {

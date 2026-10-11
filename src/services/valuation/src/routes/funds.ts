@@ -790,8 +790,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const principal = requirePrincipal(req);
       requireOps(principal);
       const { id, pid } = req.params as { id: string; pid: string };
-      const fund = await loadFund(id);
-      const position = await findPosition(deps.pool, id, pid);
+      const [fund, position] = await Promise.all([
+        loadFund(id),
+        findPosition(deps.pool, id, pid),
+      ]);
       if (!position) throw noSuchHolding();
       const parsed = RollForwardBody.safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid roll-forward', parsed.error);
@@ -866,8 +868,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.get('/api/v1/funds/:id/nav', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
-    const fund = await loadFund(id);
-    const { positions, truncated } = await listPositions(deps.pool, id);
+    const [fund, { positions, truncated }] = await Promise.all([
+      loadFund(id),
+      listPositions(deps.pool, id),
+    ]);
     if (positions.length === 0) throw problems.unprocessable('The fund has no positions to value');
     const marks = await latestMarks(
       deps.pool,

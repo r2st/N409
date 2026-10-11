@@ -638,9 +638,11 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     async (req, reply) => {
       const principal = requirePrincipal(req);
       const { id, paymentId } = req.params as { id: string; paymentId: string };
-      const valuation = await loadAuthorized(deps.pool, principal, id);
       if (!isUlid(paymentId)) throw problems.notFound();
-      const payment = await findPaymentForValuation(deps.pool, id, paymentId);
+      const [valuation, payment] = await Promise.all([
+        loadAuthorized(deps.pool, principal, id),
+        findPaymentForValuation(deps.pool, id, paymentId),
+      ]);
       if (!payment) throw problems.notFound();
       if (!hasSettled(payment.status)) {
         throw problems.conflict('No receipt: this payment has not settled.');
