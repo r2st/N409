@@ -266,12 +266,11 @@ export function registerAuditorPortalRoutes(
 
     // Assumptions: methodology params + the analyst-entered engine inputs, plus
     // the concluded figures from the latest calculation.
-    const params = await findParams(deps.pool, valuation.id);
-    // The run this bundle's captions are describing — see
-    // `latestCalculationForKind`. Simply the newest succeeded run let a 409A
-    // compute on a specialty engagement put its equity value under the other
-    // engine's heading, to an outside reader with nobody present to correct it.
-    const calc = await latestCalculationForKind(deps.pool, valuation.id, valuation.kind);
+    const [params, calc, { reviews: qa, truncated: qaTruncated }] = await Promise.all([
+      findParams(deps.pool, valuation.id),
+      latestCalculationForKind(deps.pool, valuation.id, valuation.kind),
+      listQaReviews(deps.pool, valuation.id),
+    ]);
     const assumptions = params
       ? {
           allocation_method: params.allocation_method,
@@ -288,8 +287,6 @@ export function registerAuditorPortalRoutes(
           engine_inputs: params.engine_inputs ?? {},
         }
       : null;
-
-    const { reviews: qa, truncated: qaTruncated } = await listQaReviews(deps.pool, valuation.id);
 
     return {
       report_status: reportStatus,
