@@ -10,6 +10,7 @@ import {
   isProductionEnv,
 } from './internalAuth.js';
 import { routeLabel, statusClass } from './metrics.js';
+import type { StartupGate } from './startup.js';
 
 /**
  * A scrapeable `/metrics`, because the numbers already being recorded are
@@ -663,6 +664,7 @@ export function registerProcessMetrics(
   registry: MetricsRegistry,
   service: string,
   proc: Pick<NodeJS.Process, 'uptime' | 'memoryUsage'> = process,
+  opts: { startupGate?: StartupGate } = {},
 ): void {
   const build = buildInfo();
   registry.gauge(
@@ -672,6 +674,14 @@ export function registerProcessMetrics(
     ['service', 'sha', 'source'],
   );
   registry.gauge('process_uptime_seconds', 'Seconds since this process started', () => proc.uptime());
+  if (opts.startupGate) {
+    const gate = opts.startupGate;
+    registry.gauge(
+      'process_startup_duration_seconds',
+      'Seconds from process start to ready — migrations, dependency probes and first-request readiness',
+      () => gate.startupDurationSeconds ?? [],
+    );
+  }
   registry.gauge(
     'process_resident_memory_bytes',
     'Resident set size of this process',

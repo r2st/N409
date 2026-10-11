@@ -359,4 +359,27 @@ describe('StartupGate', () => {
     gate.markReady();
     await expect(check()).resolves.toBeUndefined();
   });
+
+  it('reports null startup duration before ready', () => {
+    const gate = new StartupGate('valuation');
+    expect(gate.startupDurationSeconds).toBeNull();
+  });
+
+  it('records startup duration on first markReady', () => {
+    const gate = new StartupGate('valuation');
+    gate.markReady();
+    const duration = gate.startupDurationSeconds;
+    expect(duration).toBeTypeOf('number');
+    expect(duration).toBeGreaterThanOrEqual(0);
+    expect(duration).toBeLessThan(5);
+  });
+
+  it('does not re-record duration on a second markReady', () => {
+    const gate = new StartupGate('valuation');
+    gate.markReady();
+    const first = gate.startupDurationSeconds;
+    gate.markFailed('transient');
+    gate.markReady();
+    expect(gate.startupDurationSeconds).toBe(first);
+  });
 });

@@ -192,13 +192,18 @@ export async function awaitDependencies(opts: AwaitDependenciesOptions): Promise
 export class StartupGate {
   private open = false;
   private failure: string | null = null;
+  private readonly createdAt: number;
+  private readyAt: number | null = null;
 
-  constructor(private readonly service: string) {}
+  constructor(private readonly service: string) {
+    this.createdAt = performance.now();
+  }
 
   /** Boot finished. `/ready` may now go green if the dependencies agree. */
   markReady(): void {
     this.open = true;
     this.failure = null;
+    if (this.readyAt === null) this.readyAt = performance.now();
   }
 
   /**
@@ -213,6 +218,11 @@ export class StartupGate {
 
   get ready(): boolean {
     return this.open;
+  }
+
+  /** Seconds between construction and the first `markReady`, or null if not yet ready. */
+  get startupDurationSeconds(): number | null {
+    return this.readyAt === null ? null : (this.readyAt - this.createdAt) / 1000;
   }
 
   /** The `ReadinessCheck` shape: resolves when open, throws when not. */

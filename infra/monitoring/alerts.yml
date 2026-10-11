@@ -177,6 +177,22 @@ groups:
           summary: '{{ $labels.job }} has restarted repeatedly in the last ten minutes'
           runbook: 'journalctl -u n409-<unit> -n 200 — look for uncaughtException/unhandledRejection'
 
+      # A boot that took too long. `process_startup_duration_seconds` is
+      # recorded once, when the startup gate opens (shared/startup.ts). A
+      # normal boot is under 10s: migrations on a warm database are
+      # single-digit seconds, the dependency probes are loopback. Anything
+      # over 30s means the migration hit a lock, a dependency probe retried
+      # to its budget, or an unexpected amount of work ran before the gate
+      # opened. The number is fixed for the life of the process, so `for`
+      # is short — it is either there or it is not.
+      - alert: StartupSlow
+        expr: process_startup_duration_seconds > 30
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.job }} took {{ $value | humanizeDuration }} to become ready'
+          runbook: 'journalctl -u n409-<unit> --since -5min — look for "dependency not ready yet" retry lines and slow migration statements'
+
       # A partial deploy. `deploy.sh` rsyncs, builds and restarts five units, and
       # a unit that fails to come back on the new code does not fail its
       # readiness probe — it is perfectly healthy, on yesterday's build. So the

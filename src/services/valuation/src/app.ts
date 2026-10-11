@@ -826,7 +826,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const metricsRegistry = new MetricsRegistry();
   app.decorate('metrics', metricsRegistry);
   registerHttpMetrics(app, metricsRegistry);
-  registerProcessMetrics(metricsRegistry, 'valuation');
+  registerProcessMetrics(metricsRegistry, 'valuation', process, { startupGate });
   // The ceiling this process is running under, beside what it is holding.
   // Round 99 gave every unit a MemoryMax, which means a service can now be
   // SIGKILLed by the cgroup limiter and restarted by systemd inside a few
