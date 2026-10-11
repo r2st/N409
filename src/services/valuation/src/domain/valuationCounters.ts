@@ -93,12 +93,8 @@ const ENGINE_KEY: Record<RecalcApproach, string> = {
  * not complete, and treating that as done is how a badge reads 4/4 on a run
  * whose income approach failed for want of a forecast.
  */
-export function calculationCoverage(weights: ApproachWeights | null, results: unknown): CalculationCoverage {
+export function calculationCoverage(weights: ApproachWeights | null, approaches: unknown): CalculationCoverage {
   const wanted = enabledApproaches(weights);
-  const approaches =
-    results && typeof results === 'object' && 'approaches' in results
-      ? ((results as { approaches?: unknown }).approaches ?? null)
-      : null;
   if (!approaches || typeof approaches !== 'object') {
     return { done: 0, total: wanted.length, missing: wanted };
   }

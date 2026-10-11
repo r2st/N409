@@ -34,7 +34,7 @@ export async function loadValuationCounters(
     weight_opm: string | null;
     weight_income: string | null;
     weight_market: string | null;
-    results: unknown;
+    approaches: unknown;
   }>(
     `SELECT
        (SELECT count(*) FROM documents d
@@ -58,12 +58,13 @@ export async function loadValuationCounters(
                  'epoch'::timestamptz))::text
          AS unread_comments,
        p.weight_asset, p.weight_opm, p.weight_income, p.weight_market,
-       -- The latest *successful* run: a failed one has no approaches to count,
-       -- and reading it would drop the badge to 0/4 on an engagement whose
-       -- last good calculation is still the one on screen.
-       (SELECT c.results FROM calculations c
+       -- The latest *successful* run's approaches — just the four keys the
+       -- coverage badge reads, not the full engine document.  A failed run
+       -- has no approaches to count, and reading it would drop the badge to
+       -- 0/4 on an engagement whose last good calculation is still on screen.
+       (SELECT c.results->'approaches' FROM calculations c
          WHERE c.valuation_id = $1 AND c.status = 'succeeded'
-         ORDER BY c.created_at DESC LIMIT 1) AS results
+         ORDER BY c.created_at DESC LIMIT 1) AS approaches
      FROM (SELECT 1) AS one
      LEFT JOIN valuation_params p ON p.valuation_id = $1`,
     [valuationId, readerId, visibleKinds],
@@ -88,6 +89,6 @@ export async function loadValuationCounters(
     my_tasks: Number(row.my_tasks),
     all_tasks: Number(row.all_tasks),
     unread_comments: Number(row.unread_comments),
-    calculations: calculationCoverage(weights, row.results),
+    calculations: calculationCoverage(weights, row.approaches),
   };
 }

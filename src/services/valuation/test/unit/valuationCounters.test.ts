@@ -10,7 +10,7 @@ const weights = (over: Partial<Record<string, number | null>> = {}) =>
     ...over,
   }) as never;
 
-const results = (approaches: Record<string, unknown>) => ({ approaches });
+const approaches = (bag: Record<string, unknown>) => bag;
 
 /**
  * The Calculations `n/m` badge (design §7.3).
@@ -53,7 +53,7 @@ describe('calculationCoverage', () => {
     expect(
       calculationCoverage(
         weights({ weight_opm: 0.7, weight_market: 0.3 }),
-        results({ opm_backsolve: { equity_value: 12_000_000 }, market: { equity_value: 11_000_000 } }),
+        approaches({ opm_backsolve: { equity_value: 12_000_000 }, market: { equity_value: 11_000_000 } }),
       ),
     ).toEqual({ done: 2, total: 2, missing: [] });
   });
@@ -63,7 +63,7 @@ describe('calculationCoverage', () => {
     // UI name straight off the results would report 0/1 on a completed run.
     const coverage = calculationCoverage(
       weights({ weight_opm: 1 }),
-      results({ opm_backsolve: { equity_value: 1 } }),
+      approaches({ opm_backsolve: { equity_value: 1 } }),
     );
     expect(coverage).toEqual({ done: 1, total: 1, missing: [] });
   });
@@ -72,7 +72,7 @@ describe('calculationCoverage', () => {
     // The engine writes a key for an approach it tried and could not finish.
     const coverage = calculationCoverage(
       weights({ weight_opm: 0.5, weight_income: 0.5 }),
-      results({ opm_backsolve: { equity_value: 5 }, income: { equity_value: null } }),
+      approaches({ opm_backsolve: { equity_value: 5 }, income: { equity_value: null } }),
     );
     expect(coverage).toEqual({ done: 1, total: 2, missing: ['income'] });
   });
@@ -80,13 +80,13 @@ describe('calculationCoverage', () => {
   it('names what is missing rather than only how many', () => {
     const coverage = calculationCoverage(
       weights({ weight_asset: 0.25, weight_opm: 0.25, weight_income: 0.25, weight_market: 0.25 }),
-      results({ asset: { equity_value: 3 } }),
+      approaches({ asset: { equity_value: 3 } }),
     );
     expect(coverage.missing).toEqual(['opm', 'income', 'market']);
   });
 
   it('reports 0/m rather than throwing when there is no calculation yet', () => {
-    for (const r of [null, undefined, {}, { approaches: null }, 'nonsense']) {
+    for (const r of [null, undefined, 'nonsense']) {
       expect(calculationCoverage(weights({ weight_opm: 1 }), r)).toEqual({
         done: 0,
         total: 1,
@@ -96,8 +96,8 @@ describe('calculationCoverage', () => {
   });
 
   it('accepts an approach recorded as a bare number', () => {
-    expect(calculationCoverage(weights({ weight_asset: 1 }), results({ asset: 4_000_000 })).done).toBe(1);
+    expect(calculationCoverage(weights({ weight_asset: 1 }), approaches({ asset: 4_000_000 })).done).toBe(1);
     // …but not a NaN dressed as one.
-    expect(calculationCoverage(weights({ weight_asset: 1 }), results({ asset: NaN })).done).toBe(0);
+    expect(calculationCoverage(weights({ weight_asset: 1 }), approaches({ asset: NaN })).done).toBe(0);
   });
 });
