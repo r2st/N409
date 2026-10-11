@@ -12,6 +12,16 @@ import type { ValuationRow } from './valuations.js';
 
 export { escapeLike } from '../db/like.js';
 
+export interface ValuationSearchHit {
+  id: string;
+  number: string;
+  kind: string;
+  state: string;
+  company_name: string;
+  service_name: string | null;
+  created_at: Date;
+}
+
 /** Largest value `valuations.number` (a bigint) can hold. */
 const MAX_BIGINT = 9223372036854775807n;
 
@@ -116,7 +126,7 @@ export async function searchValuations(
   scope: ValuationScope,
   q: string,
   limit = 10,
-): Promise<ValuationRow[]> {
+): Promise<ValuationSearchHit[]> {
   if (scope.kind === 'none') return [];
 
   const params: unknown[] = [];
@@ -140,8 +150,10 @@ export async function searchValuations(
   where.push(`(${matches.join(' OR ')})`);
 
   params.push(limit);
-  const { rows } = await pool.query<ValuationRow>(
-    `SELECT * FROM valuations WHERE ${where.join(' AND ')}
+  const { rows } = await pool.query<ValuationSearchHit>(
+    `SELECT id, number::text AS number, kind::text AS kind, state::text AS state,
+            company_name, service_name, created_at
+       FROM valuations WHERE ${where.join(' AND ')}
      ORDER BY created_at DESC LIMIT $${params.length}`,
     params,
   );

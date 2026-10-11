@@ -379,25 +379,22 @@ export function registerValuationRoutes(
     reply.header('ETag', versionEtag(valuation.version));
     // Opening a valuation clears its unread marker for the viewer's side
     // (gap 4). Ops read the admin marker; the owner reads the user marker.
-    if (isOps(principal)) await markValuationRead(deps.pool, valuation.id, 'admin');
-    else if (principal.id === valuation.user_id) await markValuationRead(deps.pool, valuation.id, 'user');
+    // The marker and the counters are independent — the marker tracks "has
+    // anyone looked at this engagement", while unread_comments counts "what
+    // has been said since I last read the thread" (keyed off
+    // valuation_comment_reads, not admin_read_at/user_read_at) — so they
+    // run in parallel.
+    const markRead = isOps(principal)
+      ? markValuationRead(deps.pool, valuation.id, 'admin')
+      : principal.id === valuation.user_id
+        ? markValuationRead(deps.pool, valuation.id, 'user')
+        : undefined;
 
-    /**
-     * The header chip row and the Calculations nav badge (design §4.6, §7.3).
-     *
-     * Served on the detail read rather than as its own endpoint: the workspace
-     * cannot render its header without them, and a second request for five
-     * numbers is a second chance for the header to disagree with the page
-     * under it.
-     *
-     * Computed after the read marker is cleared, deliberately. The marker and
-     * `unread_comments` are different things — one is "has anyone looked at
-     * this engagement", the other is "what has been said since *I* last read
-     * the thread" — and the comment count is not cleared by opening the
-     * workspace, only by opening the thread.
-     */
-    const counters = await loadValuationCounters(deps.pool, valuation.id, principal.id, [
-      ...visibleCommentKinds(principal),
+    const [counters] = await Promise.all([
+      loadValuationCounters(deps.pool, valuation.id, principal.id, [
+        ...visibleCommentKinds(principal),
+      ]),
+      markRead,
     ]);
     return { valuation, counters };
   });
