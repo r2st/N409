@@ -18,7 +18,7 @@ import type { DocumentRow } from '../repos/documents.js';
 import { logFailure } from '@n409/shared';
 import type { EventActor } from '../events/record.js';
 import { Semaphore } from './semaphore.js';
-import { describeTransportFailure } from '@n409/shared';
+import { describeTransportFailure, transportFailureEchoesMessage } from '@n409/shared';
 
 /**
  * Bounds how many auto-pipeline orchestrations execute at once in a single
@@ -283,7 +283,8 @@ async function advance(
  */
 function runFailureMessage(err: unknown): string {
   if (err instanceof InternalServiceError) return toProblem(err).detail ?? err.message;
-  return describeTransportFailure(err);
+  if (!transportFailureEchoesMessage(err)) return describeTransportFailure(err);
+  return 'The pipeline step failed unexpectedly';
 }
 
 async function executeRun(

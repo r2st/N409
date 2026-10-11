@@ -533,7 +533,7 @@ export function registerProblemHandler(app: FastifyInstance): void {
         if (err.expected) req.log.warn(fields, 'request refused');
         else req.log.error(fields, 'request failed');
       }
-      return reply.status(err.status).type('application/problem+json').send(err.toBody(req.url));
+      return reply.status(err.status).type('application/problem+json').send(err.toBody(scrubUrl(req.url)));
     }
     const fastifyErr = err as { statusCode?: number; message?: string; code?: string };
     const status = fastifyErr.statusCode && fastifyErr.statusCode < 500 ? fastifyErr.statusCode : 500;
@@ -571,7 +571,7 @@ export function registerProblemHandler(app: FastifyInstance): void {
         title: 'Service Unavailable',
         status: 503,
         detail: 'The database is temporarily unable to serve this request. Nothing was changed.',
-        instance: req.url,
+        instance: scrubUrl(req.url),
       });
     }
     if (status >= 500) {
@@ -593,7 +593,7 @@ export function registerProblemHandler(app: FastifyInstance): void {
         type: 'urn:n409:problem:internal',
         title: 'Internal Server Error',
         status,
-        instance: req.url,
+        instance: scrubUrl(req.url),
       });
     }
     // A 4xx fastify raised describes the *request*, so its message is safe to
@@ -610,7 +610,7 @@ export function registerProblemHandler(app: FastifyInstance): void {
         title: REASON_PHRASES[status] ?? 'Request Error',
         status,
         ...(fastifyErr.message ? { detail: fastifyErr.message } : {}),
-        instance: req.url,
+        instance: scrubUrl(req.url),
       });
   });
 
@@ -618,6 +618,6 @@ export function registerProblemHandler(app: FastifyInstance): void {
     reply
       .status(404)
       .type('application/problem+json')
-      .send({ type: 'urn:n409:problem:not-found', title: 'Not Found', status: 404, instance: req.url }),
+      .send({ type: 'urn:n409:problem:not-found', title: 'Not Found', status: 404, instance: scrubUrl(req.url) }),
   );
 }
