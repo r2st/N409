@@ -191,10 +191,14 @@ export async function onStateChanged(
   try {
     await deliverTransitionMessages(deps, valuation, to);
   } catch (err) {
-    deps.log?.error(
-      { err, valuationId: valuation.id, to },
-      'state change notifications failed; the transition stands and the message was not queued',
-    );
+    if (deps.log) {
+      logUnretried(
+        deps.log,
+        err,
+        { valuationId: valuation.id, to },
+        'state change notifications failed; the transition stands and the message was not queued',
+      );
+    }
   }
 }
 

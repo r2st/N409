@@ -92,4 +92,43 @@ describe('a partner webhook dispatch cannot fail its caller (R273)', () => {
     expect(pool.query).not.toHaveBeenCalled();
     expect(log.error).not.toHaveBeenCalled();
   });
+
+  /*
+   * Per-hook dispatch: the webhook lookup succeeds but `deliverToWebhook`
+   * throws before a delivery row is written. Same loss shape as the lookup
+   * failure above — the partner is simply not told — so it must carry
+   * `alert: true` through `logUnretried`.
+   */
+  it('records a per-hook dispatch failure as a loss (alert: true)', async () => {
+    let calls = 0;
+    const pool = {
+      query: vi.fn(() => {
+        calls += 1;
+        // First query: enabledWebhooks — return one webhook row.
+        if (calls === 1)
+          return Promise.resolve({
+            rows: [{ id: '01J0000000000000000000HOOK', partner_id: 'p', url: 'https://x.test/hook', secret: 'plain', events: [], enabled: true }],
+          });
+        // Everything after: the delivery path (recordDelivery INSERT) — fail.
+        return Promise.reject(new Error('connection terminated unexpectedly'));
+      }),
+      connect: vi.fn(() => Promise.reject(new Error('no connections'))),
+    } as unknown as pg.Pool;
+    const log = { warn: vi.fn(), error: vi.fn() };
+
+    await expect(
+      firePartnerWebhooks(
+        { pool, log } as never,
+        '01J00000000000000000000PTR',
+        'valuation.state_changed',
+        { id: '01J00000000000000000000VAL', number: 1, kind: '409a', state: 'started', company_name: 'Co' },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(log.error).toHaveBeenCalled();
+    expect(log.error.mock.calls[0]![0]).toMatchObject({
+      alert: true,
+      retried: false,
+    });
+  });
 });

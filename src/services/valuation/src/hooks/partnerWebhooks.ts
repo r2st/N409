@@ -623,13 +623,14 @@ async function dispatchToWebhook(
   try {
     await deliverToWebhook(deps, hook, event, payload, valuationId);
   } catch (err) {
-    // Error, not warn: no delivery row survives to carry this, so this line
-    // is the only record that the partner was owed an event and did not get
-    // one.
-    deps.log?.error(
-      { err, webhookId: hook.id, partnerId, event },
-      'partner webhook dispatch failed before a delivery row existed; event dropped for this webhook',
-    );
+    if (deps.log) {
+      logUnretried(
+        deps.log,
+        err,
+        { webhookId: hook.id, partnerId, event },
+        'partner webhook dispatch failed before a delivery row existed; event dropped for this webhook',
+      );
+    }
   }
 }
 
