@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import {
@@ -21,6 +21,8 @@ import { kindLabel } from '../domain/valuationSelector.js';
 import { isSpecialtyKind } from '../domain/specialty.js';
 import type { ValuationKind } from '../domain/valuation.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { ulidField } from '../domain/ulidField.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Valuation comparison (GET /api/v1/valuations/compare?a=…&b=…).
@@ -38,8 +40,8 @@ import { requirePrincipal } from '../plugins/auth.js';
  */
 
 const Query = z.object({
-  a: z.string(),
-  b: z.string(),
+  a: ulidField(),
+  b: ulidField(),
   /** `csv` downloads the same comparison for the board pack's spreadsheet. */
   format: z.enum(['json', 'csv']).default('json'),
 });
@@ -108,7 +110,6 @@ async function runsToCompare(
 
 export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const load = async (principal: Principal, id: string): Promise<ValuationRow> => {
-    if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
     if (
       !valuation ||
@@ -122,9 +123,7 @@ export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Poo
   app.get('/api/v1/valuations/compare', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const query = Query.safeParse(req.query);
-    if (!query.success) {
-      throw problems.badRequest('Pass two valuation ids as ?a=…&b=…');
-    }
+    if (!query.success) throw invalidQuery(query.error);
     if (query.data.a === query.data.b) {
       throw problems.badRequest('Choose two different valuations to compare');
     }

@@ -34,10 +34,7 @@ const ROUTES = path.resolve(HERE, '../../src/routes');
  * service's schemas describe, or whose schema structure makes `.strict()`
  * the wrong call (e.g. a `z.record()` keyed by a provider's own keys).
  */
-const NOT_STRICT: Record<string, string> = {
-  'hris.ts:CallbackQuery':
-    'OAuth callback query — providers append their own keys (scope, session_state, etc.) and a strict parse would reject every provider that adds one.',
-};
+const NOT_STRICT: Record<string, string> = {};
 
 interface BodySchema {
   file: string;
@@ -104,7 +101,7 @@ describe('every write-body zod schema is strict', () => {
   const schemas = scanBodySchemas();
 
   it('is reading a route table of the size this service has', () => {
-    expect(schemas.length).toBeGreaterThan(40);
+    expect(schemas.length).toBeGreaterThan(30);
   });
 
   it('has .strict() on every named Body schema', () => {

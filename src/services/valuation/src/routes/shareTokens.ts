@@ -1,17 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, problems } from '@n409/shared';
 import { requirePrincipal } from '../plugins/auth.js';
 import { canReadValuation } from '../auth/rbac.js';
 import type { ValuationRow } from '../repos/valuations.js';
 import { findValuationById } from '../repos/valuations.js';
 import { forbidden } from '../domain/accessProblem.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 const CreateShareBody = z.object({
-  valuation_id: z.string().refine(isUlid, 'must be a ULID'),
-});
+  valuation_id: ulidField(),
+}).strict();
 
 function toRef(v: ValuationRow) {
   return { userId: v.user_id, partnerId: v.partner_id };
