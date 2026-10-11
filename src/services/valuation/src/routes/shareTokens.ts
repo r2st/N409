@@ -57,13 +57,11 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
     async (req) => {
       const { token } = req.params;
 
-      // Single round trip: bump view_count and return the joined row (R394 M8).
-      // valuation_date lives in valuation_params.engine_inputs (JSONB), and
-      // fmv_per_share is on the latest calculations row — scalar subqueries
-      // avoid a second round trip for each.
+      // Bump view_count only for non-expired tokens (R427 M17). The previous
+      // version bumped unconditionally and checked expiry in JS afterwards, so
+      // expired tokens accumulated phantom views.
       const { rows } = await pool.query<{
         valuation_id: string;
-        expires_at: Date;
         company_name: string;
         valuation_date: string | null;
         fmv_per_share: string | null;
@@ -74,12 +72,11 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
         `WITH bumped AS (
            UPDATE valuation_share_tokens
               SET view_count = view_count + 1
-            WHERE token = $1
-           RETURNING valuation_id, expires_at
+            WHERE token = $1 AND expires_at > now()
+           RETURNING valuation_id
          )
          SELECT
            b.valuation_id,
-           b.expires_at,
            v.company_name,
            (p.engine_inputs->>'valuation_date')::text AS valuation_date,
            (SELECT c.fmv_per_share::text
@@ -95,17 +92,24 @@ export function registerShareTokenRoutes(app: FastifyInstance, pool: pg.Pool): v
         [token],
       );
 
-      if (rows.length === 0) throw problems.notFound('share token');
-      const row = rows[0]!;
-
-      if (row.expires_at < new Date()) {
-        throw new ApiProblem({
-          status: 410,
-          title: 'Gone',
-          type: 'urn:n409:problem:gone',
-          detail: 'This share link has expired',
-        });
+      if (rows.length === 0) {
+        // Distinguish "not found" from "expired": an expired token exists but
+        // the CTE matched nothing because of the expires_at guard.
+        const { rows: expired } = await pool.query<{ token: string }>(
+          'SELECT token FROM valuation_share_tokens WHERE token = $1 AND expires_at <= now()',
+          [token],
+        );
+        if (expired.length > 0) {
+          throw new ApiProblem({
+            status: 410,
+            title: 'Gone',
+            type: 'urn:n409:problem:gone',
+            detail: 'This share link has expired',
+          });
+        }
+        throw problems.notFound('share token');
       }
+      const row = rows[0]!
 
       const summary: ShareSummary = {
         company_name: row.company_name,

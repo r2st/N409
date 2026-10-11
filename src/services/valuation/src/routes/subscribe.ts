@@ -31,10 +31,10 @@ export function registerSubscribeRoutes(
     const parsed = SubscribeBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid subscription', parsed.error);
 
-    const { email } = parsed.data;
+    const email = parsed.data.email.toLowerCase();
     await deps.pool.query(
       `INSERT INTO email_subscribers (email) VALUES ($1)
-       ON CONFLICT (email) DO NOTHING`,
+       ON CONFLICT ((lower(email))) DO NOTHING`,
       [email],
     );
 
