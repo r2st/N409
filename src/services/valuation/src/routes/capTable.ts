@@ -260,8 +260,10 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
   app.get('/api/v1/valuations/:id/cap-table', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
-    const valuation = await loadReadable(deps.pool, id, principal);
-    const table = await findCapTable(deps.pool, id);
+    const [valuation, table] = await Promise.all([
+      loadReadable(deps.pool, id, principal),
+      findCapTable(deps.pool, id),
+    ]);
     // The validator the PUT sends back as If-Match (migration 0162). Set here
     // rather than left to the client to read out of the body, matching
     // GET /valuations/:id — the round trip is then the ordinary HTTP one and an

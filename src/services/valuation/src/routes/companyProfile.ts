@@ -80,8 +80,10 @@ export function registerCompanyProfileRoutes(app: FastifyInstance, deps: { pool:
   app.get('/api/v1/valuations/:id/company-profile', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
-    const valuation = await loadValuation(principal, id);
-    const profile = await findCompanyProfile(deps.pool, id);
+    const [valuation, profile] = await Promise.all([
+      loadValuation(principal, id),
+      findCompanyProfile(deps.pool, id),
+    ]);
     // The version the Company tab echoes back as If-Match (migration 0166).
     // Nothing is sent for a never-saved profile: an ETag on "null" would
     // invite an If-Match that can only ever conflict.

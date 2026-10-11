@@ -93,10 +93,13 @@ export function registerIntakeRoutes(
   app.get('/api/v1/valuations/:id/questionnaire', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
-    const valuation = await loadReadable(deps.pool, id, principal);
+    const [valuation, row, missing] = await Promise.all([
+      loadReadable(deps.pool, id, principal),
+      findQuestionnaire(deps.pool, id),
+      missingDocuments(deps.pool, id),
+    ]);
     const kind = valuation.kind as ValuationKind;
     const sections = intakeSectionsFor(kind);
-    const row = await findQuestionnaire(deps.pool, id);
     const answers = row?.answers ?? {};
     return {
       kind,
@@ -106,7 +109,7 @@ export function registerIntakeRoutes(
       submitted_at: row?.submitted_at ?? null,
       completion: computeCompletion(answers, sections),
       issues: validateIntake(answers, { sections, crossRules: intakeCrossRulesFor(kind) }),
-      missing_documents: await missingDocuments(deps.pool, id),
+      missing_documents: missing,
       can_edit: canEditIntake(principal, valuation),
     };
   });
