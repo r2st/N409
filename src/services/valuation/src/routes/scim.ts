@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
-import { ApiProblem, databaseUnavailableReason, requestErrorContext, scrubError } from '@n409/shared';
+import { ApiProblem, databaseUnavailableReason, requestErrorContext, scrubError, scrubUrl } from '@n409/shared';
 import { findUserByEmail, findUserById, createProvisionedUser, setUserActive } from '../repos/users.js';
 import { getSamlConfig, verifyScimToken } from '../repos/ssoConfig.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
@@ -215,7 +215,7 @@ export function registerScimRoutes(
         reply
           .status(404)
           .header('content-type', CT)
-          .send(scimError(404, `${req.url} is not a SCIM resource this service provides`)),
+          .send(scimError(404, `${scrubUrl(req.url)} is not a SCIM resource this service provides`)),
       );
 
       /**
