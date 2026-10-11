@@ -163,6 +163,7 @@ interface FeedBar {
 }
 
 function fin(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -342,6 +343,7 @@ export function shapeEstimate(
   const observations = new Map(args.series.map((s) => [s.ticker, s.prices.length]));
   const companies: VolatilityCompany[] = (Array.isArray(response.companies) ? response.companies : [])
     .map((raw) => {
+      if (raw === null || typeof raw !== 'object') return null;
       const c = raw as { ticker?: unknown; volatility?: unknown; used?: unknown };
       const ticker = typeof c.ticker === 'string' ? c.ticker : null;
       const vol = fin(c.volatility);
