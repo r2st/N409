@@ -54,6 +54,8 @@ interface Parse {
   source: 'query' | 'body';
   /** The `problems.<kind>` thrown on the failure branch. */
   kind: string;
+  /** Whether the failure branch uses the canonical `invalidQuery`/`invalidBody` helper. */
+  usesHelper: boolean;
 }
 
 /**
@@ -162,6 +164,7 @@ function parses(): { found: Parse[]; unresolved: string[] } {
         // the helper rather than by the call site — which is exactly why the
         // rollout could not change any route's status by accident.
         kind: guard[1] ?? VALIDATION_HELPERS.get(guard[2]!)!,
+        usesHelper: guard[2] != null,
       });
     });
   }
@@ -180,6 +183,21 @@ function parses(): { found: Parse[]; unresolved: string[] } {
  * the next route that wants this exemption should have to state why.
  */
 const NOT_422_BY_DESIGN = new Map([['boardApproval.ts:notFound(DEAD_TOKEN_DETAIL)', 'notFound']]);
+
+/**
+ * Parse failures that deliberately use bare `problems.*()` instead of the
+ * `invalidQuery()`/`invalidBody()` helpers.
+ *
+ * The helpers carry field-level Zod issues in the response so the caller
+ * knows *which* field failed and *how*. A route that omits them must have a
+ * reason the detail would be harmful or meaningless. The value is that reason.
+ */
+const NOT_HELPER_BY_DESIGN: Record<string, string> = {
+  'boardApproval.ts:notFound(DEAD_TOKEN_DETAIL)':
+    'bearer-credential endpoint: a malformed token must be indistinguishable from a dead one',
+  'auth.ts:badRequest(\'Missing code/state\')':
+    'OAuth callback via refuseSso redirect — field-level detail would leak structure to an unauthenticated caller',
+};
 
 describe('query-string validation answers 400, everywhere', () => {
   const { found, unresolved } = parses();
@@ -252,5 +270,23 @@ describe('query-string validation answers 400, everywhere', () => {
     for (const key of NOT_422_BY_DESIGN.keys()) {
       expect(key, `${key} pins a line number`).not.toMatch(/:\d+$/);
     }
+    for (const key of Object.keys(NOT_HELPER_BY_DESIGN)) {
+      expect(key, `${key} pins a line number`).not.toMatch(/:\d+$/);
+    }
+  });
+
+  it('uses the field-level helper for every parse failure', () => {
+    const bare = found
+      .filter((f) => !f.usesHelper)
+      .filter((f) => !(f.key in NOT_HELPER_BY_DESIGN))
+      .map((f) => `${f.at} → ${f.key}`);
+    expect(bare, 'parse failures that bypass invalidQuery/invalidBody — field-level detail is lost').toEqual([]);
+  });
+
+  it('keeps no helper exemption for a failure that now uses the helper', () => {
+    const stale = Object.keys(NOT_HELPER_BY_DESIGN).filter(
+      (key) => !found.some((f) => f.key === key && !f.usesHelper),
+    );
+    expect(stale, 'NOT_HELPER_BY_DESIGN entries that no longer apply').toEqual([]);
   });
 });
