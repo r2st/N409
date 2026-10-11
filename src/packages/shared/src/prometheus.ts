@@ -638,7 +638,20 @@ export function registerHttpMetrics(app: FastifyInstance, registry: MetricsRegis
     DEFAULT_DURATION_BUCKETS,
   );
 
+  let inFlight = 0;
+  registry.gauge(
+    'http_requests_in_flight',
+    'HTTP requests currently being processed — spikes before latency histograms shift when a downstream dependency slows',
+    () => inFlight,
+  );
+
+  app.addHook('onRequest', (req, _reply, done) => {
+    if (req.url !== '/metrics') inFlight += 1;
+    done();
+  });
+
   app.addHook('onResponse', (req, reply, done) => {
+    if (req.url !== '/metrics') inFlight -= 1;
     // `routeOptions.url` is the templated path when something matched; the raw
     // url is what a 404 leaves behind, which is why every label goes through
     // `routeLabel` and why the registry caps its series.

@@ -526,6 +526,13 @@ describe('the /metrics endpoint', () => {
     );
   });
 
+  it('publishes http_requests_in_flight at zero when idle', async () => {
+    const { app } = await build({});
+    await app.inject({ method: 'GET', url: '/things/01J0000000000000000000000A' });
+    const body = (await app.inject({ method: 'GET', url: '/metrics' })).body;
+    expect(body).toContain('http_requests_in_flight 0');
+  });
+
   it('is open with no secret configured outside production', async () => {
     const { app } = await build({ NODE_ENV: 'test' });
     expect((await app.inject({ method: 'GET', url: '/metrics' })).statusCode).toBe(200);
