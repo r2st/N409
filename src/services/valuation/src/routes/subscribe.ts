@@ -24,7 +24,7 @@ export function registerSubscribeRoutes(
       recordThrottleRefusal('subscribe');
       throw problems.tooManyRequests(
         'Too many subscription requests',
-        Math.ceil((resetAt - Date.now()) / 1000),
+        Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
       );
     }
 

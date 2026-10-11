@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
+import { registerProblemHandler } from '@n409/shared';
 import { registerSubscribeRoutes } from '../../src/routes/subscribe.js';
+import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 
 function mockPool() {
   return { query: vi.fn().mockResolvedValue({ rows: [] }) } as any;
@@ -46,5 +48,30 @@ describe('POST /api/v1/subscribe', () => {
       payload: {},
     });
     expect(res.statusCode).toBe(422);
+  });
+
+  it('returns 429 with retry-after >= 1 when rate-limited', async () => {
+    const limiter = new FixedWindowRateLimiter(1, 60_000);
+    const pool = mockPool();
+    const app = Fastify();
+    registerProblemHandler(app);
+    registerSubscribeRoutes(app, { pool, limiter });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/subscribe',
+      payload: { email: 'first@example.com' },
+    });
+
+    const refused = await app.inject({
+      method: 'POST',
+      url: '/api/v1/subscribe',
+      payload: { email: 'second@example.com' },
+    });
+
+    expect(refused.statusCode).toBe(429);
+    const body = refused.json();
+    expect(body.retry_after_seconds).toBeGreaterThanOrEqual(1);
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThanOrEqual(1);
   });
 });
